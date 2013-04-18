@@ -2,7 +2,10 @@ package devmap;
 
 import java.util.HashMap;
 
+import devmap.DevMap.DevStat;
+
 public class DevMap {
+
 	public static class DevStat {
 		public String mount_point;
 		public long read_nr;
@@ -35,6 +38,10 @@ public class DevMap {
 
     public static native String getDevMaps();
     
+    public DevMap() {
+    	refreshDevMap();
+    }
+    
     public void refreshDevMap() {
     	devmap.clear();
     	String content = getDevMaps();
@@ -59,6 +66,10 @@ public class DevMap {
     	}
     	
     	return s;
+    }
+    
+    public DevStat findDev(String devid) {
+    	return devmap.get(devid);
     }
 }
 
