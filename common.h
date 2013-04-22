@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-04-16 16:37:52 macan>
+ * Time-stamp: <2013-04-18 14:33:43 macan>
  *
  */
 
@@ -47,6 +47,11 @@ struct disk_part_info
     char *dev_sn;               /* global unique SN-partX */
     char *dev_id;               /* local sd*X */
     char *mount_path;           /* current mount path */
+    long read_nr;
+    long write_nr;
+    long err_nr;
+    long used;
+    long free;
 };
 
 #define DEV_MAPPING           "/DEV_MAPPING"
