@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-04-18 17:03:49 macan>
+ * Time-stamp: <2013-04-23 13:17:10 macan>
  *
  */
 
@@ -13,10 +13,12 @@
 struct dservice_conf
 {
     int hb_interval;
+    int mr_interval;
 };
 
 static struct dservice_conf g_ds_conf = {
     .hb_interval = 5,
+    .mr_interval = 10,
 };
 
 static sem_t g_timer_sem;
@@ -26,6 +28,8 @@ static int g_timer_thread_stop = 0;
 static int g_main_thread_stop = 0;
 static int g_sockfd;
 static struct sockaddr_in g_server;
+static char *g_server_str = NULL;
+static int g_port = 20202;
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -198,6 +202,7 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
         err = -errno;
         hvfs_err(lib, "popen(GET_SCSI_DISKPART_SN) failed w/ %s\n",
                  strerror(errno));
+        goto out;
     } else {
         *dpi = NULL;
         *nr = 0;
@@ -285,7 +290,7 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
             }
         }
     }
-    
+out:    
     return err;
 }
 
@@ -322,6 +327,39 @@ reopen:
     return fd;
 }
 
+#define SHMLOCK_UN      0
+#define SHMLOCK_WR      1
+#define SHMLOCK_RD      2
+int lock_shm(int fd, int type)
+{
+    struct flock lock;
+    int err = 0;
+
+    switch (type) {
+    case SHMLOCK_UN:
+        lock.l_type = F_UNLCK;
+        break;
+    case SHMLOCK_WR:
+        lock.l_type = F_WRLCK;
+        break;
+    case SHMLOCK_RD:
+        lock.l_type = F_RDLCK;
+        break;
+    }
+    lock.l_start = 0;
+    lock.l_whence = SEEK_SET;
+    lock.l_len = 0;
+    lock.l_pid = getpid();
+
+    err = fcntl(fd, F_SETLKW, &lock);
+    if (err) {
+        hvfs_err(lib, "lock shm file failed w/ %s\n",
+                 strerror(errno));
+    }
+
+    return err;
+}
+
 int read_shm(int fd, struct disk_part_info *dpi, int nr)
 {
     struct disk_part_info this;
@@ -346,15 +384,15 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
     do {
         p = strtok_r(init, "\n", &s1);
         if (!p) {
-            hvfs_err(lib, "No avaliable line\n");
+            hvfs_debug(lib, "No avaliable line\n");
             break;
         }
 
         line = strdup(p);
-        hvfs_info(lib, "LINE: %s\n", line);
+        hvfs_debug(lib, "LINE: %s\n", line);
         p = strtok_r(line, ":", &s2);
         if (!p) {
-            hvfs_err(lib, "key: %s\n", p);
+            hvfs_debug(lib, "key: %s\n", p);
             continue;
         }
         memset(&this, 0, sizeof(this));
@@ -362,25 +400,25 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
         while (1) {
             p = strtok_r(NULL, ",", &s2);
             if (!p) {
-                hvfs_err(lib, "v=%s\n", p);
+                hvfs_debug(lib, "v=%s\n", p);
                 break;
             }
             i++;
             switch (i) {
             case 1:
-                hvfs_info(lib, "%s\n", p);
+                hvfs_debug(lib, "%s\n", p);
                 this.mount_path = strdup(p);
                 break;
             case 2:
-                hvfs_info(lib, "%s\n", p);
+                hvfs_debug(lib, "%s\n", p);
                 this.read_nr = atol(p);
                 break;
-            case 3:
-                hvfs_info(lib, "%s\n", p);
+             case 3:
+                hvfs_debug(lib, "%s\n", p);
                 this.write_nr = atol(p);
                 break;
             case 4:
-                hvfs_info(lib, "%s\n", p);
+                hvfs_debug(lib, "%s\n", p);
                 this.err_nr = atol(p);
             default:;
             }
@@ -431,6 +469,7 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
         bl += bw;
     } while (bl < strlen(buf));
     err = bl;
+    hvfs_info(lib, "%s", buf);
 
 out:
     return err;
@@ -483,6 +522,9 @@ int setup_dgram(char *server, int port)
 
     g_server.sin_addr = *(struct in_addr*) hostInfo->h_addr_list[0];
 
+    hvfs_info(lib, "Setup UDP socket for DiskManager @ %s:%d\n",
+              g_server_str, g_port);
+
 out:
     return err;
 }
@@ -531,11 +573,49 @@ out:
 int fix_disk_parts(struct disk_part_info *dpi, int nr)
 {
     int fd = open_shm(0);
+    int err = 0;
 
-    if (fd > 0)
-        return read_shm(fd, dpi, nr);
-    else
-        return -errno;
+    if (fd > 0) {
+        lock_shm(fd, SHMLOCK_RD);
+        err = read_shm(fd, dpi, nr);
+        lock_shm(fd, SHMLOCK_UN);
+    } else
+        err = -errno;
+    close(fd);
+    
+    return err;
+}
+
+void refresh_map(time_t cur)
+{
+    static time_t last = 0;
+    struct disk_part_info *dpi = NULL;
+    int nr = 0, fd, err;
+
+    /* map refresh interval */
+    if (cur - last > g_ds_conf.mr_interval) {
+        err = get_disk_parts(&dpi, &nr);
+        if (err) {
+            hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
+            goto update_last;
+        }
+        
+        err = fix_disk_parts(dpi, nr);
+        if (err) {
+            hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
+                     "any NRs\n", strerror(-err), err);
+        }
+        fd = open_shm(O_TRUNC);
+        lock_shm(fd, SHMLOCK_WR);
+        write_shm(fd, dpi, nr);
+        lock_shm(fd, SHMLOCK_UN);
+        close(fd);
+        dpi_free(dpi, nr);
+
+        hvfs_info(lib, "Map refreshed!\n");
+    update_last:
+        last = cur;
+    }
 }
 
 void do_heartbeat(time_t cur)
@@ -630,6 +710,7 @@ static void *__timer_thread_main(void *arg)
         cur = time(NULL);
         /* TODO: */
         do_heartbeat(cur);
+        refresh_map(cur);
     }
 
     hvfs_debug(lib, "Hooo, I am exiting...\n");
@@ -691,12 +772,54 @@ out:
     return err;
 }
 
+void do_help()
+{
+    hvfs_plain(lib,
+               "Version 1.0.0b\n"
+               "Copyright (c) 2013 IIE, Ma Can <ml.macana@gmail.com>\n\n"
+               "Arguments:\n"
+               "-r, --server      DiskManager server IP address.\n"
+               "-p, --port        UDP port of DiskManager.\n"
+               "-h, -?, -help     print this help.\n"
+        );
+}
+
 int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
     struct disk_part_info *dpi = NULL;
     int nr = 0, nr2 = 0;
     int err = 0;
+
+    char *shortflags = "r:p:h?";
+    struct option longflags[] = {
+        {"server", required_argument, 0, 'r'},
+        {"port", required_argument, 0, 'p'},
+        {"help", no_argument, 0, 'h'},
+    };
+
+    while (1) {
+        int longindex = -1;
+        int opt = getopt_long(argc, argv, shortflags, longflags, &longindex);
+        if (opt == -1)
+            break;
+        switch (opt) {
+        case '?':
+        case 'h':
+            do_help();
+            return 0;
+            break;
+        case 'r':
+            g_server_str = strdup(optarg);
+            break;
+        case 'p':
+            g_port = atoi(optarg);
+            break;
+        default:
+            hvfs_err(lib, "Invalid arguments!\n");
+            return EINVAL;
+        }
+    }
 
     sem_init(&g_main_sem, 0, 0);
 
@@ -708,7 +831,9 @@ int main(int argc, char *argv[])
     }
 
     /* setup dgram */
-    err = setup_dgram("localhost", 20202);
+    if (!g_server_str)
+        g_server_str = "localhost";
+    err = setup_dgram(g_server_str, g_port);
     if (err) {
         hvfs_err(lib, "Init datagram failed w/ %d\n", err);
         goto out_dgram;
@@ -729,7 +854,7 @@ int main(int argc, char *argv[])
     hvfs_info(lib, "Got NR %d\n", nr);
     hvfs_info(lib, "Got NR %d\n", nr2);
 
-    int fd = open_shm(0);
+    int fd = open_shm(O_TRUNC);
     write_shm(fd, dpi, nr2);
     //fix_disk_parts(dpi, nr2);
     dpi_free(dpi, nr2);

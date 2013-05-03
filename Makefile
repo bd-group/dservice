@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-04-17 15:32:07 macan>
+# Time-stamp: <2013-05-02 17:30:31 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -15,7 +15,7 @@ CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
 ifeq ($(JAVA_HOME),)
-JAVA_HOME=/usr/lib/jvm/java-6-openjdk
+JAVA_HOME=/usr/lib/jvm/java-6-openjdk-amd64
 endif
 
 HEADERS = common.h
@@ -29,14 +29,21 @@ METASTORE_API = $(MSHOME)/hive-metastore-0.10.0.jar
 LUCENE_JAR = lib/lucene-core-4.2.1-SNAPSHOT.jar
 LUCENE_TEST_JAR = $(LCHOME)/analysis/common/lucene-analyzers-common-4.2.1-SNAPSHOT.jar:$(LCHOME)/queries/lucene-queries-4.2.1-SNAPSHOT.jar:$(LCHOME)/sandbox/lucene-sandbox-4.2.1-SNAPSHOT.jar
 
-METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(MSHOME)/libthrift-0.9.0.jar:../$(LUCENE_JAR):$(LUCENE_TEST_JAR)
+THRIFT_JAR = $(MSHOME)/libthrift-0.9.0.jar:$(MSHOME)/libfb303-0.9.0.jar
+#HADOOP_CORE = /home/macan/workspace/hadoop-1.0.3/hadoop-core-1.0.3.jar
+
+METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR):../$(LUCENE_JAR):$(LUCENE_TEST_JAR)
+
+MSCLI_RUNTIME = $(METASTORE_RUNTIME):$(THRIFT_JAR)
+
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR)
 
 IIE = iie
+MSCLI = mscli
 
 OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class
 
-all: $(OBJS) $(IIE)
+all: $(OBJS) $(IIE) $(MSCLI)	
 	@$(ECHO) -e "Build OK."
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
@@ -63,9 +70,21 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO)
 	@$(ECHO) -e " " JAR"\t" devmap.jar
 	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class
 
+$(MSCLI) : $(IIE)/metastore/*.java
+	@$(ECHO) -e " " JAVAC"\t" $@
+	@CLASSPATH=$(CP):$(MSCLI_RUNTIME) javac -d build $(IIE)/metastore/*.java
+
 jtest: $(JTEST).class
 	@cp lib/*.jar build/
 	@cd build; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH) java $(JTEST)
+
+run: $(DSERVICE)
+	@$(ECHO) -e "Run DService ..."
+	@valgrind --leak-check=full build/dservice
+
+runcli : $(MSCLI)
+	@$(ECHO) -e "Run MetaStoreClient ..."
+	@cd build; for f in /home/macan/workspace/hive-0.10.0/src/build/dist/lib/*.jar; do LIBS=$$LIBS:$$f; done; for f in /home/macan/workspace/hadoop-1.0.3/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
 
 clean:
 	-@rm -rf $(OBJS) *.o devmap_*.h *.class gmon.out *.jar build/*
