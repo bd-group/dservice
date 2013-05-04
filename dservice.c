@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-04-23 13:17:10 macan>
+ * Time-stamp: <2013-05-04 12:01:04 macan>
  *
  */
 
@@ -664,7 +664,7 @@ void do_heartbeat(time_t cur)
                      strerror(-err));
         }
         
-        if (recv == NULL || strcmp(recv, "+OK") != 0) {
+        if (recv == NULL || strncmp(recv, "+OK", 3) != 0) {
             hvfs_err(lib, "Heart beat with Invalid Response: %s\n", 
                      recv);
         }
