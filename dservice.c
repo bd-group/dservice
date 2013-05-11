@@ -4,11 +4,12 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-04 12:01:04 macan>
+ * Time-stamp: <2013-05-11 21:58:09 macan>
  *
  */
 
 #include "common.h"
+#include "jsmn.h"
 
 struct dservice_conf
 {
@@ -23,13 +24,29 @@ static struct dservice_conf g_ds_conf = {
 
 static sem_t g_timer_sem;
 static sem_t g_main_sem;
+static sem_t g_rep_sem;
+static sem_t g_del_sem;
+
 static pthread_t g_timer_thread = 0;
+static pthread_t g_rep_thread = 0;
+static pthread_t g_del_thread = 0;
+
 static int g_timer_thread_stop = 0;
+static int g_rep_thread_stop = 0;
+static int g_del_thread_stop = 0;
 static int g_main_thread_stop = 0;
+
 static int g_sockfd;
 static struct sockaddr_in g_server;
 static char *g_server_str = NULL;
 static int g_port = 20202;
+
+static char *g_hostname = NULL;
+
+static xlock_t g_rep_lock;
+static LIST_HEAD(g_rep);
+static xlock_t g_del_lock;
+static LIST_HEAD(g_del);
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -251,6 +268,13 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
                     case 4:
                         /* it is mount path */
                         (*dpi)[*nr - 1].mount_path = strdup(p);
+                        /* extract the remaining fields as mount path (handling spaces) */
+                        if (p - line + strlen(p) + 2 < lnr) {
+                            xfree((*dpi)[*nr - 1].mount_path);
+                            p[strlen(p)] = ' ';
+                            line[lnr - 1] = '\0';
+                            (*dpi)[*nr - 1].mount_path = strdup(p);
+                        }
                         (*dpi)[*nr - 1].read_nr = 0;
                         (*dpi)[*nr - 1].write_nr = 0;
                         (*dpi)[*nr - 1].err_nr = 0;
@@ -561,7 +585,7 @@ int __dgram_sr(char *send, char **recv)
         gotResponse = 1;
         
     if (gotResponse) {
-        hvfs_info(lib, "recv '%s'\n", reply);
+        hvfs_info(lib, "recv %s\n", reply);
         *recv = strdup(reply);
     } else
         *recv = NULL;
@@ -618,11 +642,194 @@ void refresh_map(time_t cur)
     }
 }
 
+char *getaline(char *buf, int *off)
+{
+    char *r,*p;
+
+    r = p = buf + *off;
+
+    while (1) {
+        switch (*p) {
+        case '\0':
+            goto out;
+            break;
+        case '\n':
+            *p = '\0';
+            p++;
+            goto out;
+            break;
+        default:;
+        }
+        p++;
+    }
+out:
+    *off += p - r;
+
+    if (r == p)
+        return NULL;
+    else
+        return r;
+}
+
+#define CHECK_TOKEN_SIZE(token, t, s) if (token.type != t || token.size != s) continue;
+#define CHECK_TOKEN_CONT(token, t, c) ({                                \
+            if (token.type != t) continue;                              \
+            char tmp[4096];                                             \
+            memset(tmp, 0, sizeof(tmp));                                \
+            memcpy(tmp, line + 5 + token.start, token.end - token.start); \
+            if (strcmp(c, tmp) != 0) continue;                          \
+        })
+#define GET_TOK(token, tok) ({                                          \
+            memset(tok, 0, sizeof(tok));                                \
+            memcpy(tok, line + 5 + token.start, token.end - token.start);   \
+        })
+
+void handle_commands(char *recv)
+{
+    char *line, tok[4096];
+    int off = 0, r;
+    jsmn_parser p;
+    jsmntok_t tokens[30];
+    
+    while ((line = getaline(recv, &off)) != NULL) {
+        hvfs_info(lib, "LINE: %s\n", line);
+        if (strncmp(line, "+REP:", 5) == 0) {
+            struct rep_args *ra;
+            int i;
+            
+            jsmn_init(&p);
+            r = jsmn_parse(&p, line + 5, tokens, 30);
+            if (r != JSMN_SUCCESS) {
+                hvfs_err(lib, "parse JSON string '%s' failed w/ %d\n", 
+                         line, r);
+                continue;
+            }
+
+            ra = xzalloc(sizeof(*ra));
+            if (!ra) {
+                hvfs_err(lib, "xzalloc() rep_args failed\n");
+                continue;
+            }
+            
+            /* parse the json object */
+            CHECK_TOKEN_SIZE(tokens[0], JSMN_OBJECT, 4);
+            CHECK_TOKEN_CONT(tokens[1], JSMN_STRING, "to");
+            CHECK_TOKEN_SIZE(tokens[2], JSMN_OBJECT, 8);
+
+            for (i = 3; i < 11; i+=2) {
+                GET_TOK(tokens[i], tok);
+                if (strcmp(tok, "mp") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->to.mp = strdup(tok);
+                } else if (strcmp(tok, "devid") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->to.devid = strdup(tok);
+                } else if (strcmp(tok, "location") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->to.location = strdup(tok);
+                } else if (strcmp(tok, "node_name") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->to.node = strdup(tok);
+                }
+            }
+
+            CHECK_TOKEN_CONT(tokens[11], JSMN_STRING, "from");
+            CHECK_TOKEN_SIZE(tokens[12], JSMN_OBJECT, 8);
+
+            for (i = 13; i < 21; i+=2) {
+                GET_TOK(tokens[i], tok);
+                if (strcmp(tok, "mp") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->from.mp = strdup(tok);
+                } else if (strcmp(tok, "devid") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->from.devid = strdup(tok);
+                } else if (strcmp(tok, "location") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->from.location = strdup(tok);
+                } else if (strcmp(tok, "node_name") == 0) {
+                    GET_TOK(tokens[i + 1], tok);
+                    ra->from.node = strdup(tok);
+                }
+            }
+
+            xlock_lock(&g_rep_lock);
+            list_add_tail(&ra->list, &g_rep);
+            xlock_unlock(&g_rep_lock);
+            sem_post(&g_rep_sem);
+            
+        } else if (strncmp(line, "+DEL:", 5) == 0) {
+            struct del_args *ra;
+            char *p = line + 5, *sp;
+            int i;
+
+            ra = xzalloc(sizeof(*ra));
+            if (!ra) {
+                hvfs_err(lib, "xzalloc() del_args failed\n");
+                continue;
+            }
+
+            /* parse the : seperated string */
+            for (i = 0; ++i; p = NULL) {
+                p = strtok_r(p, ":", &sp);
+                if (!p)
+                    break;
+                hvfs_info(lib, "GOT %d %s\n", i, p);
+                switch (i) {
+                case 1:
+                    /* node_name */
+                    ra->target.node = strdup(p);
+                    break;
+                case 2:
+                    /* devid */
+                    ra->target.devid = strdup(p);
+                    break;
+                case 3:
+                    /* mp */
+                    ra->target.mp = strdup(p);
+                    break;
+                case 4:
+                    /* location */
+                    ra->target.location = strdup(p);
+                    break;
+                }
+            }
+
+            xlock_lock(&g_del_lock);
+            list_add_tail(&ra->list, &g_del);
+            xlock_unlock(&g_del_lock);
+            sem_post(&g_del_sem);
+        }
+    }
+}
+
+static void __free_rep_args(struct rep_args *ra)
+{
+    xfree(ra->from.node);
+    xfree(ra->from.mp);
+    xfree(ra->from.devid);
+    xfree(ra->from.location);
+    xfree(ra->to.node);
+    xfree(ra->to.mp);
+    xfree(ra->to.devid);
+    xfree(ra->to.location);
+}
+
+static void __free_del_args(struct del_args *da)
+{
+    xfree(da->target.node);
+    xfree(da->target.mp);
+    xfree(da->target.devid);
+    xfree(da->target.location);
+}
+
 void do_heartbeat(time_t cur)
 {
     static time_t last = 0;
     char query[64 * 1024];
     char *recv = NULL;
+    struct rep_args *pos, *n;
+    struct del_args *pos2, *n2;
     int err = 0;
 
     if (cur - last >= g_ds_conf.hb_interval) {
@@ -642,6 +849,7 @@ void do_heartbeat(time_t cur)
         }
 
         memset(query, 0, sizeof(query));
+        len += sprintf(query, "+node:%s\n", g_hostname);
         for (i = 0; i < nr; i++) {
             len += sprintf(query + len, "%s:%s,%ld,%ld,%ld,%ld,%ld\n",
                            dpi[i].dev_sn, dpi[i].mount_path,
@@ -650,14 +858,46 @@ void do_heartbeat(time_t cur)
         }
 #ifdef SELF_TEST
         {
-            char *str = "dev-hello:/mnt/hvfs,0,0,0,0,0\n";
-            sprintf(query + len, "%s", str);
+            char *str = "dev-hello:/mnt/hvfs,0,0,0,0,200000000000\n";
+            len += sprintf(query + len, "%s", str);
         }
 #endif
         if (len == 0)
             goto update_last;
 
 #if 1
+
+        /* TODO: append any commands to report */
+        len += sprintf(query + len, "+CMD\n");
+        xlock_lock(&g_rep_lock);
+        list_for_each_entry_safe(pos, n, &g_rep, list) {
+            hvfs_info(lib, "POS to.location %s status %d\n",
+                      pos->to.location, pos->status);
+            if (pos->status == REP_STATE_DONE) {
+                len += sprintf(query + len, "+REP:%s,%s,%s\n",
+                               pos->to.node, pos->to.devid, pos->to.location);
+                list_del(&pos->list);
+                __free_rep_args(pos);
+                xfree(pos);
+            }
+        }
+        xlock_unlock(&g_rep_lock);
+
+        xlock_lock(&g_del_lock);
+        list_for_each_entry_safe(pos2, n2, &g_del, list) {
+            hvfs_info(lib, "POS target.location %s status %d\n",
+                      pos2->target.location, pos2->status);
+            if (pos2->status == DEL_STATE_DONE) {
+                len += sprintf(query + len, "+DEL:%s,%s,%s\n",
+                               pos2->target.node, pos2->target.devid, 
+                               pos2->target.location);
+                list_del(&pos2->list);
+                __free_del_args(pos2);
+                xfree(pos2);
+            }
+        }
+        xlock_unlock(&g_del_lock);
+
         err = __dgram_sr(query, &recv);
         if (err) {
             hvfs_err(lib, "datagram send/recv failed w/ %s\n", 
@@ -667,7 +907,11 @@ void do_heartbeat(time_t cur)
         if (recv == NULL || strncmp(recv, "+OK", 3) != 0) {
             hvfs_err(lib, "Heart beat with Invalid Response: %s\n", 
                      recv);
+        } else {
+            /* handle any piggyback commands */
+            handle_commands(recv);
         }
+        
         xfree(recv);
 #else
         hvfs_plain(lib, "%s", query);
@@ -776,12 +1020,263 @@ void do_help()
 {
     hvfs_plain(lib,
                "Version 1.0.0b\n"
-               "Copyright (c) 2013 IIE, Ma Can <ml.macana@gmail.com>\n\n"
+               "Copyright (c) 2013 IIE and Ma Can <ml.macana@gmail.com>\n\n"
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
                "-p, --port        UDP port of DiskManager.\n"
                "-h, -?, -help     print this help.\n"
         );
+}
+
+static void *__del_thread_main(void *args)
+{
+    sigset_t set;
+    time_t cur;
+    struct del_args *pos, *n;
+    LIST_HEAD(local);
+    int err;
+
+    /* first, let us block the SIGALRM */
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
+                                             * errs */
+    /* then, we loop for the enqueue events */
+    while (!g_del_thread_stop) {
+        err = sem_wait(&g_del_sem);
+        if (err) {
+            if (errno == EINTR)
+                continue;
+            hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
+        }
+
+        cur = time(NULL);
+        /* TODO: */
+        xlock_lock(&g_del_lock);
+        list_for_each_entry_safe(pos, n, &g_del, list) {
+            if (pos->status == DEL_STATE_INIT) {
+                list_del(&pos->list);
+                list_add_tail(&pos->list, &local);
+            }
+        }
+        xlock_unlock(&g_del_lock);
+
+        /* iterate local list */
+        list_for_each_entry_safe(pos, n, &local, list) {
+            FILE *f;
+            char cmd[8192];
+            int len = 0;
+
+            hvfs_info(lib, "Handle POS target.location %s status %d\n",
+                      pos->target.location, pos->status);
+            switch (pos->status) {
+            case DEL_STATE_INIT:
+                hvfs_info(lib, "Begin Delete: TARGET{%s:%s/%s}\n",
+                          pos->target.node, pos->target.mp, pos->target.location);
+                pos->status = DEL_STATE_DOING;
+                /* double check the node */
+                if (strcmp(pos->target.node, g_hostname) != 0) {
+                    hvfs_warning(lib, "This DEL request want to del file on node %s"
+                                 ", but we are %s?\n",
+                                 pos->target.node, g_hostname);
+                    len += sprintf(cmd, "ssh %s ", pos->target.node);
+                }
+#if 0
+                len += sprintf(cmd + len, "rm -rf %s/%s",
+                               pos->target.mp, pos->target.location);
+#else
+                len += sprintf(cmd + len, "ls %s/%s",
+                               pos->target.mp, pos->target.location);
+#endif
+                break;
+            case DEL_STATE_DOING:
+                continue;
+                break;
+            case DEL_STATE_DONE:
+                list_del(&pos->list);
+                xlock_lock(&g_del_lock);
+                list_add_tail(&pos->list, &g_del);
+                xlock_unlock(&g_del_lock);
+                continue;
+                break;
+            case DEL_STATE_ERROR:
+                // reset to INIT
+                pos->status = DEL_STATE_INIT;
+                continue;
+                break;
+            }
+
+            f = popen(cmd, "r");
+            if (f == NULL) {
+                hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                         cmd, strerror(errno));
+                continue;
+            } else {
+                char *line = NULL;
+                size_t len = 0;
+                
+                while ((getline(&line, &len, f)) != -1) {
+                    hvfs_info(lib, "EXEC(%s):%s", cmd, line);
+                }
+                xfree(line);
+            }
+            int status = pclose(f);
+            
+            if (WIFEXITED(status)) {
+                hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(status));
+                if (WEXITSTATUS(status)) {
+                    if (pos->status == DEL_STATE_ERROR)
+                        pos->status = DEL_STATE_INIT;//reset to INIT state
+                    else
+                        pos->status = DEL_STATE_ERROR;
+                } else {
+                    if (pos->status == DEL_STATE_ERROR)
+                        pos->status = DEL_STATE_INIT;
+                    else
+                        pos->status = DEL_STATE_DONE;
+                }
+            } else if (WIFSIGNALED(status)) {
+                hvfs_info(lib, "CMD killed by signal %d\n", WTERMSIG(status));
+                pos->status = DEL_STATE_ERROR;
+            } else if (WIFSTOPPED(status)) {
+                hvfs_err(lib, "CMD stopped by signal %d\n", WSTOPSIG(status));
+                pos->status = DEL_STATE_ERROR;
+            } else if (WIFCONTINUED(status)) {
+                hvfs_err(lib, "CMD continued\n");
+                pos->status = DEL_STATE_ERROR;
+            }
+
+            /* add to g_del list if needed */
+            if (pos->status == DEL_STATE_DONE) {
+                list_del(&pos->list);
+                xlock_lock(&g_del_lock);
+                list_add_tail(&pos->list, &g_del);
+                xlock_unlock(&g_del_lock);
+            }
+        }
+    }
+
+    hvfs_debug(lib, "Hooo, I am exiting ...\n");
+    pthread_exit(0);
+}
+
+static void *__rep_thread_main(void *args)
+{
+    sigset_t set;
+    time_t cur;
+    struct rep_args *pos, *n;
+    LIST_HEAD(local);
+    int err;
+
+    /* first, let us block the SIGALRM */
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
+                                             * errs */
+    /* then, we loop for the enqueue events */
+    while (!g_rep_thread_stop) {
+        err = sem_wait(&g_rep_sem);
+        if (err) {
+            if (errno == EINTR)
+                continue;
+            hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
+        }
+
+        cur = time(NULL);
+        /* TODO: */
+        xlock_lock(&g_rep_lock);
+        list_for_each_entry_safe(pos, n, &g_rep, list) {
+            if (pos->status == REP_STATE_INIT) {
+                list_del(&pos->list);
+                list_add_tail(&pos->list, &local);
+            }
+        }
+        xlock_unlock(&g_rep_lock);
+
+        /* iterate local list */
+        list_for_each_entry_safe(pos, n, &local, list) {
+            FILE *f;
+            char cmd[8192];
+
+            hvfs_info(lib, "Handle POS to.location %s status %d\n", 
+                      pos->to.location, pos->status);
+            switch(pos->status) {
+            case REP_STATE_INIT:
+                hvfs_info(lib, "Begin Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
+                          pos->to.node, pos->to.mp, pos->to.location,
+                          pos->from.node, pos->from.mp, pos->from.location);
+                pos->status = REP_STATE_DOING;
+                sprintf(cmd, "scp -pr %s:%s/%s %s:%s/%s",
+                        pos->from.node, pos->from.mp, pos->from.location,
+                        pos->to.node, pos->to.mp, pos->to.location);
+                break;
+            case REP_STATE_DOING:
+                continue;
+                break;
+            case REP_STATE_DONE:
+                list_del(&pos->list);
+                xlock_lock(&g_rep_lock);
+                list_add_tail(&pos->list, &g_rep);
+                xlock_unlock(&g_rep_lock);
+                continue;
+                break;
+            case REP_STATE_ERROR:
+                sprintf(cmd, "rm -rf %s/%s", pos->to.mp, pos->to.location);
+                break;
+            }
+            
+            f = popen(cmd, "r");
+            if (f == NULL) {
+                hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                         cmd, strerror(errno));
+                continue;
+            } else {
+                char *line = NULL;
+                size_t len = 0;
+                
+                while ((getline(&line, &len, f)) != -1) {
+                    hvfs_info(lib, "EXEC(%s):%s", cmd, line);
+                }
+                xfree(line);
+            }
+            int status = pclose(f);
+            
+            if (WIFEXITED(status)) {
+                hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(status));
+                if (WEXITSTATUS(status)) {
+                    if (pos->status == REP_STATE_ERROR)
+                        pos->status = REP_STATE_INIT;//reset to INIT state
+                    else
+                        pos->status = REP_STATE_ERROR;
+                } else {
+                    if (pos->status == REP_STATE_ERROR)
+                        pos->status = REP_STATE_INIT;
+                    else
+                        pos->status = REP_STATE_DONE;
+                }
+            } else if (WIFSIGNALED(status)) {
+                hvfs_info(lib, "CMD killed by signal %d\n", WTERMSIG(status));
+                pos->status = REP_STATE_ERROR;
+            } else if (WIFSTOPPED(status)) {
+                hvfs_err(lib, "CMD stopped by signal %d\n", WSTOPSIG(status));
+                pos->status = REP_STATE_ERROR;
+            } else if (WIFCONTINUED(status)) {
+                hvfs_err(lib, "CMD continued\n");
+                pos->status = REP_STATE_ERROR;
+            }
+
+            /* add to g_rep list if needed */
+            if (pos->status == REP_STATE_DONE) {
+                list_del(&pos->list);
+                xlock_lock(&g_rep_lock);
+                list_add_tail(&pos->list, &g_rep);
+                xlock_unlock(&g_rep_lock);
+            }
+        }
+    }
+
+    hvfs_debug(lib, "Hooo, I am exiting...\n");
+    pthread_exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -791,10 +1286,11 @@ int main(int argc, char *argv[])
     int nr = 0, nr2 = 0;
     int err = 0;
 
-    char *shortflags = "r:p:h?";
+    char *shortflags = "r:p:t:h?";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
+        {"host", required_argument, 0, 't'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -815,13 +1311,48 @@ int main(int argc, char *argv[])
         case 'p':
             g_port = atoi(optarg);
             break;
+        case 't':
+            g_hostname = strdup(optarg);
+            break;
         default:
             hvfs_err(lib, "Invalid arguments!\n");
             return EINVAL;
         }
     }
 
+    if (!g_hostname) {
+        g_hostname = xzalloc(256);
+        if (!g_hostname) {
+            hvfs_err(lib, "xzalloc() hostname buffer failed\n");
+            return ENOMEM;
+        }
+        err = gethostname(g_hostname, 255);
+        if (err) {
+            hvfs_err(lib, "gethostname failed w/ %s\n", strerror(errno));
+            return errno;
+        }
+        hvfs_info(lib, "Get hostname as '%s'\n", g_hostname);
+    }
+
     sem_init(&g_main_sem, 0, 0);
+    sem_init(&g_rep_sem, 0, 0);
+    sem_init(&g_del_sem, 0, 0);
+
+#if 0
+    char *str;
+    char *line;
+    int off = 0;
+
+    str = malloc(100);
+    sprintf(str, "+OK\n+REP:{sdfdsfff}\n+REP{asfsdf}");
+    while ((line = getaline(str, &off)) != NULL) {
+        hvfs_info(lib, "LINE: %s\n", line);
+    }
+    exit(0);
+#endif
+
+    xlock_init(&g_rep_lock);
+    xlock_init(&g_del_lock);
 
     /* setup signals */
     err = __init_signal();
@@ -844,6 +1375,24 @@ int main(int argc, char *argv[])
     if (err) {
         hvfs_err(lib, "Init timers failed w/ %d\n", err);
         goto out_timers;
+    }
+
+    /* setup rep thread */
+    err = pthread_create(&g_rep_thread, NULL, &__rep_thread_main,
+                         NULL);
+    if (err) {
+        hvfs_err(lib, "Create REP thread failed w/ %s\n", strerror(errno));
+        err = -errno;
+        goto out_rep;
+    }
+
+    /* setup del thread */
+    err = pthread_create(&g_del_thread, NULL, &__del_thread_main,
+                         NULL);
+    if (err) {
+        hvfs_err(lib, "Create DEL thread failed w/ %s\n", strerror(errno));
+        err = -errno;
+        goto out_del;
     }
 
     get_disks(&di, &nr);
@@ -873,11 +1422,23 @@ int main(int argc, char *argv[])
         sem_post(&g_timer_sem);
         pthread_join(g_timer_thread, NULL);
     }
+    g_rep_thread_stop = 1;
+    if (g_rep_thread) {
+        sem_post(&g_rep_sem);
+        pthread_join(g_rep_thread, NULL);
+    }
+    g_del_thread_stop = 1;
+    if (g_del_thread) {
+        sem_post(&g_del_sem);
+        pthread_join(g_del_thread, NULL);
+    }
 
     close(g_sockfd);
 
     hvfs_info(lib, "Main thread exiting ...\n");
 
+out_del:
+out_rep:
 out_timers:
 out_dgram:
 out_signal:

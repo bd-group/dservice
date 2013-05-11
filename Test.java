@@ -1,12 +1,18 @@
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Random;
 
+import org.apache.hadoop.hive.metastore.MetaStoreConst;
+import org.apache.hadoop.hive.metastore.api.FileOperationException;
+import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
+import org.apache.hadoop.hive.metastore.model.MFile;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -29,8 +35,10 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.Version;
+import org.apache.thrift.TException;
 
 import iie.index.lucene.SFDirectory;
+import iie.metastore.MetaStoreClient;
 import devmap.DevMap;
 
 public class Test {
@@ -180,14 +188,59 @@ public class Test {
         System.out.println("End  DevMap Test.");
 
         System.out.println("Begin IIE Test ...");
-        List<SFileLocation> locations = new ArrayList<SFileLocation>();
-        locations.add(new SFileLocation("abc", 10, "dev-hello", "testdir", 0, 90, 2, "yyyxx"));
-        SFile file = new SFile(10, 100, 2, 1, "xxxxfa", 100, 200, locations);
-        List<String> ips = new ArrayList<String>();
-        ips.add("192.168.11.7");
-        Node node = new Node("abc", ips, 50);
+        
+        MetaStoreClient cli = new MetaStoreClient();
+		cli.init();
+		String node = null;
+		List<String> ipl = new ArrayList<String>();
+		ipl.add("127.0.0.1");
+		long table_id = 1;
+		int repnr = 3;
+		SFile file = null, r = null;
+		Node thisNode = null;
+		
+		try {
+			node = InetAddress.getLocalHost().getHostName();
+			thisNode = cli.client.add_node(node, ipl);
+		} catch (MetaException me) {
+			me.printStackTrace();
+		} catch (TException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return;
+		} catch (UnknownHostException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		if (thisNode == null) {
+			try {
+				thisNode = cli.client.get_node(node);
+			} catch (MetaException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return;
+			} catch (TException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return;
+			}
+		}
+		
+		try {
+			file = cli.client.create_file(node, repnr, table_id);
+			System.out.println("Create file: " + MetaStoreClient.toStringSFile(file));
+		} catch (FileOperationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return;
+		} catch (TException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return;
+		}
+        
         try {
-			SFDirectory dir = new SFDirectory(file, node, SFDirectory.DirType.AUTO, null);
+			SFDirectory dir = new SFDirectory(file, thisNode, SFDirectory.DirType.AUTO, null);
 			IndexFileTest(dir);
 			ReadFiles(dir);
 			dir.close();
@@ -198,6 +251,59 @@ public class Test {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+        
+		try {
+			long fid = file.getFid();
+			
+			file.setDigest("DIGESTED!");
+			cli.client.close_file(file);
+			System.out.println("Closed file: " + MetaStoreClient.toStringSFile(file));
+			try {
+				Thread.sleep(10000);
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+			}
+			r = cli.client.get_file_by_id(fid);
+			System.out.println("Read 1 file: " + MetaStoreClient.toStringSFile(r));
+			while (r.getStore_status() != MetaStoreConst.MFileStoreStatus.REPLICATED) {
+				try {
+					Thread.sleep(10000);
+				} catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+				}
+			}
+			// delete it logically
+			if (cli.client.rm_file_logical(r) != 0) {
+				System.out.println("ERROR rm_file_logical!");
+			}
+			r = cli.client.get_file_by_id(fid);
+			System.out.println("Read 2 file: " + MetaStoreClient.toStringSFile(r));
+			if (r.getStore_status() == MetaStoreConst.MFileStoreStatus.RM_LOGICAL) {
+				// restore it
+				cli.client.restore_file(r);
+			}
+			r = cli.client.get_file_by_id(fid);
+			System.out.println("Read 3 file: " + MetaStoreClient.toStringSFile(r));
+			// delete it physically
+			cli.client.rm_file_physical(r);
+			r = cli.client.get_file_by_id(fid);
+			System.out.println("Read 4 file: " + MetaStoreClient.toStringSFile(r));
+			try {
+					Thread.sleep(10000);
+				} catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+			}
+			r = cli.client.get_file_by_id(fid);
+			System.out.println("Read 5 file: " + MetaStoreClient.toStringSFile(r));
+		} catch (FileOperationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (TException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+
         System.out.println("End   IIE Test ...");
     }
 }
