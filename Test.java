@@ -268,6 +268,7 @@ public class Test {
 			while (r.getStore_status() != MetaStoreConst.MFileStoreStatus.REPLICATED) {
 				try {
 					Thread.sleep(10000);
+					r = cli.client.get_file_by_id(fid);
 				} catch (InterruptedException ex) {
 					Thread.currentThread().interrupt();
 				}
