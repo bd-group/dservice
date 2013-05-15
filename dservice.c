@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-11 21:58:09 macan>
+ * Time-stamp: <2013-05-14 11:06:01 macan>
  *
  */
 
@@ -955,6 +955,9 @@ static void *__timer_thread_main(void *arg)
         /* TODO: */
         do_heartbeat(cur);
         refresh_map(cur);
+        /* trigger incomplete requests if they exists */
+        sem_post(&g_rep_sem);
+        sem_post(&g_del_sem);
     }
 
     hvfs_debug(lib, "Hooo, I am exiting...\n");
@@ -1081,7 +1084,7 @@ static void *__del_thread_main(void *args)
                                  pos->target.node, g_hostname);
                     len += sprintf(cmd, "ssh %s ", pos->target.node);
                 }
-#if 0
+#if 1
                 len += sprintf(cmd + len, "rm -rf %s/%s",
                                pos->target.mp, pos->target.location);
 #else
