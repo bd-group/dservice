@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-05-07 15:36:10 macan>
+# Time-stamp: <2013-05-15 14:14:10 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -14,8 +14,29 @@ ECHO = /bin/echo
 CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
+ifeq ($(DSHOME),)
+DSHOME = /home/macan/workspace
+$(info Please set env DSHOME as Top-level workspace, default '$(DSHOME)')
+endif
+
+ifeq ($(MSHOME),)
+MSHOME = $(DSHOME)/hive-0.10.0/src/build/dist/lib
+$(info Please set env MSHOME as metastore\'s lib home, default '$(MSHOME)')
+endif
+
+ifeq ($(LCHOME),)
+LCHOME = $(DSHOME)/lucene-4.2.1/build
+$(info Please set env LCHOME as lucene home, default as '$(LCHOME)')
+endif
+
+ifeq ($(HADOOP_HOME),)
+HADOOP_HOME = $(DSHOME)/hadoop-1.0.3
+$(info Please set env HADOOP_HOME as lucene home, default as '$(HADOOP_HOME)')
+endif
+
 ifeq ($(JAVA_HOME),)
 JAVA_HOME=/usr/lib/jvm/java-6-openjdk-amd64
+$(info Please set env JAVA_HOME as JDK home, default as '$(JAVA_HOME)')
 endif
 
 HEADERS = common.h jsmn.h
@@ -23,13 +44,11 @@ DSERVICE = dservice
 DEVMAP = devmap
 DEVMAP_SO = lib$(DEVMAP).so
 JTEST = Test
-MSHOME = /home/macan/workspace/hive-0.10.0/src/build/dist/lib
-LCHOME = /home/macan/workspace/lucene-4.2.1/build
+
 LUCENE_JAR = lib/lucene-core-4.2.1-SNAPSHOT.jar
 LUCENE_TEST_JAR = $(LCHOME)/analysis/common/lucene-analyzers-common-4.2.1-SNAPSHOT.jar:$(LCHOME)/queries/lucene-queries-4.2.1-SNAPSHOT.jar:$(LCHOME)/sandbox/lucene-sandbox-4.2.1-SNAPSHOT.jar
 
 THRIFT_JAR = $(MSHOME)/libthrift-0.9.0.jar:$(MSHOME)/libfb303-0.9.0.jar
-#HADOOP_CORE = /home/macan/workspace/hadoop-1.0.3/hadoop-core-1.0.3.jar
 
 METASTORE_API = $(MSHOME)/hive-metastore-0.10.0.jar:$(THRIFT_JAR)
 METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR):../$(LUCENE_JAR):$(LUCENE_TEST_JAR)
@@ -76,7 +95,7 @@ $(MSCLI) : $(IIE)/metastore/*.java
 
 jtest: $(JTEST).class
 	@cp lib/*.jar build/
-	@cd build; for f in /home/macan/workspace/hive-0.10.0/src/build/dist/lib/*.jar; do LIBS=$$LIBS:$$f; done; for f in /home/macan/workspace/hadoop-1.0.3/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java $(JTEST)
+	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java $(JTEST)
 
 run: $(DSERVICE)
 	@$(ECHO) -e "Run DService ..."
@@ -84,7 +103,7 @@ run: $(DSERVICE)
 
 runcli : $(MSCLI)
 	@$(ECHO) -e "Run MetaStoreClient ..."
-	@cd build; for f in /home/macan/workspace/hive-0.10.0/src/build/dist/lib/*.jar; do LIBS=$$LIBS:$$f; done; for f in /home/macan/workspace/hadoop-1.0.3/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
+	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
 
 clean:
 	-@rm -rf $(OBJS) *.o devmap_*.h *.class gmon.out *.jar build/*
