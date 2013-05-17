@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-14 11:06:01 macan>
+ * Time-stamp: <2013-05-17 16:39:06 macan>
  *
  */
 
@@ -15,11 +15,13 @@ struct dservice_conf
 {
     int hb_interval;
     int mr_interval;
+    int fl_interval; // fail interval
 };
 
 static struct dservice_conf g_ds_conf = {
     .hb_interval = 5,
     .mr_interval = 10,
+    .fl_interval = 3600,
 };
 
 static sem_t g_timer_sem;
@@ -710,6 +712,7 @@ void handle_commands(char *recv)
                 hvfs_err(lib, "xzalloc() rep_args failed\n");
                 continue;
             }
+            ra->ttl = time(NULL);
             
             /* parse the json object */
             CHECK_TOKEN_SIZE(tokens[0], JSMN_OBJECT, 4);
@@ -768,6 +771,7 @@ void handle_commands(char *recv)
                 hvfs_err(lib, "xzalloc() del_args failed\n");
                 continue;
             }
+            ra->ttl = time(NULL);
 
             /* parse the : seperated string */
             for (i = 0; ++i; p = NULL) {
@@ -879,6 +883,12 @@ void do_heartbeat(time_t cur)
                 list_del(&pos->list);
                 __free_rep_args(pos);
                 xfree(pos);
+            } else if (pos->status == REP_STATE_ERROR_DONE) {
+                len += sprintf(query + len, "+FAIL:REP:%s,%s,%s\n",
+                               pos->to.node, pos->to.devid, pos->to.location);
+                list_del(&pos->list);
+                __free_rep_args(pos);
+                xfree(pos);
             }
         }
         xlock_unlock(&g_rep_lock);
@@ -889,6 +899,13 @@ void do_heartbeat(time_t cur)
                       pos2->target.location, pos2->status);
             if (pos2->status == DEL_STATE_DONE) {
                 len += sprintf(query + len, "+DEL:%s,%s,%s\n",
+                               pos2->target.node, pos2->target.devid, 
+                               pos2->target.location);
+                list_del(&pos2->list);
+                __free_del_args(pos2);
+                xfree(pos2);
+            } else if (pos2->status == DEL_STATE_ERROR_DONE) {
+                len += sprintf(query + len, "+FAIL:DEL:%s,%s,%s\n",
                                pos2->target.node, pos2->target.devid, 
                                pos2->target.location);
                 list_del(&pos2->list);
@@ -1037,7 +1054,7 @@ static void *__del_thread_main(void *args)
     time_t cur;
     struct del_args *pos, *n;
     LIST_HEAD(local);
-    int err;
+    int err, nosuchfod = 0;
 
     /* first, let us block the SIGALRM */
     sigemptyset(&set);
@@ -1103,8 +1120,17 @@ static void *__del_thread_main(void *args)
                 continue;
                 break;
             case DEL_STATE_ERROR:
-                // reset to INIT
-                pos->status = DEL_STATE_INIT;
+                if (cur - pos->ttl >= g_ds_conf.fl_interval) {
+                    // delete it and report +FAIL
+                    pos->status = DEL_STATE_ERROR_DONE;
+                    list_del(&pos->list);
+                    xlock_lock(&g_del_lock);
+                    list_add_tail(&pos->list, &g_del);
+                    xlock_unlock(&g_del_lock);
+                } else {
+                    // otherwise reset to INIT
+                    pos->status = DEL_STATE_INIT;
+                }
                 continue;
                 break;
             }
@@ -1120,6 +1146,9 @@ static void *__del_thread_main(void *args)
                 
                 while ((getline(&line, &len, f)) != -1) {
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
+                    if (strstr(line, "No such file or directory") != NULL) {
+                        nosuchfod = 1;
+                    }
                 }
                 xfree(line);
             }
@@ -1130,8 +1159,12 @@ static void *__del_thread_main(void *args)
                 if (WEXITSTATUS(status)) {
                     if (pos->status == DEL_STATE_ERROR)
                         pos->status = DEL_STATE_INIT;//reset to INIT state
-                    else
-                        pos->status = DEL_STATE_ERROR;
+                    else {
+                        if (nosuchfod)
+                            pos->status = DEL_STATE_DONE;
+                        else
+                            pos->status = DEL_STATE_ERROR;
+                    }
                 } else {
                     if (pos->status == DEL_STATE_ERROR)
                         pos->status = DEL_STATE_INIT;
@@ -1224,7 +1257,17 @@ static void *__rep_thread_main(void *args)
                 continue;
                 break;
             case REP_STATE_ERROR:
-                sprintf(cmd, "rm -rf %s/%s", pos->to.mp, pos->to.location);
+                if (cur - pos->ttl >= g_ds_conf.fl_interval) {
+                    // delete it and report +FAIL
+                    pos->status = REP_STATE_ERROR_DONE;
+                    list_del(&pos->list);
+                    xlock_lock(&g_rep_lock);
+                    list_add_tail(&pos->list, &g_rep);
+                    xlock_unlock(&g_rep_lock);
+                    continue;
+                } else {
+                    sprintf(cmd, "rm -rf %s/%s", pos->to.mp, pos->to.location);
+                }
                 break;
             }
             

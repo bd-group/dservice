@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-05-15 14:14:10 macan>
+# Time-stamp: <2013-05-16 10:10:15 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -31,7 +31,7 @@ endif
 
 ifeq ($(HADOOP_HOME),)
 HADOOP_HOME = $(DSHOME)/hadoop-1.0.3
-$(info Please set env HADOOP_HOME as lucene home, default as '$(HADOOP_HOME)')
+$(info Please set env HADOOP_HOME as hadoop home, default as '$(HADOOP_HOME)')
 endif
 
 ifeq ($(JAVA_HOME),)

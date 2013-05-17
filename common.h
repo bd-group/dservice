@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-10 14:57:37 macan>
+ * Time-stamp: <2013-05-17 16:31:57 macan>
  *
  */
 
@@ -67,10 +67,12 @@ struct rep_args
 {
     struct list_head list;
     struct floc_desc to, from;
+    time_t ttl;
 #define REP_STATE_INIT          0
 #define REP_STATE_DOING         1
 #define REP_STATE_DONE          2
 #define REP_STATE_ERROR         3
+#define REP_STATE_ERROR_DONE    4
     int status;
 };
 
@@ -78,10 +80,12 @@ struct del_args
 {
     struct list_head list;
     struct floc_desc target;
+    time_t ttl;
 #define DEL_STATE_INIT          0
 #define DEL_STATE_DOING         1
 #define DEL_STATE_DONE          2
 #define DEL_STATE_ERROR         3
+#define DEL_STATE_ERROR_DONE    4
     int status;
 };
 

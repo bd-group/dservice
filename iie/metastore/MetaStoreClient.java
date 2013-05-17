@@ -15,6 +15,7 @@ import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
+import org.apache.hadoop.hive.metastore.MetaStoreConst;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.Node;
@@ -189,49 +190,101 @@ public class MetaStoreClient {
 		return r;
 	}
 	
+	public static class Option {
+	     String flag, opt;
+	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
+	}
+	
 	public static void main(String[] args) {
 		MetaStoreClient cli = new MetaStoreClient();
 		cli.init();
 		String node = null;
 		List<String> ipl = new ArrayList<String>();
-		ipl.add("127.0.0.1");
 		long table_id = 1;
 		int repnr = 3;
 		SFile file = null, r = null;
+		List<String> argsList = new ArrayList<String>();  
+	    List<Option> optsList = new ArrayList<Option>();
+	    List<String> doubleOptsList = new ArrayList<String>();
+	    
+	    // parse the args
+	    for (int i = 0; i < args.length; i++) {
+	    	System.out.println("Args " + i + ", " + args[i]);
+	        switch (args[i].charAt(0)) {
+	        case '-':
+	            if (args[i].length() < 2)
+	                throw new IllegalArgumentException("Not a valid argument: "+args[i]);
+	            if (args[i].charAt(1) == '-') {
+	                if (args[i].length() < 3)
+	                    throw new IllegalArgumentException("Not a valid argument: "+args[i]);
+	                doubleOptsList.add(args[i].substring(2, args[i].length()));
+	            } else {
+	                if (args.length-1 > i)
+	                    if (args[i + 1].charAt(0) == '-') {
+	                    	optsList.add(new Option(args[i], null));
+	                    } else {
+	                    	optsList.add(new MetaStoreClient.Option(args[i], args[i+1]));
+	                    	i++;
+	                    }
+	                else {
+	                	optsList.add(new Option(args[i], null));
+	                }
+	            }
+	            break;
+	        default:
+	            // arg
+	            argsList.add(args[i]);
+	            break;
+	        }
+	    }
 		
-		try {
-			node = InetAddress.getLocalHost().getHostName();
-			Node n = cli.client.add_node(node, ipl);
-		} catch (MetaException me) {
-			me.printStackTrace();
-		} catch (TException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return;
-		} catch (UnknownHostException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-		try {
-			file = cli.client.create_file(node, repnr, table_id);
-			System.out.println("Create file: " + toStringSFile(file));
-			file.setDigest("DIGESTED!");
-			cli.client.close_file(file);
-			System.out.println("Closed file: " + toStringSFile(file));
-			try {
-				Thread.sleep(10000);
-			} catch(InterruptedException ex) {
-				Thread.currentThread().interrupt();
+	    for (Option o : optsList) {
+			if (o.flag.equals("-n")) {
+				// add Node
+				try {
+					node = InetAddress.getLocalHost().getHostName();
+					ipl.add(InetAddress.getLocalHost().getHostAddress());
+					System.out.println("Add Node: " + node + ", IPL: " + ipl.get(0));
+					Node n = cli.client.add_node(node, ipl);
+				} catch (MetaException me) {
+					me.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					return;
+				} catch (UnknownHostException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 			}
-			r = cli.client.get_file_by_id(file.getFid());
-			System.out.println("Read   file: " + toStringSFile(r));
-		} catch (FileOperationException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (TException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+			if (o.flag.equals("-f")) {
+				// test file
+				try {
+					file = cli.client.create_file(node, repnr, table_id);
+					System.out.println("Create file: " + toStringSFile(file));
+					file.setDigest("DIGESTED!");
+					cli.client.close_file(file);
+					System.out.println("Closed file: " + toStringSFile(file));
+					r = cli.client.get_file_by_id(file.getFid());
+					while (r.getStore_status() != MetaStoreConst.MFileStoreStatus.REPLICATED) {
+						try {
+							Thread.sleep(10000);
+							r = cli.client.get_file_by_id(file.getFid());
+						} catch (InterruptedException ex) {
+							Thread.currentThread().interrupt();
+						}
+					}
+					System.out.println("Read   file: " + toStringSFile(r));
+					cli.client.rm_file_physical(r);
+					System.out.println("DEL    file: " + r.getFid());
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+	    }
 	}
 }
