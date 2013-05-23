@@ -134,8 +134,12 @@ public class MetaStoreClient {
 			return ret;
 		}
 	}
-
+	
 	public IMetaStoreClient createMetaStoreClient() throws MetaException {
+		return createMetaStoreClient("localhost", 9083);
+	}
+
+	public IMetaStoreClient createMetaStoreClient(String serverName, int port) throws MetaException {
 		HiveMetaHookLoader hookLoader = new HiveMetaHookLoader() {
 			public HiveMetaHook getHook(
 					org.apache.hadoop.hive.metastore.api.Table tbl)
@@ -144,10 +148,10 @@ public class MetaStoreClient {
 				return null;
 			}
 		};
-		return RetryingMetaStoreClient.getProxy("thrift://localhost:9083", 5, 1, hookLoader, HiveMetaStoreClient.class.getName());
+		return RetryingMetaStoreClient.getProxy("thrift://" + serverName + ":" + port, 5, 1, hookLoader, HiveMetaStoreClient.class.getName());
 	}
 	
-	public void init() {
+	public MetaStoreClient() {
 		try {
 			client = createMetaStoreClient();
 		} catch (MetaException e) {
@@ -155,6 +159,16 @@ public class MetaStoreClient {
 			e.printStackTrace();
 		}
 	}
+	
+	public MetaStoreClient(String serverName, int port) {
+		try {
+			client = createMetaStoreClient(serverName, port);
+		} catch (MetaException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
 	
 	public void stop() {
 		if (client != null) {
@@ -197,7 +211,6 @@ public class MetaStoreClient {
 	
 	public static void main(String[] args) {
 		MetaStoreClient cli = new MetaStoreClient();
-		cli.init();
 		String node = null;
 		List<String> ipl = new ArrayList<String>();
 		long table_id = 1;

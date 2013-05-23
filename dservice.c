@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-17 16:39:06 macan>
+ * Time-stamp: <2013-05-23 14:42:17 macan>
  *
  */
 
@@ -674,17 +674,54 @@ out:
 }
 
 #define CHECK_TOKEN_SIZE(token, t, s) if (token.type != t || token.size != s) continue;
-#define CHECK_TOKEN_CONT(token, t, c) ({                                \
+#define CHECK_TOKEN_CONT(token, t, pos) ({                              \
             if (token.type != t) continue;                              \
-            char tmp[4096];                                             \
-            memset(tmp, 0, sizeof(tmp));                                \
-            memcpy(tmp, line + 5 + token.start, token.end - token.start); \
-            if (strcmp(c, tmp) != 0) continue;                          \
+            memset(pos, 0, sizeof(pos));                                \
+            memcpy(pos, line + 5 + token.start, token.end - token.start); \
         })
 #define GET_TOK(token, tok) ({                                          \
             memset(tok, 0, sizeof(tok));                                \
             memcpy(tok, line + 5 + token.start, token.end - token.start);   \
         })
+
+#define SET_RA_TO(begin, end) do {                          \
+        for (i = begin; i < end; i+=2) {                    \
+            GET_TOK(tokens[i], tok);                        \
+            if (strcmp(tok, "mp") == 0) {                   \
+                GET_TOK(tokens[i + 1], tok);                \
+                ra->to.mp = strdup(tok);                    \
+            } else if (strcmp(tok, "devid") == 0) {         \
+                GET_TOK(tokens[i + 1], tok);                \
+                ra->to.devid = strdup(tok);                 \
+            } else if (strcmp(tok, "location") == 0) {      \
+                GET_TOK(tokens[i + 1], tok);                \
+                ra->to.location = strdup(tok);              \
+            } else if (strcmp(tok, "node_name") == 0) {     \
+                GET_TOK(tokens[i + 1], tok);                \
+                ra->to.node = strdup(tok);                  \
+            }                                               \
+        }                                                   \
+    } while (0)
+
+#define SET_RA_FROM(begin, end) do {                          \
+        for (i = begin; i < end; i+=2) {                      \
+            GET_TOK(tokens[i], tok);                          \
+            if (strcmp(tok, "mp") == 0) {                     \
+                GET_TOK(tokens[i + 1], tok);                  \
+                ra->from.mp = strdup(tok);                    \
+            } else if (strcmp(tok, "devid") == 0) {           \
+                GET_TOK(tokens[i + 1], tok);                  \
+                ra->from.devid = strdup(tok);                 \
+            } else if (strcmp(tok, "location") == 0) {        \
+                GET_TOK(tokens[i + 1], tok);                  \
+                ra->from.location = strdup(tok);              \
+            } else if (strcmp(tok, "node_name") == 0) {       \
+                GET_TOK(tokens[i + 1], tok);                  \
+                ra->from.node = strdup(tok);                  \
+            }                                                 \
+        }                                                     \
+    } while (0)
+
 
 void handle_commands(char *recv)
 {
@@ -697,6 +734,7 @@ void handle_commands(char *recv)
         hvfs_info(lib, "LINE: %s\n", line);
         if (strncmp(line, "+REP:", 5) == 0) {
             struct rep_args *ra;
+            char pos[32];
             int i;
             
             jsmn_init(&p);
@@ -716,45 +754,21 @@ void handle_commands(char *recv)
             
             /* parse the json object */
             CHECK_TOKEN_SIZE(tokens[0], JSMN_OBJECT, 4);
-            CHECK_TOKEN_CONT(tokens[1], JSMN_STRING, "to");
+            CHECK_TOKEN_CONT(tokens[1], JSMN_STRING, pos);
             CHECK_TOKEN_SIZE(tokens[2], JSMN_OBJECT, 8);
 
-            for (i = 3; i < 11; i+=2) {
-                GET_TOK(tokens[i], tok);
-                if (strcmp(tok, "mp") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->to.mp = strdup(tok);
-                } else if (strcmp(tok, "devid") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->to.devid = strdup(tok);
-                } else if (strcmp(tok, "location") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->to.location = strdup(tok);
-                } else if (strcmp(tok, "node_name") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->to.node = strdup(tok);
-                }
-            }
+            if (strcmp(pos, "to") == 0)
+                SET_RA_TO(3, 11);
+            else if (strcmp(pos, "from") == 0)
+                SET_RA_FROM(3, 11);
 
-            CHECK_TOKEN_CONT(tokens[11], JSMN_STRING, "from");
+            CHECK_TOKEN_CONT(tokens[11], JSMN_STRING, pos);
             CHECK_TOKEN_SIZE(tokens[12], JSMN_OBJECT, 8);
 
-            for (i = 13; i < 21; i+=2) {
-                GET_TOK(tokens[i], tok);
-                if (strcmp(tok, "mp") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->from.mp = strdup(tok);
-                } else if (strcmp(tok, "devid") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->from.devid = strdup(tok);
-                } else if (strcmp(tok, "location") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->from.location = strdup(tok);
-                } else if (strcmp(tok, "node_name") == 0) {
-                    GET_TOK(tokens[i + 1], tok);
-                    ra->from.node = strdup(tok);
-                }
-            }
+            if (strcmp(pos, "from") == 0)
+                SET_RA_FROM(13, 21);
+            else if (strcmp(pos, "to") == 0)
+                SET_RA_TO(13, 21);
 
             xlock_lock(&g_rep_lock);
             list_add_tail(&ra->list, &g_rep);
