@@ -252,6 +252,11 @@ public class MetaStoreClient {
 	    }
 		
 	    for (Option o : optsList) {
+	    	if (o.flag.equals("-h")) {
+	    		// print help message
+	    		System.out.println("-n : add localhost as a new node.");
+	    		System.out.println("-f : test file operations.");
+	    	}
 			if (o.flag.equals("-n")) {
 				// add Node
 				try {

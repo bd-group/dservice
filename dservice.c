@@ -4,21 +4,35 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-23 14:42:17 macan>
+ * Time-stamp: <2013-05-26 14:41:26 macan>
  *
  */
 
 #include "common.h"
 #include "jsmn.h"
 
+#define MAX_FILTERS     10
 struct dservice_conf
 {
+    char *sdfilter[MAX_FILTERS];
+    char *mpfilter[MAX_FILTERS];
+    int sdfilter_len;
+    int mpfilter_len;
     int hb_interval;
     int mr_interval;
     int fl_interval; // fail interval
 };
 
 static struct dservice_conf g_ds_conf = {
+    .sdfilter = {
+        "sda",
+    },
+    .sdfilter_len = 1,
+    .mpfilter = {
+        "/",
+        "/boot",
+    },
+    .mpfilter_len = 2,
     .hb_interval = 5,
     .mr_interval = 10,
     .fl_interval = 3600,
@@ -231,7 +245,7 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
             /* ok, parse the results */
             if (lnr > 2) {
                 char *p, *sp;
-                int i;
+                int i, filtered = 0;
 
                 for (i = 0, p = line; ++i; p = NULL) {
                     p = strtok_r(p, " \n", &sp);
@@ -283,6 +297,29 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
                         (*dpi)[*nr - 1].used = 0;
                         (*dpi)[*nr - 1].free = 0;
                         break;
+                    }
+                    hvfs_debug(lib, "2 %d %s FFF\n", i, p);
+                }
+                // do filtering
+                if (*nr > 0) {
+                    for (i = 0; i < g_ds_conf.sdfilter_len; i++) {
+                        if (strstr((*dpi)[*nr - 1].dev_id, 
+                                   g_ds_conf.sdfilter[i]) != NULL) {
+                            // filtered
+                            *nr -= 1;
+                            filtered = 1;
+                            break;
+                        }
+                    }
+                    if (!filtered) {
+                        for (i = 0; i < g_ds_conf.mpfilter_len; i++) {
+                            if (strcmp((*dpi)[*nr - 1].mount_path, 
+                                       g_ds_conf.mpfilter[i]) == 0) {
+                                // filtered
+                                *nr -= 1;
+                                break;
+                            }
+                        }
                     }
                 }
             }

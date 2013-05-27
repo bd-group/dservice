@@ -58,7 +58,6 @@
 #include <regex.h>
 #include <dlfcn.h>
 #include <libgen.h>
-#include <attr/xattr.h>
 #include <search.h>
 
 typedef unsigned long u64;

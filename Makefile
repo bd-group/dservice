@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-05-16 10:10:15 macan>
+# Time-stamp: <2013-05-27 09:55:45 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -25,7 +25,7 @@ $(info Please set env MSHOME as metastore\'s lib home, default '$(MSHOME)')
 endif
 
 ifeq ($(LCHOME),)
-LCHOME = $(DSHOME)/lucene-4.2.1/build
+LCHOME = lib
 $(info Please set env LCHOME as lucene home, default as '$(LCHOME)')
 endif
 
@@ -45,8 +45,8 @@ DEVMAP = devmap
 DEVMAP_SO = lib$(DEVMAP).so
 JTEST = Test
 
-LUCENE_JAR = lib/lucene-core-4.2.1-SNAPSHOT.jar
-LUCENE_TEST_JAR = $(LCHOME)/analysis/common/lucene-analyzers-common-4.2.1-SNAPSHOT.jar:$(LCHOME)/queries/lucene-queries-4.2.1-SNAPSHOT.jar:$(LCHOME)/sandbox/lucene-sandbox-4.2.1-SNAPSHOT.jar
+LUCENE_JAR = $(LCHOME)/lucene-core-4.2.1.jar
+LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-queries-4.2.1.jar:$(LCHOME)/lucene-sandbox-4.2.1.jar
 
 THRIFT_JAR = $(MSHOME)/libthrift-0.9.0.jar:$(MSHOME)/libfb303-0.9.0.jar
 
@@ -67,6 +67,7 @@ all: $(OBJS) $(IIE) $(MSCLI)
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@
+	@mkdir -p build
 	@$(GCC) $(CFLAGS) -Llib $(DSERVICE).c jsmn.c -o build/$(DSERVICE) $(LDFLAGS)
 
 $(DEVMAP_SO): $(DEVMAP).c devmap/DevMap.java
