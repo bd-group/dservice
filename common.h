@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-17 16:31:57 macan>
+ * Time-stamp: <2013-05-27 14:08:03 macan>
  *
  */
 
@@ -13,6 +13,7 @@
 
 #define HVFS_TRACING
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,8 @@
 #include <netdb.h>
 #include <unistd.h>
 #include "lib/lib.h"
+#include <sys/types.h>
+#include <sys/wait.h>
 
 HVFS_TRACING_INIT();
 

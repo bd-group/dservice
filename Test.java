@@ -8,10 +8,14 @@ import java.util.Random;
 
 import org.apache.hadoop.hive.metastore.MetaStoreConst;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
+import org.apache.hadoop.hive.metastore.api.Index;
 import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
+import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
+import org.apache.hadoop.hive.metastore.api.UnknownTableException;
 import org.apache.hadoop.hive.metastore.model.MFile;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -189,25 +193,22 @@ public class Test {
 
         System.out.println("Begin IIE Test ...");
         
-        MetaStoreClient cli = new MetaStoreClient();
-		cli.init();
+        MetaStoreClient cli;
 		String node = null;
-		List<String> ipl = new ArrayList<String>();
-		ipl.add("127.0.0.1");
 		long table_id = 1;
 		int repnr = 3;
 		SFile file = null, r = null;
 		Node thisNode = null;
+		Partition p = null;
+		Index idx = null;
 		
+		if (args.length > 0) {
+			cli = new MetaStoreClient(args[0]);
+		} else {
+			cli = new MetaStoreClient();
+		}
 		try {
 			node = InetAddress.getLocalHost().getHostName();
-			thisNode = cli.client.add_node(node, ipl);
-		} catch (MetaException me) {
-			me.printStackTrace();
-		} catch (TException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return;
 		} catch (UnknownHostException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -227,6 +228,42 @@ public class Test {
 		}
 		
 		try {
+			p = cli.client.getPartition("default", "pokes", "A");
+			System.out.println("getPartition() success!" + p.getPartitionName());
+		} catch (MetaException e) {
+			e.printStackTrace();
+			return;
+		} catch (UnknownTableException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (NoSuchObjectException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (TException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		try {
+			idx = cli.client.getIndex("default", "pokes", "idx_foo");
+			System.out.println("getIndex() success!" + idx.getIndexName());
+			cli.client.add_partition_index(idx, p);
+			System.out.println("add_partition_index() success!");
+		} catch (MetaException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		} catch (UnknownTableException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		} catch (NoSuchObjectException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		} catch (TException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+		}
+		
+		try {
 			file = cli.client.create_file(node, repnr, table_id);
 			System.out.println("Create file: " + MetaStoreClient.toStringSFile(file));
 		} catch (FileOperationException e) {
@@ -237,6 +274,16 @@ public class Test {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 			return;
+		}
+		
+		try {
+			List<SFile> lf = new ArrayList<SFile>();
+			lf.add(file);
+			cli.client.add_partition_files(p, lf);
+			System.out.println("Add file to partition: done!");
+		} catch (TException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
 		}
         
         try {
@@ -286,6 +333,9 @@ public class Test {
 			r = cli.client.get_file_by_id(fid);
 			System.out.println("Read 3 file: " + MetaStoreClient.toStringSFile(r));
 			// delete it physically
+			List<SFile> lf = new ArrayList<SFile>();
+			lf.add(r);
+			cli.client.drop_partition_files(p, lf);
 			cli.client.rm_file_physical(r);
 			r = cli.client.get_file_by_id(fid);
 			System.out.println("Read 4 file: " + MetaStoreClient.toStringSFile(r));

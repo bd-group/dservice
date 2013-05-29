@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "x$DSHOME" == "x" ]; then
-    DSHOME=/home/macan/workspace
+    DSHOME=`pwd`/..
     echo "Please set env DSHOME as top level workspace, default '$DSHOME'."
 fi
 if [ "x$MSHOME" == "x" ]; then
@@ -10,7 +10,7 @@ if [ "x$MSHOME" == "x" ]; then
 fi
 
 if [ "x$LCHOME" == "x" ]; then
-    LCHOME=$DSHOME/lucene-4.2.1/build
+    LCHOME=$DSHOME/dservice/lib
     echo "Please set env LCHOME as lucene home, default as '$LCHOME'."
 fi
 

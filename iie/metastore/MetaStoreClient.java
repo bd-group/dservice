@@ -1,5 +1,8 @@
 package iie.metastore;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -25,6 +28,9 @@ import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocolException;
 import org.apache.thrift.transport.TTransportException;
+
+import devmap.DevMap;
+import devmap.DevMap.DevStat;
 
 public class MetaStoreClient {
 	public IMetaStoreClient client;
@@ -169,6 +175,14 @@ public class MetaStoreClient {
 		}
 	}
 
+	public MetaStoreClient(String serverName) {
+		try {
+			client = createMetaStoreClient(serverName, 9083);
+		} catch (MetaException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
 	
 	public void stop() {
 		if (client != null) {
@@ -210,10 +224,10 @@ public class MetaStoreClient {
 	}
 	
 	public static void main(String[] args) {
-		MetaStoreClient cli = new MetaStoreClient();
+		MetaStoreClient cli = null;
 		String node = null;
 		List<String> ipl = new ArrayList<String>();
-		long table_id = 1;
+		long table_id = -1;
 		int repnr = 3;
 		SFile file = null, r = null;
 		List<String> argsList = new ArrayList<String>();  
@@ -254,25 +268,69 @@ public class MetaStoreClient {
 	    for (Option o : optsList) {
 	    	if (o.flag.equals("-h")) {
 	    		// print help message
+	    		System.out.println("-r : server name.");
 	    		System.out.println("-n : add localhost as a new node.");
 	    		System.out.println("-f : test file operations.");
+	    		break;
 	    	}
+	    	if (o.flag.equals("-r")) {
+	    		// set servername;
+	    		cli = new MetaStoreClient(o.opt);
+	    	}
+	    }
+	    if (cli == null) {
+	    	cli = new MetaStoreClient();
+	    }
+	    try {
+			node = InetAddress.getLocalHost().getHostName();
+		} catch (UnknownHostException e1) {
+			e1.printStackTrace();
+		}
+
+	    for (Option o : optsList) {
 			if (o.flag.equals("-n")) {
 				// add Node
 				try {
-					node = InetAddress.getLocalHost().getHostName();
 					ipl.add(InetAddress.getLocalHost().getHostAddress());
 					System.out.println("Add Node: " + node + ", IPL: " + ipl.get(0));
 					Node n = cli.client.add_node(node, ipl);
 				} catch (MetaException me) {
 					me.printStackTrace();
+					break;
 				} catch (TException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 					return;
 				} catch (UnknownHostException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-dn")) {
+				// del Node
+				try {
+					cli.client.del_node(o.opt);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-ln")) {
+				// list all Nodes
+				List<Node> lns;
+				try {
+					lns = cli.client.get_all_nodes();
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+				for (Node n : lns) {
+					System.out.println("Node '" + n.getNode_name() + "' {" + n.getIps().toString() + "}");
 				}
 			}
 			if (o.flag.equals("-f")) {
@@ -280,6 +338,24 @@ public class MetaStoreClient {
 				try {
 					file = cli.client.create_file(node, repnr, table_id);
 					System.out.println("Create file: " + toStringSFile(file));
+					// write something here
+					String filepath;
+					DevMap dm = new DevMap();
+					dm.refreshDevMap();
+					DevStat ds = dm.findDev(file.getLocations().get(0).getDevid());
+					filepath = ds.mount_point + "/" + file.getLocations().get(0).getLocation();
+					System.out.println("Trying to write to file location: " + filepath);
+					File newfile = new File(filepath);
+					try {
+						newfile.getParentFile().mkdirs();
+						newfile.createNewFile();
+						FileOutputStream out = new FileOutputStream(filepath);
+						out.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+						cli.client.rm_file_physical(file);
+						break;
+					}
 					file.setDigest("DIGESTED!");
 					cli.client.close_file(file);
 					System.out.println("Closed file: " + toStringSFile(file));

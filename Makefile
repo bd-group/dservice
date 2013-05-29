@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-05-27 09:55:45 macan>
+# Time-stamp: <2013-05-27 14:47:11 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -15,7 +15,7 @@ CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
 ifeq ($(DSHOME),)
-DSHOME = /home/macan/workspace
+DSHOME = $(shell pwd)/..
 $(info Please set env DSHOME as Top-level workspace, default '$(DSHOME)')
 endif
 
@@ -25,7 +25,7 @@ $(info Please set env MSHOME as metastore\'s lib home, default '$(MSHOME)')
 endif
 
 ifeq ($(LCHOME),)
-LCHOME = lib
+LCHOME = $(DSHOME)/dservice/lib
 $(info Please set env LCHOME as lucene home, default as '$(LCHOME)')
 endif
 
@@ -51,7 +51,7 @@ LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-q
 THRIFT_JAR = $(MSHOME)/libthrift-0.9.0.jar:$(MSHOME)/libfb303-0.9.0.jar
 
 METASTORE_API = $(MSHOME)/hive-metastore-0.10.0.jar:$(THRIFT_JAR)
-METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR):../$(LUCENE_JAR):$(LUCENE_TEST_JAR)
+METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR):$(LUCENE_JAR):$(LUCENE_TEST_JAR)
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
@@ -72,9 +72,9 @@ $(DSERVICE): $(DSERVICE).c $(HEADERS)
 
 $(DEVMAP_SO): $(DEVMAP).c devmap/DevMap.java
 	@javac -d build devmap/DevMap.java 
-	@javah -d build devmap.DevMap 
+	@javah -d build -classpath build devmap.DevMap 
 	@$(ECHO) -e " " CC"\t" $@
-	@$(GCC) -fPIC $(CFLAGS) -c $(DEVMAP).c -I $(JAVA_HOME)/include -I build -o \
+	@$(GCC) -fPIC $(CFLAGS) -c $(DEVMAP).c -I $(JAVA_HOME)/include -I $(JAVA_HOME)/include/linux -I build -o \
 		build/$(DEVMAP).o
 	@$(GCC) build/$(DEVMAP).o -shared -o build/$(DEVMAP_SO) -Wl,-soname,devmap -lrt
 	@$(ECHO) -e " " JAR"\t" devmap.jar
@@ -95,7 +95,7 @@ $(MSCLI) : $(IIE)/metastore/*.java
 	@CLASSPATH=$(CP):$(MSCLI_RUNTIME) javac -d build $(IIE)/metastore/*.java
 
 jtest: $(JTEST).class
-	@cp lib/*.jar build/
+	#@cp lib/*.jar build/
 	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java $(JTEST)
 
 run: $(DSERVICE)
