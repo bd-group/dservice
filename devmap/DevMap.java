@@ -1,5 +1,6 @@
 package devmap;
 
+import java.io.IOException;
 import java.util.HashMap;
 
 import devmap.DevMap.DevStat;
@@ -70,6 +71,14 @@ public class DevMap {
     
     public DevStat findDev(String devid) {
     	return devmap.get(devid);
+    }
+    
+    public String getPath(String devid, String location) throws IOException {
+    	DevStat ds = findDev(devid);
+    	if (ds == null) {
+    		throw new IOException("Unknown Device " + devid + ", can't translate it to Path.");
+    	}
+    	return ds.mount_point + "/" + location; 
     }
 }
 

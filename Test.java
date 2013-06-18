@@ -195,7 +195,8 @@ public class Test {
         
         MetaStoreClient cli;
 		String node = null;
-		long table_id = 1;
+		String dbName = "default";
+		String tableName = "pokes";
 		int repnr = 3;
 		SFile file = null, r = null;
 		Node thisNode = null;
@@ -264,7 +265,7 @@ public class Test {
 		}
 		
 		try {
-			file = cli.client.create_file(node, repnr, table_id);
+			file = cli.client.create_file(node, repnr, dbName, tableName);
 			System.out.println("Create file: " + MetaStoreClient.toStringSFile(file));
 		} catch (FileOperationException e) {
 			// TODO Auto-generated catch block
@@ -278,14 +279,24 @@ public class Test {
 		
 		try {
 			List<SFile> lf = new ArrayList<SFile>();
+			List<Long> ll = new ArrayList<Long>();
 			lf.add(file);
+			ll.add(file.getFid());
 			cli.client.add_partition_files(p, lf);
 			System.out.println("Add file to partition: done!");
+			// reget the partition object
+			p = cli.client.getPartition("default", "pokes", "A");
+			for (long id : p.getFiles()) {
+				System.out.println("Get partition files (FID): " + id);
+			}
+			System.out.println("Get files'size = " + p.getFilesSize());
+			cli.client.add_partition_index_files(idx, p, lf, ll);
+			System.out.println("Add file to partition_index_store: done!");
 		} catch (TException e1) {
 			// TODO Auto-generated catch block
 			e1.printStackTrace();
 		}
-        
+		
         try {
 			SFDirectory dir = new SFDirectory(file, thisNode, SFDirectory.DirType.AUTO, null);
 			IndexFileTest(dir);
@@ -303,6 +314,7 @@ public class Test {
 			long fid = file.getFid();
 			
 			file.setDigest("DIGESTED!");
+			file.setLength(64 * 1024 * 1024);
 			cli.client.close_file(file);
 			System.out.println("Closed file: " + MetaStoreClient.toStringSFile(file));
 			try {
@@ -336,6 +348,12 @@ public class Test {
 			List<SFile> lf = new ArrayList<SFile>();
 			lf.add(r);
 			cli.client.drop_partition_files(p, lf);
+			System.out.println("Del file from partition: done!");
+			cli.client.drop_partition_index_files(idx, p, lf);
+			System.out.println("Del file from partition_index_store: done!");
+			cli.client.drop_partition_index(idx, p);
+			System.out.println("drop_partition_index() success!");
+
 			cli.client.rm_file_physical(r);
 			r = cli.client.get_file_by_id(fid);
 			System.out.println("Read 4 file: " + MetaStoreClient.toStringSFile(r));

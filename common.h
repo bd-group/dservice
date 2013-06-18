@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-27 14:08:03 macan>
+ * Time-stamp: <2013-06-17 12:22:18 macan>
  *
  */
 
@@ -33,6 +33,7 @@
 #include "lib/lib.h"
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <limits.h>
 
 HVFS_TRACING_INIT();
 
@@ -45,6 +46,8 @@ struct disk_info
 };
 
 #define GET_SCSI_DISKPART_SN "find /dev/disk/by-id/ -iregex '.*scsi-.*part.*' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \" $2; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
+
+#define GET_SCSI_DISK_SN_EXT "find /dev/disk/by-id/ -iregex '.*scsi-[^-]*$' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \" $2; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
 
 struct disk_part_info
 {
@@ -71,6 +74,7 @@ struct rep_args
     struct list_head list;
     struct floc_desc to, from;
     time_t ttl;
+    char *digest;
 #define REP_STATE_INIT          0
 #define REP_STATE_DOING         1
 #define REP_STATE_DONE          2

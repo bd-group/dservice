@@ -227,7 +227,6 @@ public class MetaStoreClient {
 		MetaStoreClient cli = null;
 		String node = null;
 		List<String> ipl = new ArrayList<String>();
-		long table_id = -1;
 		int repnr = 3;
 		SFile file = null, r = null;
 		List<String> argsList = new ArrayList<String>();  
@@ -333,16 +332,37 @@ public class MetaStoreClient {
 					System.out.println("Node '" + n.getNode_name() + "' {" + n.getIps().toString() + "}");
 				}
 			}
+			if (o.flag.equals("-dms")) {
+				// get DM status
+				String dms;
+				try {
+					dms = cli.client.getDMStatus();
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+				System.out.println(dms);
+			}
 			if (o.flag.equals("-f")) {
 				// test file
 				try {
-					file = cli.client.create_file(node, repnr, table_id);
+					file = cli.client.create_file(node, repnr, null, null);
 					System.out.println("Create file: " + toStringSFile(file));
 					// write something here
 					String filepath;
 					DevMap dm = new DevMap();
 					dm.refreshDevMap();
-					DevStat ds = dm.findDev(file.getLocations().get(0).getDevid());
+					DevStat ds;
+					do {
+						ds = dm.findDev(file.getLocations().get(0).getDevid());
+						if (ds == null || ds.mount_point == null) {
+							dm.refreshDevMap();
+						} else 
+							break;
+					} while (true);
 					filepath = ds.mount_point + "/" + file.getLocations().get(0).getLocation();
 					System.out.println("Trying to write to file location: " + filepath);
 					File newfile = new File(filepath);

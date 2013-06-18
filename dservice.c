@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-05-26 14:41:26 macan>
+ * Time-stamp: <2013-06-17 12:24:08 macan>
  *
  */
 
@@ -57,12 +57,16 @@ static struct sockaddr_in g_server;
 static char *g_server_str = NULL;
 static int g_port = 20202;
 
+static int g_specify_dev = 0;
+static char *g_dev_str = NULL;
 static char *g_hostname = NULL;
 
 static xlock_t g_rep_lock;
 static LIST_HEAD(g_rep);
 static xlock_t g_del_lock;
 static LIST_HEAD(g_del);
+
+static int g_use_part = 1;
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -228,8 +232,13 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
 {
     char *line = NULL;
     size_t len = 0;
-    FILE *f = popen(GET_SCSI_DISKPART_SN, "r");
+    FILE *f;
     int err = 0, lnr = 0;
+
+    if (g_use_part)
+        f = popen(GET_SCSI_DISKPART_SN, "r");
+    else
+        f = popen(GET_SCSI_DISK_SN_EXT, "r");
 
     if (f == NULL) {
         err = -errno;
@@ -320,6 +329,12 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
                                 break;
                             }
                         }
+                    }
+                    if (filtered) {
+                        // free any resouces
+                        xfree((*dpi)[*nr].dev_sn);
+                        xfree((*dpi)[*nr].dev_id);
+                        xfree((*dpi)[*nr].mount_path);
                     }
                 }
             }
@@ -510,17 +525,15 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
     int i, bw, bl = 0, err = 0, n = 0;
 
     memset(buf, 0, sizeof(buf));
-    for (i = 0; i < nr; i++) {
-        n += sprintf(buf + n, "%s:%s,%ld,%ld,%ld\n", 
-                     dpi[i].dev_sn, dpi[i].mount_path,
-                     dpi[i].read_nr, dpi[i].write_nr, dpi[i].err_nr);
+    if (!g_specify_dev) {
+        for (i = 0; i < nr; i++) {
+            n += sprintf(buf + n, "%s:%s,%ld,%ld,%ld\n", 
+                         dpi[i].dev_sn, dpi[i].mount_path,
+                         dpi[i].read_nr, dpi[i].write_nr, dpi[i].err_nr);
+        }
+    } else {
+        sprintf(buf, "%s,0,0,0\n", g_dev_str);
     }
-#ifdef SELF_TEST
-    {
-        char *str = "dev-hello:/mnt/hvfs,0,0,0\n";
-        sprintf(buf + n, "%s", str);
-    }
-#endif
 
     do {
         bw = write(fd, buf + bl, strlen(buf) - bl);
@@ -891,32 +904,35 @@ void do_heartbeat(time_t cur)
         struct disk_part_info *dpi = NULL;
         int nr = 0, i, len = 0;
 
-        err = get_disk_parts(&dpi, &nr);
-        if (err) {
-            hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
-            goto update_last;
-        }
-
-        err = fix_disk_parts(dpi, nr);
-        if (err) {
-            hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
-                         "any NRs\n", strerror(-err), err);
-        }
-
         memset(query, 0, sizeof(query));
         len += sprintf(query, "+node:%s\n", g_hostname);
-        for (i = 0; i < nr; i++) {
-            len += sprintf(query + len, "%s:%s,%ld,%ld,%ld,%ld,%ld\n",
-                           dpi[i].dev_sn, dpi[i].mount_path,
-                           dpi[i].read_nr, dpi[i].write_nr, dpi[i].err_nr,
-                           dpi[i].used, dpi[i].free);
-        }
-#ifdef SELF_TEST
-        {
-            char *str = "dev-hello:/mnt/hvfs,0,0,0,0,200000000000\n";
+
+        if (!g_specify_dev) {
+            err = get_disk_parts(&dpi, &nr);
+            if (err) {
+                hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
+                goto update_last;
+            }
+            
+            err = fix_disk_parts(dpi, nr);
+            if (err) {
+                hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
+                             "any NRs\n", strerror(-err), err);
+            }
+            
+            for (i = 0; i < nr; i++) {
+                len += sprintf(query + len, "%s:%s,%ld,%ld,%ld,%ld,%ld\n",
+                               dpi[i].dev_sn, dpi[i].mount_path,
+                               dpi[i].read_nr, dpi[i].write_nr, dpi[i].err_nr,
+                               dpi[i].used, dpi[i].free);
+            }
+        } else {
+            char str[512];
+            
+            sprintf(str, "%s,0,0,0,0,%ld\n", g_dev_str, LONG_MAX);
             len += sprintf(query + len, "%s", str);
         }
-#endif
+
         if (len == 0)
             goto update_last;
 
@@ -929,8 +945,9 @@ void do_heartbeat(time_t cur)
             hvfs_info(lib, "POS to.location %s status %d\n",
                       pos->to.location, pos->status);
             if (pos->status == REP_STATE_DONE) {
-                len += sprintf(query + len, "+REP:%s,%s,%s\n",
-                               pos->to.node, pos->to.devid, pos->to.location);
+                len += sprintf(query + len, "+REP:%s,%s,%s,%s\n",
+                               pos->to.node, pos->to.devid, pos->to.location,
+                               pos->digest);
                 list_del(&pos->list);
                 __free_rep_args(pos);
                 xfree(pos);
@@ -1095,6 +1112,8 @@ void do_help()
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
                "-p, --port        UDP port of DiskManager.\n"
+               "-t, --host        Set local host name.\n"
+               "-d, --dev         Use this specified dev: DEVID:MOUNTPOINT.\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -1284,6 +1303,8 @@ static void *__rep_thread_main(void *args)
         list_for_each_entry_safe(pos, n, &local, list) {
             FILE *f;
             char cmd[8192];
+            char *dir = strdup(pos->to.location);
+            char *digest = NULL;
 
             hvfs_info(lib, "Handle POS to.location %s status %d\n", 
                       pos->to.location, pos->status);
@@ -1293,9 +1314,12 @@ static void *__rep_thread_main(void *args)
                           pos->to.node, pos->to.mp, pos->to.location,
                           pos->from.node, pos->from.mp, pos->from.location);
                 pos->status = REP_STATE_DOING;
-                sprintf(cmd, "scp -pr %s:%s/%s %s:%s/%s",
+                sprintf(cmd, "ssh %s mkdir -p %s/%s && scp -pr %s:%s/%s %s:%s/%s && "
+                        "find %s/%s -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
+                        pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
-                        pos->to.node, pos->to.mp, pos->to.location);
+                        pos->to.node, pos->to.mp, pos->to.location,
+                        pos->to.mp, pos->to.location);
                 break;
             case REP_STATE_DOING:
                 continue;
@@ -1321,6 +1345,7 @@ static void *__rep_thread_main(void *args)
                 }
                 break;
             }
+            free(dir);
             
             f = popen(cmd, "r");
             if (f == NULL) {
@@ -1333,6 +1358,13 @@ static void *__rep_thread_main(void *args)
                 
                 while ((getline(&line, &len, f)) != -1) {
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
+                    if (strstr(line, "  -") != NULL) {
+                        char *p, *s;
+                        p = strtok_r(line, " -\n", &s);
+                        if (p) {
+                            digest = strdup(p);
+                        }
+                    }
                 }
                 xfree(line);
             }
@@ -1365,6 +1397,7 @@ static void *__rep_thread_main(void *args)
             /* add to g_rep list if needed */
             if (pos->status == REP_STATE_DONE) {
                 list_del(&pos->list);
+                pos->digest = digest;
                 xlock_lock(&g_rep_lock);
                 list_add_tail(&pos->list, &g_rep);
                 xlock_unlock(&g_rep_lock);
@@ -1383,11 +1416,12 @@ int main(int argc, char *argv[])
     int nr = 0, nr2 = 0;
     int err = 0;
 
-    char *shortflags = "r:p:t:h?";
+    char *shortflags = "r:p:t:d:h?";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
         {"host", required_argument, 0, 't'},
+        {"dev", required_argument, 0, 'd'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1410,6 +1444,10 @@ int main(int argc, char *argv[])
             break;
         case 't':
             g_hostname = strdup(optarg);
+            break;
+        case 'd':
+            g_specify_dev = 1;
+            g_dev_str = strdup(optarg);
             break;
         default:
             hvfs_err(lib, "Invalid arguments!\n");
@@ -1499,6 +1537,10 @@ int main(int argc, char *argv[])
 
     hvfs_info(lib, "Got NR %d\n", nr);
     hvfs_info(lib, "Got NR %d\n", nr2);
+
+    if (nr2 == 0 && nr > 0) {
+        g_use_part = 0;
+    }
 
     int fd = open_shm(O_TRUNC);
     write_shm(fd, dpi, nr2);

@@ -11,7 +11,7 @@
 GCC = gcc
 ECHO = /bin/echo
 # TODO: Make sure REMOVE self_test flag when release code
-CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST
+CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST_
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
 ifeq ($(DSHOME),)
