@@ -41,6 +41,9 @@ public class SFDirectory extends Directory {
 	private FSDirectory ifsd;
 	
 	public SFDirectory(SFile file, Node thisNode, DirType dtype, LockFactory lf) throws IOException {
+		if (file == null || thisNode == null || dtype == null) {
+			throw new IOException("Null Node pointer provided!");
+		}
 		this.file = file;
 		init(thisNode, dtype);
 		switch (dtype) {

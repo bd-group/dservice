@@ -346,6 +346,64 @@ public class MetaStoreClient {
 				}
 				System.out.println(dms);
 			}
+			if (o.flag.equals("-fcr")) {
+				// create a new file and return the fid
+				try {
+					file = cli.client.create_file(node, repnr, null, null);
+					System.out.println("Create file: " + toStringSFile(file));
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-fcl")) {
+				// close the file
+				try {
+					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
+					file.setDigest("MSTOOL Digested!");
+					cli.client.close_file(file);
+					System.out.println("Close file: " + toStringSFile(file));
+					DevMap dm = new DevMap();
+					String path = dm.getPath(file.getLocations().get(0).getDevid(), file.getLocations().get(0).getLocation());
+					System.out.println("File local location is : " + path);
+					File nf = new File(path);
+					nf.mkdirs();
+				} catch (NumberFormatException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-fcd")) {
+				// delete the file
+				try {
+					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
+					cli.client.rm_file_physical(file);
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-f")) {
 				// test file
 				try {
