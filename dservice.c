@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-06-17 12:24:08 macan>
+ * Time-stamp: <2013-07-09 14:03:21 macan>
  *
  */
 
@@ -21,6 +21,7 @@ struct dservice_conf
     int hb_interval;
     int mr_interval;
     int fl_interval; // fail interval
+    int fl_max_retry;
 };
 
 static struct dservice_conf g_ds_conf = {
@@ -36,6 +37,7 @@ static struct dservice_conf g_ds_conf = {
     .hb_interval = 5,
     .mr_interval = 10,
     .fl_interval = 3600,
+    .fl_max_retry = 100,
 };
 
 static sem_t g_timer_sem;
@@ -898,7 +900,7 @@ void do_heartbeat(time_t cur)
     char *recv = NULL;
     struct rep_args *pos, *n;
     struct del_args *pos2, *n2;
-    int err = 0;
+    int err = 0, nr2 = 0, nr_max = 10;
 
     if (cur - last >= g_ds_conf.hb_interval) {
         struct disk_part_info *dpi = NULL;
@@ -942,7 +944,9 @@ void do_heartbeat(time_t cur)
         len += sprintf(query + len, "+CMD\n");
         xlock_lock(&g_rep_lock);
         list_for_each_entry_safe(pos, n, &g_rep, list) {
-            hvfs_info(lib, "POS to.location %s status %d\n",
+            if (nr2 >= nr_max)
+                break;
+            hvfs_info(lib, "POS REP_R to.location %s status %d\n",
                       pos->to.location, pos->status);
             if (pos->status == REP_STATE_DONE) {
                 len += sprintf(query + len, "+REP:%s,%s,%s,%s\n",
@@ -951,19 +955,23 @@ void do_heartbeat(time_t cur)
                 list_del(&pos->list);
                 __free_rep_args(pos);
                 xfree(pos);
+                nr2++;
             } else if (pos->status == REP_STATE_ERROR_DONE) {
                 len += sprintf(query + len, "+FAIL:REP:%s,%s,%s\n",
                                pos->to.node, pos->to.devid, pos->to.location);
                 list_del(&pos->list);
                 __free_rep_args(pos);
                 xfree(pos);
+                nr2++;
             }
         }
         xlock_unlock(&g_rep_lock);
 
         xlock_lock(&g_del_lock);
         list_for_each_entry_safe(pos2, n2, &g_del, list) {
-            hvfs_info(lib, "POS target.location %s status %d\n",
+            if (nr2 >= nr_max)
+                break;
+            hvfs_info(lib, "POS DEL_R target.location %s status %d\n",
                       pos2->target.location, pos2->status);
             if (pos2->status == DEL_STATE_DONE) {
                 len += sprintf(query + len, "+DEL:%s,%s,%s\n",
@@ -972,6 +980,7 @@ void do_heartbeat(time_t cur)
                 list_del(&pos2->list);
                 __free_del_args(pos2);
                 xfree(pos2);
+                nr2++;
             } else if (pos2->status == DEL_STATE_ERROR_DONE) {
                 len += sprintf(query + len, "+FAIL:DEL:%s,%s,%s\n",
                                pos2->target.node, pos2->target.devid, 
@@ -979,6 +988,7 @@ void do_heartbeat(time_t cur)
                 list_del(&pos2->list);
                 __free_del_args(pos2);
                 xfree(pos2);
+                nr2++;
             }
         }
         xlock_unlock(&g_del_lock);
@@ -1157,8 +1167,9 @@ static void *__del_thread_main(void *args)
             char cmd[8192];
             int len = 0;
 
-            hvfs_info(lib, "Handle POS target.location %s status %d\n",
+            hvfs_info(lib, "Handle DEL POS target.location %s status %d\n",
                       pos->target.location, pos->status);
+            pos->retries++;
             switch (pos->status) {
             case DEL_STATE_INIT:
                 hvfs_info(lib, "Begin Delete: TARGET{%s:%s/%s}\n",
@@ -1190,7 +1201,8 @@ static void *__del_thread_main(void *args)
                 continue;
                 break;
             case DEL_STATE_ERROR:
-                if (cur - pos->ttl >= g_ds_conf.fl_interval) {
+                if (cur - pos->ttl >= g_ds_conf.fl_interval ||
+                    pos->retries >= g_ds_conf.fl_max_retry) {
                     // delete it and report +FAIL
                     pos->status = DEL_STATE_ERROR_DONE;
                     list_del(&pos->list);
@@ -1306,15 +1318,16 @@ static void *__rep_thread_main(void *args)
             char *dir = strdup(pos->to.location);
             char *digest = NULL;
 
-            hvfs_info(lib, "Handle POS to.location %s status %d\n", 
+            hvfs_info(lib, "Handle REP POS to.location %s status %d\n", 
                       pos->to.location, pos->status);
+            pos->retries++;
             switch(pos->status) {
             case REP_STATE_INIT:
                 hvfs_info(lib, "Begin Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
                           pos->to.node, pos->to.mp, pos->to.location,
                           pos->from.node, pos->from.mp, pos->from.location);
                 pos->status = REP_STATE_DOING;
-                sprintf(cmd, "ssh %s mkdir -p %s/%s && scp -pr %s:%s/%s %s:%s/%s && "
+                sprintf(cmd, "ssh %s mkdir -p %s/%s && scp -pr %s:%s/%s %s:%s/%s 2>&1 && "
                         "find %s/%s -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
@@ -1332,7 +1345,8 @@ static void *__rep_thread_main(void *args)
                 continue;
                 break;
             case REP_STATE_ERROR:
-                if (cur - pos->ttl >= g_ds_conf.fl_interval) {
+                if (cur - pos->ttl >= g_ds_conf.fl_interval ||
+                    pos->retries >= g_ds_conf.fl_max_retry) {
                     // delete it and report +FAIL
                     pos->status = REP_STATE_ERROR_DONE;
                     list_del(&pos->list);
@@ -1364,6 +1378,9 @@ static void *__rep_thread_main(void *args)
                         if (p) {
                             digest = strdup(p);
                         }
+                    } else if (strstr(line, "No such file or directory") != NULL) {
+                        /* fail quickly */
+                        pos->retries += g_ds_conf.fl_max_retry;
                     }
                 }
                 xfree(line);

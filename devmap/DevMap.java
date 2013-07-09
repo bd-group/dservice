@@ -30,6 +30,7 @@ public class DevMap {
 	};
 	
 	private HashMap<String, DevStat> devmap = new HashMap<String, DevStat>();
+	private long last_refresh_ts = System.currentTimeMillis();
 	
     static { 
     	System.loadLibrary("devmap");
@@ -55,6 +56,7 @@ public class DevMap {
     				devmap.put(r[0], v); 
     		}
     	}
+    	last_refresh_ts = System.currentTimeMillis();
     }
     
     public String dumpDevMap() {
@@ -70,6 +72,10 @@ public class DevMap {
     }
     
     public DevStat findDev(String devid) {
+    	if (last_refresh_ts + 60  < System.currentTimeMillis()) {
+    		System.out.println("[DEVMAP NOTICE] Current devmap might be out-of-date, refresh it firstly!");
+    		refreshDevMap();
+    	}
     	return devmap.get(devid);
     }
     

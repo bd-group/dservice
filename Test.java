@@ -193,7 +193,7 @@ public class Test {
 
         System.out.println("Begin IIE Test ...");
         
-        MetaStoreClient cli;
+        MetaStoreClient cli = null;
 		String node = null;
 		String dbName = "default";
 		String tableName = "pokes";
@@ -203,11 +203,17 @@ public class Test {
 		Partition p = null;
 		Index idx = null;
 		
-		if (args.length > 0) {
-			cli = new MetaStoreClient(args[0]);
-		} else {
-			cli = new MetaStoreClient();
+		try {
+			if (args.length > 0) {
+				cli = new MetaStoreClient(args[0]);
+			} else {
+				cli = new MetaStoreClient();
+			}
+		} catch (MetaException e) {
+			e.printStackTrace();
+			System.exit(0);
 		}
+
 		try {
 			node = InetAddress.getLocalHost().getHostName();
 		} catch (UnknownHostException e) {
@@ -283,6 +289,7 @@ public class Test {
 			lf.add(file);
 			ll.add(file.getFid());
 			cli.client.add_partition_files(p, lf);
+			cli.client.add_subpartition_files(p.getSubpartitions().get(0), lf);
 			System.out.println("Add file to partition: done!");
 			// reget the partition object
 			p = cli.client.getPartition("default", "pokes", "A");

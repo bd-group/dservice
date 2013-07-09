@@ -12,15 +12,20 @@ import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.MetaStoreConst;
+import org.apache.hadoop.hive.metastore.api.Datacenter;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
@@ -33,7 +38,10 @@ import devmap.DevMap;
 import devmap.DevMap.DevStat;
 
 public class MetaStoreClient {
+	// client should be the local datacenter;
+	public Datacenter local_dc;
 	public IMetaStoreClient client;
+	private ConcurrentHashMap<String, IMetaStoreClient> climap = new ConcurrentHashMap<String, IMetaStoreClient>();
 	
 	public static <T> T newInstance(Class<T> theClass,
 			Class<?>[] parameterTypes, Object[] initargs) {
@@ -144,6 +152,18 @@ public class MetaStoreClient {
 	public IMetaStoreClient createMetaStoreClient() throws MetaException {
 		return createMetaStoreClient("localhost", 9083);
 	}
+	
+	public IMetaStoreClient createMetaStoreClient(String uri) throws MetaException {
+		HiveMetaHookLoader hookLoader = new HiveMetaHookLoader() {
+			public HiveMetaHook getHook(
+					org.apache.hadoop.hive.metastore.api.Table tbl)
+					throws MetaException {
+
+				return null;
+			}
+		};
+		return RetryingMetaStoreClient.getProxy(uri, 5, 1, hookLoader, HiveMetaStoreClient.class.getName());
+	}
 
 	public IMetaStoreClient createMetaStoreClient(String serverName, int port) throws MetaException {
 		HiveMetaHookLoader hookLoader = new HiveMetaHookLoader() {
@@ -157,36 +177,87 @@ public class MetaStoreClient {
 		return RetryingMetaStoreClient.getProxy("thrift://" + serverName + ":" + port, 5, 1, hookLoader, HiveMetaStoreClient.class.getName());
 	}
 	
-	public MetaStoreClient() {
+	public MetaStoreClient() throws MetaException {
+		client = createMetaStoreClient();
+		initmap(false);
+	}
+	
+	public MetaStoreClient(String serverName, int port) throws MetaException {
+		client = createMetaStoreClient(serverName, port);
+		initmap(false);
+	}
+
+	public MetaStoreClient(String serverName, boolean preconnect) throws MetaException {
+		client = createMetaStoreClient(serverName, 9083);
+		initmap(preconnect);
+	}
+	
+	public MetaStoreClient(String serverName) throws MetaException {
+		client = createMetaStoreClient(serverName, 9083);
+		initmap(false);
+	}
+
+	
+	private void initmap(boolean preconnect) throws MetaException {
+		// get local datacenter
 		try {
-			client = createMetaStoreClient();
-		} catch (MetaException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			this.local_dc = client.get_local_center();
+		} catch (TException e) {
+			throw new MetaException(e.toString());
+		}
+		climap.put(local_dc.getName(), client);
+		
+		// get all datacenters
+		List<Datacenter> ld;
+		try {
+			ld = client.get_all_centers();
+		} catch (TException e) {
+			throw new MetaException(e.toString());
+		}
+		for (Datacenter dc : ld) {
+			if (!dc.getName().equals(local_dc.getName())) {
+				if (preconnect) {
+					System.out.println("Try to connect to Datacenter " + dc.getName() + ", uri=" + dc.getLocationUri());
+					try { 
+						IMetaStoreClient cli = createMetaStoreClient(dc.getLocationUri());
+						climap.put(dc.getName(), cli);
+					} catch (MetaException me) {
+						System.out.println("Connect to Datacenter " + dc.getName() + ", uri=" + dc.getLocationUri() + " failed!");
+					}
+				}
+			}
 		}
 	}
 	
-	public MetaStoreClient(String serverName, int port) {
-		try {
-			client = createMetaStoreClient(serverName, port);
-		} catch (MetaException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+	public IMetaStoreClient getCli(String dc_name) {
+		IMetaStoreClient cli =  climap.get(dc_name);
+		if (cli == null) {
+			// do reconnect now
+			try {
+				Datacenter rdc = client.get_center(dc_name);
+				cli = createMetaStoreClient(rdc.getLocationUri());
+				climap.put(dc_name, cli);
+			} catch (NoSuchObjectException e) {
+				System.out.println(e);
+			} catch (MetaException e) {
+				System.out.println(e);
+			} catch (TException e) {
+				System.out.println(e);
+			}
 		}
+		return cli;
 	}
-
-	public MetaStoreClient(String serverName) {
-		try {
-			client = createMetaStoreClient(serverName, 9083);
-		} catch (MetaException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+	
+	public IMetaStoreClient getLocalCli() {
+		return client;
 	}
 	
 	public void stop() {
 		if (client != null) {
 			client.close();
+		}
+		for (Map.Entry<String, IMetaStoreClient> e : climap.entrySet()) {
+			e.getValue().close();
 		}
 	}
 	
@@ -226,12 +297,15 @@ public class MetaStoreClient {
 	public static void main(String[] args) {
 		MetaStoreClient cli = null;
 		String node = null;
+		String serverName = null;
+		int serverPort = 9083;
 		List<String> ipl = new ArrayList<String>();
 		int repnr = 3;
 		SFile file = null, r = null;
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
+	    String dbName = null, tableName = null, partName = null, to_dc = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -274,11 +348,55 @@ public class MetaStoreClient {
 	    	}
 	    	if (o.flag.equals("-r")) {
 	    		// set servername;
-	    		cli = new MetaStoreClient(o.opt);
+	    		serverName = o.opt;
+	    	}
+	    	if (o.flag.equals("-p")) {
+	    		// set serverPort
+	    		serverPort = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-table")) {
+	    		// set table name
+	    		if (o.opt == null) {
+	    			System.out.println("-table tableName");
+	    			System.exit(0);
+	    		}
+	    		tableName = o.opt;
+	    	}
+	    	if (o.flag.equals("-db")) {
+	    		// set db name
+	    		if (o.opt == null) {
+	    			System.out.println("-db dbName");
+	    			System.exit(0);
+	    		}
+	    		dbName = o.opt;
+	    	}
+	    	if (o.flag.equals("-part")) {
+	    		// set part name
+	    		if (o.opt == null) {
+	    			System.out.println("-part partName");
+	    			System.exit(0);
+	    		}
+	    		partName = o.opt;
+	    	}
+	    	if (o.flag.equals("-todc")) {
+	    		// set to_dc name
+	    		if (o.opt == null) {
+	    			System.out.println("-todc target_dc");
+	    			System.exit(0);
+	    		}
+	    		to_dc = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
-	    	cli = new MetaStoreClient();
+	    	try {
+	    		if (serverName == null)
+	    			cli = new MetaStoreClient();
+	    		else
+	    			cli = new MetaStoreClient(serverName, serverPort);
+			} catch (MetaException e) {
+				e.printStackTrace();
+				System.exit(0);
+			}
 	    }
 	    try {
 			node = InetAddress.getLocalHost().getHostName();
@@ -287,6 +405,24 @@ public class MetaStoreClient {
 		}
 
 	    for (Option o : optsList) {
+	    	if (o.flag.equals("-m")) {
+	    		// migrate
+	    		if (dbName == null || tableName == null || partName == null || to_dc == null) {
+	    			System.out.println("Please set dbname,tableName,partName,to_dc!");
+	    			System.exit(0);
+	    		}
+	    		List<String> partNames = new ArrayList<String>();
+	    		partNames.add(partName);
+	    		try {
+	    			cli.client.migrate_out(dbName, tableName, partNames, to_dc);
+	    		} catch (MetaException me) {
+	    			me.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
 			if (o.flag.equals("-n")) {
 				// add Node
 				try {
@@ -302,6 +438,25 @@ public class MetaStoreClient {
 				} catch (UnknownHostException e) {
 					e.printStackTrace();
 					break;
+				}
+			}
+			if (o.flag.equals("-nn")) {
+				// add Node with specified name
+				if (o.opt != null) {
+					try {
+						ipl.add(InetAddress.getLocalHost().getHostAddress());
+						System.out.println("Add Node: " + o.opt + ", IPL: " + ipl.get(0));
+						Node n = cli.client.add_node(o.opt, ipl);
+					} catch (UnknownHostException e1) {
+						// TODO Auto-generated catch block
+						e1.printStackTrace();
+					} catch (MetaException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					} catch (TException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
 				}
 			}
 			if (o.flag.equals("-dn")) {
