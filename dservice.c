@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-07-09 14:03:21 macan>
+ * Time-stamp: <2013-07-10 09:55:31 macan>
  *
  */
 
@@ -67,8 +67,6 @@ static xlock_t g_rep_lock;
 static LIST_HEAD(g_rep);
 static xlock_t g_del_lock;
 static LIST_HEAD(g_del);
-
-static int g_use_part = 1;
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -230,17 +228,14 @@ void di_free(struct disk_info *di, int nr)
     xfree(di);
 }
 
-int get_disk_parts(struct disk_part_info **dpi, int *nr)
+int get_disk_parts_sn(struct disk_part_info **dpi, int *nr)
 {
     char *line = NULL;
     size_t len = 0;
     FILE *f;
     int err = 0, lnr = 0;
 
-    if (g_use_part)
-        f = popen(GET_SCSI_DISKPART_SN, "r");
-    else
-        f = popen(GET_SCSI_DISK_SN_EXT, "r");
+    f = popen(GET_SCSI_DISKPART_SN, "r");
 
     if (f == NULL) {
         err = -errno;
@@ -248,9 +243,6 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
                  strerror(errno));
         goto out;
     } else {
-        *dpi = NULL;
-        *nr = 0;
-
         /* read from the result stream */
         while ((lnr = getline(&line, &len, f)) != -1) {
             /* ok, parse the results */
@@ -373,6 +365,165 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr)
 out:    
     return err;
 }
+
+int get_disk_sn_ext(struct disk_part_info **dpi, int *nr)
+{
+    char *line = NULL;
+    size_t len = 0;
+    FILE *f;
+    int err = 0, lnr = 0;
+
+    f = popen(GET_SCSI_DISK_SN_EXT, "r");
+
+    if (f == NULL) {
+        err = -errno;
+        hvfs_err(lib, "popen(GET_SCSI_DISKPART_SN) failed w/ %s\n",
+                 strerror(errno));
+        goto out;
+    } else {
+        /* read from the result stream */
+        while ((lnr = getline(&line, &len, f)) != -1) {
+            /* ok, parse the results */
+            if (lnr > 2) {
+                char *p, *sp;
+                int i, filtered = 0;
+
+                for (i = 0, p = line; ++i; p = NULL) {
+                    p = strtok_r(p, " \n", &sp);
+                    if (!p)
+                        break;
+                    hvfs_debug(lib, "2 %d %s\n", i, p);
+                    switch (i) {
+                    case 1:
+                        /* check whether it is OK */
+                        if (strncmp(p, "OK", 2) != 0) {
+                            /* bad */
+                            hvfs_err(lib, "BAD line w/ '%s', ignore it\n", p);
+                            goto next_line;
+                        }
+                        /* alloc a new disk_part_info entry */
+                        {
+                            struct disk_part_info *ndpi;
+
+                            ndpi = xrealloc(*dpi, (*nr + 1) * sizeof(*ndpi));
+                            if (!ndpi) {
+                                hvfs_err(lib, "xrealloc disk_part_info failed.\n");
+                                goto next_line;
+                            }
+                            *dpi = ndpi;
+                            *nr = *nr + 1;
+                        }
+                        break;
+                    case 2:
+                        /* it is dev_sn */
+                        (*dpi)[*nr - 1].dev_sn = strdup(p);
+                        break;
+                    case 3:
+                        /* it is dev id */
+                        (*dpi)[*nr - 1].dev_id = strdup(p);
+                        break;
+                    case 4:
+                        /* it is mount path */
+                        (*dpi)[*nr - 1].mount_path = strdup(p);
+                        /* extract the remaining fields as mount path (handling spaces) */
+                        if (p - line + strlen(p) + 2 < lnr) {
+                            xfree((*dpi)[*nr - 1].mount_path);
+                            p[strlen(p)] = ' ';
+                            line[lnr - 1] = '\0';
+                            (*dpi)[*nr - 1].mount_path = strdup(p);
+                        }
+                        (*dpi)[*nr - 1].read_nr = 0;
+                        (*dpi)[*nr - 1].write_nr = 0;
+                        (*dpi)[*nr - 1].err_nr = 0;
+                        (*dpi)[*nr - 1].used = 0;
+                        (*dpi)[*nr - 1].free = 0;
+                        break;
+                    }
+                    hvfs_debug(lib, "2 %d %s FFF\n", i, p);
+                }
+                // do filtering
+                if (*nr > 0) {
+                    for (i = 0; i < g_ds_conf.sdfilter_len; i++) {
+                        if (strstr((*dpi)[*nr - 1].dev_id, 
+                                   g_ds_conf.sdfilter[i]) != NULL) {
+                            // filtered
+                            *nr -= 1;
+                            filtered = 1;
+                            break;
+                        }
+                    }
+                    if (!filtered) {
+                        for (i = 0; i < g_ds_conf.mpfilter_len; i++) {
+                            if (strcmp((*dpi)[*nr - 1].mount_path, 
+                                       g_ds_conf.mpfilter[i]) == 0) {
+                                // filtered
+                                *nr -= 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (filtered) {
+                        // free any resouces
+                        xfree((*dpi)[*nr].dev_sn);
+                        xfree((*dpi)[*nr].dev_id);
+                        xfree((*dpi)[*nr].mount_path);
+                    }
+                }
+            }
+        next_line:;
+        }
+        free(line);
+    }
+    pclose(f);
+
+    if (*nr > 0) {
+        /* gather stats */
+        struct disk_part_info *t = *dpi;
+        struct statfs s;
+        int i;
+
+        for (i = 0; i < *nr; i++) {
+            t[i].read_nr = 0;
+            t[i].write_nr = 0;
+            t[i].err_nr = 0;
+
+            err = statfs(t[i].mount_path, &s);
+            if (err) {
+                hvfs_err(lib, "statfs(%s) failed w/ %s\n",
+                         t[i].mount_path, strerror(errno));
+                /* ignore this dev, do not alloc new files on this dev */
+                t[i].used = 0;
+                t[i].free = 0;
+            } else {
+                t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
+                t[i].free = s.f_bsize * s.f_bavail;
+            }
+        }
+    }
+out:    
+    return err;
+}
+
+int get_disk_parts(struct disk_part_info **dpi, int *nr)
+{
+    int err = 0;
+
+    *dpi = NULL;
+    *nr = 0;
+    
+    err = get_disk_parts_sn(dpi, nr);
+    if (err) {
+        goto out;
+    }
+    err = get_disk_sn_ext(dpi, nr);
+    if (err) {
+        goto out;
+    }
+
+out:
+    return err;
+}
+
 
 void dpi_free(struct disk_part_info *dpi, int nr)
 {
@@ -1554,10 +1705,6 @@ int main(int argc, char *argv[])
 
     hvfs_info(lib, "Got NR %d\n", nr);
     hvfs_info(lib, "Got NR %d\n", nr2);
-
-    if (nr2 == 0 && nr > 0) {
-        g_use_part = 0;
-    }
 
     int fd = open_shm(O_TRUNC);
     write_shm(fd, dpi, nr2);

@@ -294,7 +294,7 @@ public class MetaStoreClient {
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
 	}
 	
-	public static void main(String[] args) {
+	public static void main(String[] args) throws IOException {
 		MetaStoreClient cli = null;
 		String node = null;
 		String serverName = null;
@@ -305,7 +305,8 @@ public class MetaStoreClient {
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
-	    String dbName = null, tableName = null, partName = null, to_dc = null;
+	    String dbName = null, tableName = null, partName = null, to_dc = null, to_nas_devid = null,
+	    		tunnel = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -386,6 +387,22 @@ public class MetaStoreClient {
 	    		}
 	    		to_dc = o.opt;
 	    	}
+	    	if (o.flag.equals("-tonasdev")) {
+	    		// set to_nas_devid name
+	    		if (o.opt == null) {
+	    			System.out.println("-tonasdev NAS_DEVID");
+	    			System.exit(0);
+	    		}
+	    		to_nas_devid = o.opt;
+	    	}
+	    	if (o.flag.equals("-tunnel")) {
+	    		// set tunnel name
+	    		if (o.opt == null) {
+	    			System.out.println("-tunnel TUNNEL");
+	    			System.exit(0);
+	    		}
+	    		tunnel = o.opt;
+	    	}
 	    }
 	    if (cli == null) {
 	    	try {
@@ -415,6 +432,56 @@ public class MetaStoreClient {
 	    		partNames.add(partName);
 	    		try {
 	    			cli.client.migrate_out(dbName, tableName, partNames, to_dc);
+	    		} catch (MetaException me) {
+	    			me.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
+	    	if (o.flag.equals("-m2")) {
+	    		// migrate by NAS
+	    		if (dbName == null || tableName == null || partName == null || to_dc == null || to_nas_devid == null || tunnel == null) {
+	    			System.out.println("Please set dbname,tableName,partName,to_dc,tonasdev!");
+	    			System.exit(0);
+	    		}
+	    		List<String> partNames = new ArrayList<String>();
+	    		partNames.add(partName);
+	    		try {
+	    			List<SFileLocation> lsfl = cli.client.migrate2_stage1(dbName, tableName, partNames, to_dc);
+	    			if (lsfl.size() > 0) {
+	    				// copy NAS or non-NAS LOC to TUNNEL 
+	    				for (SFileLocation sfl : lsfl) {
+	    					if (sfl.getNode_name().equals("")) {
+	    						System.out.println("Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    					} else {
+	    						System.out.println("Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    					}
+	    					DevMap dm = new DevMap();
+	    					String sourceFile = dm.getPath(sfl.getDevid(), sfl.getLocation());
+	    					String targetFile = tunnel + "/" + sfl.getLocation();
+	    					// create the directory now
+	    					File tf = new File(targetFile);
+	    					tf.getParentFile().mkdirs();
+	    					System.out.println("Create parent DIR " + tf.getParent());
+	    					// do copy now
+	    					if (sfl.getNode_name().equals("")) {
+	    						Runtime.getRuntime().exec("cp -ar " + sourceFile + " " + targetFile);
+	    						System.out.println("Copy this NAS SFL to TUNNEL ....");
+	    					} else {
+	    						Runtime.getRuntime().exec("scp -pr " + sfl.getNode_name() + ":" + sourceFile + " " + targetFile);
+	    						System.out.println("Copy this non-NAS SFL to TUNNEL ....");
+	    					}
+	    				}
+	    				// begin stage2
+	    				if (cli.client.migrate2_stage2(dbName, tableName, partNames, to_dc, to_nas_devid)) {
+	    					System.out.println("Migrate2 Stage2 Done.");
+	    				} else 
+	    					System.out.println("Migrate2 Stage2 Failed.");
+	    			} else {
+	    				System.out.println("No data to migrate");
+	    			}
 	    		} catch (MetaException me) {
 	    			me.printStackTrace();
 	    			break;
@@ -507,6 +574,27 @@ public class MetaStoreClient {
 					file = cli.client.create_file(node, repnr, null, null);
 					System.out.println("Create file: " + toStringSFile(file));
 				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-frr")) {
+				// read the file object
+				try {
+					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
+					for (SFileLocation sfl : file.getLocations()) {
+						System.out.println("SFL: node " + sfl.getNode_name() + ", dev " + sfl.getDevid() + ", loc " + sfl.getLocation());
+					}
+				} catch (NumberFormatException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
 				} catch (TException e) {
