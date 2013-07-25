@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-07-10 09:55:31 macan>
+ * Time-stamp: <2013-07-25 09:56:23 macan>
  *
  */
 
@@ -356,6 +356,8 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr)
                 /* ignore this dev, do not alloc new files on this dev */
                 t[i].used = 0;
                 t[i].free = 0;
+                /* BUG-fix: ignore this error, only prevent new allocations */
+                err = 0;
             } else {
                 t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
                 t[i].free = s.f_bsize * s.f_bavail;
@@ -494,6 +496,8 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr)
                 /* ignore this dev, do not alloc new files on this dev */
                 t[i].used = 0;
                 t[i].free = 0;
+                /* BUG-fix: ignore this error, only prevent new allocations */
+                err = 0;
             } else {
                 t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
                 t[i].free = s.f_bsize * s.f_bavail;
@@ -698,7 +702,7 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
         bl += bw;
     } while (bl < strlen(buf));
     err = bl;
-    hvfs_info(lib, "%s", buf);
+    hvfs_info(lib, "WRITE SHM: {%s}\n", buf);
 
 out:
     return err;
@@ -1478,7 +1482,7 @@ static void *__rep_thread_main(void *args)
                           pos->to.node, pos->to.mp, pos->to.location,
                           pos->from.node, pos->from.mp, pos->from.location);
                 pos->status = REP_STATE_DOING;
-                sprintf(cmd, "ssh %s mkdir -p %s/%s && scp -pr %s:%s/%s %s:%s/%s 2>&1 && "
+                sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && scp -pr %s:%s/%s %s:%s/%s 2>&1 && "
                         "find %s/%s -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
@@ -1584,12 +1588,14 @@ int main(int argc, char *argv[])
     int nr = 0, nr2 = 0;
     int err = 0;
 
-    char *shortflags = "r:p:t:d:h?";
+    char *shortflags = "r:p:t:d:h?f:m:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
         {"host", required_argument, 0, 't'},
         {"dev", required_argument, 0, 'd'},
+        {"sdfilter", required_argument, 0, 'f'},
+        {"mpfilter", required_argument, 0, 'm'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1617,6 +1623,42 @@ int main(int argc, char *argv[])
             g_specify_dev = 1;
             g_dev_str = strdup(optarg);
             break;
+        case 'f':
+        {
+            // parse the filter string, add them to g_ds_conf.sdfilter
+            char *fstr = strdup(optarg);
+            char *p = fstr;
+            int i;
+
+            for (i = 0; i < MAX_FILTERS; i++, p = NULL) {
+                p = strtok(p, ",;");
+                if (!p) {
+                    break;
+                }
+                g_ds_conf.sdfilter[i] = strdup(p);
+                g_ds_conf.sdfilter_len = i + 1;
+                hvfs_info(lib, "GOT NEW SD filter %d: %s\n", i, p);
+            }
+            break;
+        }
+        case 'm':
+        {
+            // parse the filter string, add them to g_ds_conf.mpfilter
+            char *fstr = strdup(optarg);
+            char *p = fstr;
+            int i;
+
+            for (i = 0; i < MAX_FILTERS; i++, p = NULL) {
+                p = strtok(p, ",;");
+                if (!p) {
+                    break;
+                }
+                g_ds_conf.mpfilter[i] = strdup(p);
+                g_ds_conf.mpfilter_len = i + 1;
+                hvfs_info(lib, "GOT NEW MP filter %d: %s\n", i, p);
+            }
+            break;
+        }
         default:
             hvfs_err(lib, "Invalid arguments!\n");
             return EINVAL;

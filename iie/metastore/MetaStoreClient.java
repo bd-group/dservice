@@ -1,8 +1,11 @@
 package iie.metastore;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -289,6 +292,61 @@ public class MetaStoreClient {
 		return r;
 	}
 	
+	public static boolean runRemoteCmd(String cmd) throws IOException {
+		Process p = Runtime.getRuntime().exec(new String[] {"/bin/bash", "-c", cmd});
+		try {
+			InputStream err = p.getErrorStream();
+			InputStreamReader isr = new InputStreamReader(err);
+			BufferedReader br = new BufferedReader(isr);
+
+			String line = null;
+
+			System.out.println("<ERROR>");
+
+			while ((line = br.readLine()) != null)
+
+				System.out.println(line);
+			System.out.println("</ERROR>");
+
+			int exitVal = p.waitFor();
+			System.out.println(" -> exit w/ " + exitVal);
+			if (exitVal > 0)
+				return false;
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		return true;
+	}
+	
+	public static String runRemoteCmdWithResult(String cmd) throws IOException {
+		Process p = Runtime.getRuntime().exec(new String[] {"/bin/bash", "-c", cmd});
+		String result = "";
+		
+		try {
+			InputStream err = p.getErrorStream();
+			InputStreamReader isr = new InputStreamReader(err);
+			BufferedReader br = new BufferedReader(isr);
+
+			String line = null;
+
+			System.out.println("<ERROR>");
+
+			while ((line = br.readLine()) != null) {
+				result += line;
+				System.out.println(line);
+			}
+			System.out.println("</ERROR>");
+
+			int exitVal = p.waitFor();
+			System.out.println(" -> exit w/ " + exitVal);
+			if (exitVal > 0)
+				return result;
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		return result;
+	}
+	
 	public static class Option {
 	     String flag, opt;
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
@@ -305,8 +363,8 @@ public class MetaStoreClient {
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
-	    String dbName = null, tableName = null, partName = null, to_dc = null, to_nas_devid = null,
-	    		tunnel = null;
+	    String dbName = null, tableName = null, partName = null, to_dc = null, to_db = null, to_nas_devid = null,
+	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -387,6 +445,14 @@ public class MetaStoreClient {
 	    		}
 	    		to_dc = o.opt;
 	    	}
+	    	if (o.flag.equals("-todb")) {
+	    		// set to_db name
+	    		if (o.opt == null) {
+	    			System.out.println("-todb target_db");
+	    			System.exit(0);
+	    		}
+	    		to_db = o.opt;
+	    	}
 	    	if (o.flag.equals("-tonasdev")) {
 	    		// set to_nas_devid name
 	    		if (o.opt == null) {
@@ -395,13 +461,37 @@ public class MetaStoreClient {
 	    		}
 	    		to_nas_devid = o.opt;
 	    	}
-	    	if (o.flag.equals("-tunnel")) {
+	    	if (o.flag.equals("-tunnel_in")) {
 	    		// set tunnel name
 	    		if (o.opt == null) {
-	    			System.out.println("-tunnel TUNNEL");
+	    			System.out.println("-tunnel_in TUNNEL_IN_PATH");
 	    			System.exit(0);
 	    		}
-	    		tunnel = o.opt;
+	    		tunnel_in = o.opt;
+	    	}
+	    	if (o.flag.equals("-tunnel_out")) {
+	    		// set tunnel_out name
+	    		if (o.opt == null) {
+	    			System.out.println("-tunnel_out TUNNEL_OUT_PATH");
+	    			System.exit(0);
+	    		}
+	    		tunnel_out = o.opt;
+	    	}
+	    	if (o.flag.equals("-tunnel_node")) {
+	    		// set tunnel_node name
+	    		if (o.opt == null) {
+	    			System.out.println("-tunnel_node TUNNEL_NODE_NAME");
+	    			System.exit(0);
+	    		}
+	    		tunnel_node = o.opt;
+	    	}
+	    	if (o.flag.equals("-tunnel_user")) {
+	    		// set tunnel_user name
+	    		if (o.opt == null) {
+	    			System.out.println("-tunnel_user TUNNEL_USER_NAME");
+	    			System.exit(0);
+	    		}
+	    		tunnel_user = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -440,16 +530,112 @@ public class MetaStoreClient {
 	    			break;
 	    		}
 	    	}
-	    	if (o.flag.equals("-m2")) {
+	    	if (o.flag.equals("-m21")) {
+	    		// migrate by NAS stage 1
+	    		if (dbName == null || tableName == null || partName == null || to_dc == null || to_nas_devid == null || tunnel_in == null ||
+	    				tunnel_out == null || tunnel_node == null) {
+	    			System.out.println("Please set dbname,tableName,partName,to_dc,tonasdev,tunnel_in,tunnel_out,tunnel_node!");
+	    			System.exit(0);
+	    		}
+	    		if (tunnel_user == null) {
+	    			System.out.println("#Copy using default user, this might not be your purpose.");
+	    		}
+	    		List<String> partNames = new ArrayList<String>();
+	    		partNames.add(partName);
+	    		try {
+	    			List<SFileLocation> lsfl = cli.client.migrate2_stage1(dbName, tableName, partNames, to_dc);
+	    			//SFileLocation t = new SFileLocation("", 90, "devid", "/data/default/swjl/1031676804", 9, 1000, 1, "digest");
+	    			//lsfl.add(t);
+	    			if (lsfl.size() > 0) {
+	    				// copy NAS or non-NAS LOC to TUNNEL 
+	    				for (SFileLocation sfl : lsfl) {
+	    					if (sfl.getNode_name().equals("")) {
+	    						System.out.println("#Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    					} else {
+	    						System.out.println("#Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    					}
+	    					// calculate the source path: tunnel_in + location
+	    					String sourceFile = tunnel_in + sfl.getLocation();
+	    					// calculate the target path
+	    					String targetFile = tunnel_out + sfl.getLocation();
+	    					// create the target directory now
+	    					File tf = new File(targetFile);
+	    					System.out.println("#Create parent DIR " + "@" + tunnel_node + ": " + tf.getParent());
+	    					String cmd = "mkdir -p " + tf.getParent() + "; " + "chmod ugo+rw " + tf.getParent() + ";";
+	    					System.out.println(cmd);
+	    						    					
+	    					// do copy now
+	    					if (sfl.getNode_name().equals("")) {
+	    						System.out.println("#Copy     NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+	    						cmd = "cp -r " + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
+	    						System.out.println(cmd);
+	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						System.out.println(cmd);
+	    					} else {
+	    						// reset sourceFile
+	    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+	    						System.out.println("#Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+	    						cmd = "scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
+	    						System.out.println(cmd);
+	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						System.out.println(cmd);
+	    					}
+	    				}
+	    			} else {
+	    				System.out.println("No data to migrate");
+	    			}
+	    		} catch (MetaException me) {
+	    			me.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
+	    	if (o.flag.equals("-m22")) {
 	    		// migrate by NAS
-	    		if (dbName == null || tableName == null || partName == null || to_dc == null || to_nas_devid == null || tunnel == null) {
-	    			System.out.println("Please set dbname,tableName,partName,to_dc,tonasdev!");
+	    		if (dbName == null || tableName == null || partName == null || to_dc == null || to_nas_devid == null || tunnel_in == null ||
+	    				tunnel_out == null || tunnel_node == null) {
+	    			System.out.println("Please set dbname,tableName,partName,to_dc,tonasdev,tunnel_in,tunnel_out,tunnel_node!");
 	    			System.exit(0);
 	    		}
 	    		List<String> partNames = new ArrayList<String>();
 	    		partNames.add(partName);
 	    		try {
 	    			List<SFileLocation> lsfl = cli.client.migrate2_stage1(dbName, tableName, partNames, to_dc);
+	    			if (lsfl.size() > 0) {
+	    				// migrate by NAS stage2
+	    				if (cli.client.migrate2_stage2(dbName, tableName, partNames, to_dc, to_db, to_nas_devid)) {
+	    					System.out.println("Migrate2 Stage2 Done.");
+	    				} else 
+	    					System.out.println("Migrate2 Stage2 Failed.");
+	    			} else {
+	    				System.out.println("No data to migrate");
+	    			}
+	    		} catch (MetaException me) {
+	    			me.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
+	    	if (o.flag.equals("-m2")) {
+	    		// migrate by NAS
+	    		if (dbName == null || tableName == null || partName == null || to_dc == null || to_nas_devid == null || tunnel_in == null ||
+	    				tunnel_out == null || tunnel_node == null) {
+	    			System.out.println("Please set dbname,tableName,partName,to_dc,tonasdev,tunnel_in,tunnel_out,tunnel_node!");
+	    			System.exit(0);
+	    		}
+	    		if (tunnel_user == null) {
+	    			System.out.println("Copy using default user, this might not be your purpose.");
+	    		}
+	    		List<String> partNames = new ArrayList<String>();
+	    		partNames.add(partName);
+	    		try {
+	    			List<SFileLocation> lsfl = cli.client.migrate2_stage1(dbName, tableName, partNames, to_dc);
+	    			//SFileLocation t = new SFileLocation("", 90, "devid", "/data/default/swjl/1031676804", 9, 1000, 1, "digest");
+	    			//lsfl.add(t);
 	    			if (lsfl.size() > 0) {
 	    				// copy NAS or non-NAS LOC to TUNNEL 
 	    				for (SFileLocation sfl : lsfl) {
@@ -458,24 +644,56 @@ public class MetaStoreClient {
 	    					} else {
 	    						System.out.println("Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
 	    					}
-	    					DevMap dm = new DevMap();
-	    					String sourceFile = dm.getPath(sfl.getDevid(), sfl.getLocation());
-	    					String targetFile = tunnel + "/" + sfl.getLocation();
-	    					// create the directory now
+	    					// calculate the source path: tunnel_in + location
+	    					String sourceFile = tunnel_in + sfl.getLocation();
+	    					// calculate the target path
+	    					String targetFile = tunnel_out + sfl.getLocation();
+	    					// create the target directory now
 	    					File tf = new File(targetFile);
-	    					tf.getParentFile().mkdirs();
-	    					System.out.println("Create parent DIR " + tf.getParent());
+	    					System.out.println("Create parent DIR " + "@" + tunnel_node + ": " + tf.getParent());
+	    					String cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'mkdir -p " + tf.getParent() + "; " + "chmod ugo+rw " + tf.getParent() + ";'";
+	    					System.out.println(cmd);
+	    					if (!runRemoteCmd(cmd)) {
+	    						System.exit(1);
+	    					}
+	    						    					
 	    					// do copy now
 	    					if (sfl.getNode_name().equals("")) {
-	    						Runtime.getRuntime().exec("cp -ar " + sourceFile + " " + targetFile);
-	    						System.out.println("Copy this NAS SFL to TUNNEL ....");
+	    						System.out.println("Copy     NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'cp -r " + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
+	    						System.out.println(cmd);
+	    						if (!runRemoteCmd(cmd)) {
+	    							System.exit(1);
+	    						}
+	    						
+	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						System.out.println(cmd);
+	    						String md5 = runRemoteCmdWithResult(cmd);
+	    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
+	    							System.out.println("MD5 mismatch: original MD5 " + sfl.getDigest() + ", target MD5 " + md5 + ".");
+	    							System.exit(1);
+	    						}
 	    					} else {
-	    						Runtime.getRuntime().exec("scp -pr " + sfl.getNode_name() + ":" + sourceFile + " " + targetFile);
-	    						System.out.println("Copy this non-NAS SFL to TUNNEL ....");
+	    						// reset sourceFile
+	    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+	    						System.out.println("Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
+	    						System.out.println(cmd);
+	    						if (!runRemoteCmd(cmd)) {
+	    							System.exit(1);
+	    						}
+	    						
+	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						System.out.println(cmd);
+	    						String md5 = runRemoteCmdWithResult(cmd);
+	    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
+	    							System.out.println("MD5 mismatch: original MD5 " + sfl.getDigest() + ", target MD5 " + md5 + ".");
+	    							System.exit(1);
+	    						}
 	    					}
 	    				}
 	    				// begin stage2
-	    				if (cli.client.migrate2_stage2(dbName, tableName, partNames, to_dc, to_nas_devid)) {
+	    				if (cli.client.migrate2_stage2(dbName, tableName, partNames, to_dc, to_db, to_nas_devid)) {
 	    					System.out.println("Migrate2 Stage2 Done.");
 	    				} else 
 	    					System.out.println("Migrate2 Stage2 Failed.");
