@@ -332,10 +332,21 @@ public class MetaStoreClient {
 			System.out.println("<ERROR>");
 
 			while ((line = br.readLine()) != null) {
-				result += line;
 				System.out.println(line);
 			}
 			System.out.println("</ERROR>");
+			
+			InputStream out = p.getInputStream();
+			isr = new InputStreamReader(out);
+			br = new BufferedReader(isr);
+
+			System.out.println("<OUTPUT>");
+
+			while ((line = br.readLine()) != null) {
+				result += line;
+				System.out.println(line);
+			}
+			System.out.println("</OUTPUT>");
 
 			int exitVal = p.waitFor();
 			System.out.println(" -> exit w/ " + exitVal);
@@ -550,7 +561,7 @@ public class MetaStoreClient {
 	    				// copy NAS or non-NAS LOC to TUNNEL 
 	    				for (SFileLocation sfl : lsfl) {
 	    					if (sfl.getNode_name().equals("")) {
-	    						System.out.println("#Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    						System.out.println("#Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation() + " : " + sfl.getDigest());
 	    					} else {
 	    						System.out.println("#Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
 	    					}
@@ -640,7 +651,7 @@ public class MetaStoreClient {
 	    				// copy NAS or non-NAS LOC to TUNNEL 
 	    				for (SFileLocation sfl : lsfl) {
 	    					if (sfl.getNode_name().equals("")) {
-	    						System.out.println("Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+	    						System.out.println("Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation() + " : " + sfl.getDigest());
 	    					} else {
 	    						System.out.println("Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
 	    					}
@@ -666,7 +677,8 @@ public class MetaStoreClient {
 	    							System.exit(1);
 	    						}
 	    						
-	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node;
+	    						cmd += " find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
 	    						System.out.println(cmd);
 	    						String md5 = runRemoteCmdWithResult(cmd);
 	    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
@@ -683,7 +695,8 @@ public class MetaStoreClient {
 	    							System.exit(1);
 	    						}
 	    						
-	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node;
+	    						cmd += " \"find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';\"";
 	    						System.out.println(cmd);
 	    						String md5 = runRemoteCmdWithResult(cmd);
 	    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
