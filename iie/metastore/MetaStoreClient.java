@@ -26,6 +26,7 @@ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.MetaStoreConst;
 import org.apache.hadoop.hive.metastore.api.Datacenter;
+import org.apache.hadoop.hive.metastore.api.Device;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
@@ -376,6 +377,8 @@ public class MetaStoreClient {
 	    List<String> doubleOptsList = new ArrayList<String>();
 	    String dbName = null, tableName = null, partName = null, to_dc = null, to_db = null, to_nas_devid = null,
 	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
+	    int prop = 0;
+	    String node_name = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -423,6 +426,14 @@ public class MetaStoreClient {
 	    	if (o.flag.equals("-p")) {
 	    		// set serverPort
 	    		serverPort = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-prop")) {
+	    		// device prop
+	    		prop = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-node")) {
+	    		// node name for device creation
+	    		node_name = o.opt;
 	    	}
 	    	if (o.flag.equals("-table")) {
 	    		// set table name
@@ -720,6 +731,35 @@ public class MetaStoreClient {
 	    			e.printStackTrace();
 	    			break;
 	    		}
+	    	}
+	    	if (o.flag.equals("-cd")) {
+	    		// add Device
+	    		if (node_name == null) {
+	    			System.out.println("Please set -node -prop.");
+	    			System.exit(0);
+	    		}
+	    		try {
+					Device d = cli.client.createDevice(o.opt, prop, node_name);
+					System.out.println("Add Device: " + d.getDevid() + ", prop " + d.getProp() + ", node " + d.getNode_name());
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-dd")) {
+	    		// del Device
+	    		try {
+					cli.client.delDevice(o.opt);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
 	    	}
 			if (o.flag.equals("-n")) {
 				// add Node
