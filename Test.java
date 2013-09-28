@@ -6,7 +6,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Random;
 
-import org.apache.hadoop.hive.metastore.MetaStoreConst;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.Index;
 import org.apache.hadoop.hive.metastore.api.MetaException;
@@ -15,8 +14,10 @@ import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
+import org.apache.hadoop.hive.metastore.api.SplitValue;
 import org.apache.hadoop.hive.metastore.api.UnknownTableException;
 import org.apache.hadoop.hive.metastore.model.MFile;
+import org.apache.hadoop.hive.metastore.model.MetaStoreConst;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -271,7 +272,7 @@ public class Test {
 		}
 		
 		try {
-			file = cli.client.create_file(node, repnr, dbName, tableName);
+			file = cli.client.create_file(node, repnr, dbName, tableName, new ArrayList<SplitValue>());
 			System.out.println("Create file: " + MetaStoreClient.toStringSFile(file));
 		} catch (FileOperationException e) {
 			// TODO Auto-generated catch block

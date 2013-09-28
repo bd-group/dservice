@@ -24,15 +24,21 @@ import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
-import org.apache.hadoop.hive.metastore.MetaStoreConst;
-import org.apache.hadoop.hive.metastore.api.Datacenter;
+import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
+import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.Device;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
+import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
+import org.apache.hadoop.hive.metastore.api.MSOperation;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
+import org.apache.hadoop.hive.metastore.api.SplitValue;
+import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.api.User;
+import org.apache.hadoop.hive.metastore.model.MetaStoreConst;
 import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocolException;
@@ -43,7 +49,7 @@ import devmap.DevMap.DevStat;
 
 public class MetaStoreClient {
 	// client should be the local datacenter;
-	public Datacenter local_dc;
+	public Database local_db;
 	public IMetaStoreClient client;
 	private ConcurrentHashMap<String, IMetaStoreClient> climap = new ConcurrentHashMap<String, IMetaStoreClient>();
 	
@@ -203,44 +209,44 @@ public class MetaStoreClient {
 
 	
 	private void initmap(boolean preconnect) throws MetaException {
-		// get local datacenter
+		// get local attribution
 		try {
-			this.local_dc = client.get_local_center();
+			this.local_db = client.get_local_attribution();
 		} catch (TException e) {
 			throw new MetaException(e.toString());
 		}
-		climap.put(local_dc.getName(), client);
+		climap.put(local_db.getName(), client);
 		
-		// get all datacenters
-		List<Datacenter> ld;
+		// get all attributions
+		List<Database> ld;
 		try {
-			ld = client.get_all_centers();
+			ld = client.get_all_attributions();
 		} catch (TException e) {
 			throw new MetaException(e.toString());
 		}
-		for (Datacenter dc : ld) {
-			if (!dc.getName().equals(local_dc.getName())) {
+		for (Database db : ld) {
+			if (!db.getName().equals(local_db.getName())) {
 				if (preconnect) {
-					System.out.println("Try to connect to Datacenter " + dc.getName() + ", uri=" + dc.getLocationUri());
+					System.out.println("Try to connect to Attribution " + db.getName() + ", uri=" + db.getParameters().get("service.metastore.uri"));
 					try { 
-						IMetaStoreClient cli = createMetaStoreClient(dc.getLocationUri());
-						climap.put(dc.getName(), cli);
+						IMetaStoreClient cli = createMetaStoreClient(db.getParameters().get("service.metastore.uri"));
+						climap.put(db.getName(), cli);
 					} catch (MetaException me) {
-						System.out.println("Connect to Datacenter " + dc.getName() + ", uri=" + dc.getLocationUri() + " failed!");
+						System.out.println("Connect to Datacenter " + db.getName() + ", uri=" + db.getParameters().get("service.metastore.uri") + " failed!");
 					}
 				}
 			}
 		}
 	}
 	
-	public IMetaStoreClient getCli(String dc_name) {
-		IMetaStoreClient cli =  climap.get(dc_name);
+	public IMetaStoreClient getCli(String db_name) {
+		IMetaStoreClient cli =  climap.get(db_name);
 		if (cli == null) {
 			// do reconnect now
 			try {
-				Datacenter rdc = client.get_center(dc_name);
-				cli = createMetaStoreClient(rdc.getLocationUri());
-				climap.put(dc_name, cli);
+				Database rdb = client.get_attribution(db_name);
+				cli = createMetaStoreClient(rdb.getParameters().get("service.metastore.uri"));
+				climap.put(db_name, cli);
 			} catch (NoSuchObjectException e) {
 				System.out.println(e);
 			} catch (MetaException e) {
@@ -265,6 +271,21 @@ public class MetaStoreClient {
 		}
 	}
 	
+	public static String splitValueToString(List<SplitValue> values) {
+		String r = "", keys = "", vals = "";
+		
+		if (values == null)
+			return "null";
+		
+		for (SplitValue sv : values) {
+			keys += sv.getSplitKeyName() + ",";
+			vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + ",";
+		}
+		r += "KEYS [" + keys + "], VALS [" + vals + "]";
+		
+		return r;
+	}
+	
 	public static String toStringSFile(SFile file) {
 		if (file == null) {
 			return "null";
@@ -272,12 +293,16 @@ public class MetaStoreClient {
 		
 		String r = "<";
 		r += "fid:" + file.getFid() + ", ";
-		r += "placement:" + file.getPlacement() + ", ";
-		r += "storestatus: " + file.getStore_status() + ", ";
+		r += "db:" + file.getDbName() + ", ";
+		r += "table:" + file.getTableName() + ", ";
+		r += "status: " + file.getStore_status() + ", ";
 		r += "repnr: " + file.getRep_nr() + ", ";
 		r += "digest: " + file.getDigest() + ", ";
-		r += "record_nr: " + file.getRecord_nr() + ", ";
-		r += "allrecord_nr: " + file.getAll_record_nr() + ", [\n";
+		r += "rec_nr: " + file.getRecord_nr() + ", ";
+		r += "allrec_nr: " + file.getAll_record_nr() + ",";
+		r += "len: " + file.getLength() + ",";
+		r += "values: {" + splitValueToString(file.getValues()); 
+		r += "}, [\n";
 		if (file.getLocations() != null) {
 			for (SFileLocation loc : file.getLocations()) {
 				r += loc.getNode_name() + ":" + loc.getDevid() + ":"
@@ -378,6 +403,7 @@ public class MetaStoreClient {
 	    String dbName = null, tableName = null, partName = null, to_dc = null, to_db = null, to_nas_devid = null,
 	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
 	    int prop = 0;
+	    String devid = null;
 	    String node_name = null;
 	    
 	    // parse the args
@@ -430,6 +456,10 @@ public class MetaStoreClient {
 	    	if (o.flag.equals("-prop")) {
 	    		// device prop
 	    		prop = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-devid")) {
+	    		// device ID
+	    		devid = o.opt;
 	    	}
 	    	if (o.flag.equals("-node")) {
 	    		// node name for device creation
@@ -534,22 +564,38 @@ public class MetaStoreClient {
 		}
 
 	    for (Option o : optsList) {
+	    	if (o.flag.equals("-authtest")) {
+	    		// auth test
+	    		User user = new User("macan", "111111", System.currentTimeMillis(), "root");
+	    		List<MSOperation> ops = new ArrayList<MSOperation>();
+	    		
+	    		ops.add(MSOperation.CREATETABLE);
+	    		try {
+					Table tbl = cli.client.getTable("db1", "pokes");
+					System.out.println("AUTH CHECK: " + cli.client.user_authority_check(user, tbl, ops));
+				} catch (AlreadyExistsException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (InvalidObjectException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (NoSuchObjectException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+
+	    	}
 	    	if (o.flag.equals("-m")) {
 	    		// migrate
 	    		if (dbName == null || tableName == null || partName == null || to_dc == null) {
 	    			System.out.println("Please set dbname,tableName,partName,to_dc!");
 	    			System.exit(0);
-	    		}
-	    		List<String> partNames = new ArrayList<String>();
-	    		partNames.add(partName);
-	    		try {
-	    			cli.client.migrate_out(dbName, tableName, partNames, to_dc);
-	    		} catch (MetaException me) {
-	    			me.printStackTrace();
-	    			break;
-	    		} catch (TException e) {
-	    			e.printStackTrace();
-	    			break;
 	    		}
 	    	}
 	    	if (o.flag.equals("-m21")) {
@@ -732,6 +778,72 @@ public class MetaStoreClient {
 	    			break;
 	    		}
 	    	}
+	    	if (o.flag.equals("-sd")) {
+	    		// show device
+	    		if (devid == null) {
+	    			System.out.println("Please set -devid");
+	    			System.exit(0);
+	    		}
+	    		try {
+					Device d = cli.client.getDevice(devid);
+					String sprop, status;
+					switch (d.getProp()) {
+					case MetaStoreConst.MDeviceProp.ALONE:
+						sprop = "ALONE";
+						break;
+					case MetaStoreConst.MDeviceProp.SHARED:
+						sprop = "SHARED";
+						break;
+					case MetaStoreConst.MDeviceProp.BACKUP:
+						sprop = "BACKUP";
+						break;
+					case MetaStoreConst.MDeviceProp.BACKUP_ALONE:
+						sprop = "BACKUP_ALONE";
+						break;
+					default:
+						sprop = "Unknown";
+					}
+					switch (d.getStatus()) {
+					case MetaStoreConst.MDeviceStatus.ONLINE:
+						status = "ONLINE";
+						break;
+					case MetaStoreConst.MDeviceStatus.OFFLINE:
+						status = "OFFLINE";
+						break;
+					case MetaStoreConst.MDeviceStatus.SUSPECT:
+						status = "SUSPECT";
+						break;
+					default:
+						status = "Unknown";
+					}
+					System.out.println("Device -> [" + d.getNode_name() + ":" + d.getDevid() + ":" + sprop + ":" + status + "]");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-md")) {
+	    		// modify Device
+	    		if (node_name == null || devid == null) {
+	    			System.out.println("Please set -node -prop -devid.");
+	    			System.exit(0);
+	    		}
+	    		try {
+	    			Node n = cli.client.get_node(node_name);
+					Device d = cli.client.getDevice(devid);
+					d.setProp(prop);
+					cli.client.changeDeviceLocation(d, n);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
 	    	if (o.flag.equals("-cd")) {
 	    		// add Device
 	    		if (node_name == null) {
@@ -842,7 +954,10 @@ public class MetaStoreClient {
 			if (o.flag.equals("-fcr")) {
 				// create a new file and return the fid
 				try {
-					file = cli.client.create_file(node, repnr, null, null);
+					List<SplitValue> values = new ArrayList<SplitValue>();
+					//values.add(new SplitValue("COOL_KEY_1", 1, "COOL_KEY_V1", 0));
+					//values.add(new SplitValue("COOL_KEY_2", 2, "COOL_KEY_V2", 0));
+					file = cli.client.create_file(node, repnr, null, null, values);
 					System.out.println("Create file: " + toStringSFile(file));
 				} catch (FileOperationException e) {
 					// TODO Auto-generated catch block
@@ -921,7 +1036,9 @@ public class MetaStoreClient {
 			if (o.flag.equals("-f")) {
 				// test file
 				try {
-					file = cli.client.create_file(node, repnr, null, null);
+					List<SplitValue> values = new ArrayList<SplitValue>();
+					//values.add(new SplitValue("COOL_KEY_NAME", 1, "COOL_KEY_VALUE", 0));
+					file = cli.client.create_file(node, repnr, null, null, values);
 					System.out.println("Create file: " + toStringSFile(file));
 					// write something here
 					String filepath;
