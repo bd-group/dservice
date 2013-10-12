@@ -402,7 +402,7 @@ public class MetaStoreClient {
 	    List<String> doubleOptsList = new ArrayList<String>();
 	    String dbName = null, tableName = null, partName = null, to_dc = null, to_db = null, to_nas_devid = null,
 	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
-	    int prop = 0;
+	    int prop = 0, pplen = 0, ppnr = 1;
 	    String devid = null;
 	    String node_name = null;
 	    String sap_key = null, sap_value = null;
@@ -460,6 +460,7 @@ public class MetaStoreClient {
 	    		System.out.println("-lst : list table files.");
 	    		System.out.println("-flt : filter table files.");
 	    		System.out.println("-tct : truncate table files.");
+	    		System.out.println("-pp  : ping pong latency test.");
 
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
@@ -620,6 +621,22 @@ public class MetaStoreClient {
 	    		}
 	    		flt_l2_value = o.opt;
 	    	}
+	    	if (o.flag.equals("-pplen")) {
+	    		// set ping pong string length
+	    		if (o.opt == null) {
+	    			System.out.println("-pplen length");
+	    			System.exit(0);
+	    		}
+	    		pplen = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-ppnr")) {
+	    		// set ping pong number
+	    		if (o.opt == null) {
+	    			System.out.println("-ppnr number");
+	    			System.exit(0);
+	    		}
+	    		ppnr = Integer.parseInt(o.opt);
+	    	}
 	    }
 	    if (cli == null) {
 	    	try {
@@ -639,6 +656,28 @@ public class MetaStoreClient {
 		}
 
 	    for (Option o : optsList) {
+	    	if (o.flag.equals("-pp")) {
+	    		// ping pong test
+	    		StringBuffer sb = new StringBuffer();
+	    		for (int i = 0; i < pplen; i++) {
+	    			sb.append("a");
+	    		}
+	    		long begin = System.nanoTime();
+	    		try {
+	    			for (int i = 0; i < ppnr; i++) {
+	    				cli.client.pingPong(sb.toString());
+	    			}
+	    		} catch (MetaException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+
+	    		long end = System.nanoTime();
+	    		System.out.println("PingPong: nr " + ppnr + " len " + pplen + " avg latency " + (end - begin) / ppnr / 1000.0 + " us.");
+	    	}
 	    	if (o.flag.equals("-authtest")) {
 	    		// auth test
 	    		User user = new User("macan", "111111", System.currentTimeMillis(), "root");
