@@ -405,6 +405,8 @@ public class MetaStoreClient {
 	    int prop = 0;
 	    String devid = null;
 	    String node_name = null;
+	    String sap_key = null, sap_value = null;
+	    String flt_l1_key = null, flt_l1_value = null, flt_l2_key = null, flt_l2_value = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -440,10 +442,35 @@ public class MetaStoreClient {
 	    for (Option o : optsList) {
 	    	if (o.flag.equals("-h")) {
 	    		// print help message
-	    		System.out.println("-r : server name.");
-	    		System.out.println("-n : add localhost as a new node.");
-	    		System.out.println("-f : test file operations.");
-	    		break;
+	    		System.out.println("-h   : print this help.");
+	    		System.out.println("-r   : server name.");
+	    		System.out.println("-n   : add current machine as a new node.");
+	    		System.out.println("-f   : auto test file operations, from create to delete.");
+	    		System.out.println("-sd  : show device");
+	    		System.out.println("-md  : modify device: change prop or attached node.");
+	    		System.out.println("-cd  : add new device.");
+	    		System.out.println("-dd  : delete device.");
+	    		System.out.println("-nn  : add node with specified name.");
+	    		System.out.println("-dn  : delete node.");
+	    		System.out.println("-ln  : list existing node.");
+	    		System.out.println("-gni : get current active Node Info from DM.");
+	    		System.out.println("-dms : get current DM status.");
+	    		System.out.println("-frr : read the file object by fid.");
+	    		System.out.println("-sap : set attribution parameters.");
+	    		System.out.println("-lst : list table files.");
+	    		System.out.println("-flt : filter table files.");
+	    		System.out.println("-tct : truncate table files.");
+
+	    		System.out.println("");
+	    		System.out.println("Be careful with following operations!");
+	    		System.out.println("");
+	    		
+	    		System.out.println("-tsm : toggle safe mode of DM.");
+	    		System.out.println("-fcr : create a new file and return the fid.");
+	    		System.out.println("-fcl : close the file.");
+	    		System.out.println("-fcd : delete the file.");
+	    		
+	    		System.exit(0);
 	    	}
 	    	if (o.flag.equals("-r")) {
 	    		// set servername;
@@ -544,6 +571,54 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		tunnel_user = o.opt;
+	    	}
+	    	if (o.flag.equals("-sap_key")) {
+	    		// set sap key
+	    		if (o.opt == null) {
+	    			System.out.println("-sap_key ATTRIBUTION_KEY");
+	    			System.exit(0);
+	    		}
+	    		sap_key = o.opt;
+	    	}
+	    	if (o.flag.equals("-sap_value")) {
+	    		// set sap value
+	    		if (o.opt == null) {
+	    			System.out.println("-sap_value ATTRIBUTION_VALUE");
+	    			System.exit(0);
+	    		}
+	    		sap_value = o.opt;
+	    	}
+	    	if (o.flag.equals("-flt_l1_key")) {
+	    		// set filter table level_1 key
+	    		if (o.opt == null) {
+	    			System.out.println("-flt_l1_key level 1 pkey");
+	    			System.exit(0);
+	    		}
+	    		flt_l1_key = o.opt;
+	    	}
+	    	if (o.flag.equals("-flt_l1_value")) {
+	    		// set filter table level_1 value
+	    		if (o.opt == null) {
+	    			System.out.println("-flt_l1_key level 1 value");
+	    			System.exit(0);
+	    		}
+	    		flt_l1_value = o.opt;
+	    	}
+	    	if (o.flag.equals("-flt_l2_key")) {
+	    		// set filter table level_2 key
+	    		if (o.opt == null) {
+	    			System.out.println("-flt_l2_key level 2 pkey");
+	    			System.exit(0);
+	    		}
+	    		flt_l2_key = o.opt;
+	    	}
+	    	if (o.flag.equals("-flt_l2_value")) {
+	    		// set filter table level_2 value
+	    		if (o.opt == null) {
+	    			System.out.println("-flt_l2_value level 2 value");
+	    			System.exit(0);
+	    		}
+	    		flt_l2_value = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -937,6 +1012,20 @@ public class MetaStoreClient {
 					System.out.println("Node '" + n.getNode_name() + "' {" + n.getIps().toString() + "}");
 				}
 			}
+			if (o.flag.equals("-gni")) {
+				// get NodeInfo 
+				String nis;
+				try {
+					nis = cli.client.getNodeInfo();
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+				System.out.println(nis);
+			}
 			if (o.flag.equals("-dms")) {
 				// get DM status
 				String dms;
@@ -950,6 +1039,110 @@ public class MetaStoreClient {
 					break;
 				}
 				System.out.println(dms);
+			}
+			if (o.flag.equals("-tsm")) {
+				// toggle safe mode, do NOT use it unless you know what are you doing
+				try {
+					System.out.println("Toggle Safe Mode: " + cli.client.toggle_safemode());
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-sap")) {
+				// set attribution kv parameter
+				if (sap_key == null || sap_value == null) {
+					System.out.println("Please set sap_key and sap_value.");
+					System.exit(0);
+				}
+				Database db;
+				try {
+					db = cli.client.get_local_attribution();
+					Map<String, String> nmap = db.getParameters();
+					nmap.put(sap_key, sap_value);
+					db.setParameters(nmap);
+					cli.client.alterDatabase(db.getName(), db);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-flt")) {
+				// filter table files
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table");
+					System.exit(0);
+				}
+				List<SplitValue> values = new ArrayList<SplitValue>();
+				if (flt_l1_key != null && flt_l1_value != null) {
+					// split value into many sub values
+					String[] l1vs = flt_l1_value.split(";");
+					for (String vs : l1vs) {
+						values.add(new SplitValue(flt_l1_key, 1, vs, 0));
+					}
+					if (flt_l2_key != null && flt_l2_value != null) {
+						String[] l2vs = flt_l2_value.split(";");
+						for (String vs : l2vs) {
+							values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+						}
+					}
+				}
+				try {
+					List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
+					for (SFile f : files) {
+						System.out.println("fid " + f.getFid() + " -> " + toStringSFile(f));
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-tct")) {
+				// trunc table files
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table.");
+					System.exit(0);
+				}
+				try {
+					cli.client.truncTableFiles(dbName, tableName);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-lst")) {
+				// list table files
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table.");
+					System.exit(0);
+				}
+				try {
+					List<Long> files = cli.client.listTableFiles(dbName, tableName, 0, Integer.MAX_VALUE);
+					if (files.size() > 0) {
+						for (Long fid : files) {
+							SFile f = cli.client.get_file_by_id(fid);
+							System.out.println("fid " + fid + " -> " + toStringSFile(f));
+						}
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
 			}
 			if (o.flag.equals("-fcr")) {
 				// create a new file and return the fid
