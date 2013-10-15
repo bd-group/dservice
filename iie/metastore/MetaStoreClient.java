@@ -318,6 +318,74 @@ public class MetaStoreClient {
 		return r;
 	}
 	
+	public static class LFDThread extends Thread {
+		private MetaStoreClient cli;
+		public long begin, end;
+		public String digest;
+		public String line = "";
+		public long fnr = 0;
+
+		public LFDThread(MetaStoreClient cli, String digest) {
+			this.cli = cli;
+			this.digest = digest;
+		}
+		
+		public void run() {
+			try {
+				long start = System.nanoTime();
+				List<Long> files = cli.client.listFilesByDigest(digest);
+				long stop = System.nanoTime();
+				
+				fnr = files.size();
+				if (fnr > 0) {
+					begin = System.nanoTime();
+					for (Long fid : files) {
+						SFile f = cli.client.get_file_by_id(fid);
+						line += "fid " + f.getFid();
+					}
+					end = System.nanoTime();
+					System.out.println(Thread.currentThread().getId() + "--> Search by digest consumed " + (stop - start) / 1000.0 + " us.");
+					System.out.println(Thread.currentThread().getId() + "--> Get " + files.size() + " files in " + (end - begin) / 1000.0 + " us, GPS is " + files.size() * 1000000000.0 / (end - begin));
+				}
+			} catch (MetaException e) {
+				e.printStackTrace();
+			} catch (TException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	public static class PingPongThread extends Thread {
+		MetaStoreClient cli;
+		public long begin, end;
+		public long ppnr, pplen;
+		
+		public PingPongThread(MetaStoreClient cli, long ppnr, long pplen) {
+			this.cli = cli;
+			this.ppnr = ppnr;
+			this.pplen = pplen;
+		}
+		
+		public void run() {
+			StringBuffer sb = new StringBuffer();
+			
+    		for (int i = 0; i < pplen; i++) {
+    			sb.append(Integer.toHexString(i).charAt(0));
+    		}
+    		begin = System.nanoTime();
+    		try {
+    			for (int i = 0; i < ppnr; i++) {
+    				cli.client.pingPong(sb.toString());
+    			}
+    		} catch (MetaException e) {
+    			e.printStackTrace();
+    		} catch (TException e) {
+    			e.printStackTrace();
+    		}
+    		end = System.nanoTime();
+		}
+	}
+	
 	public static boolean runRemoteCmd(String cmd) throws IOException {
 		Process p = Runtime.getRuntime().exec(new String[] {"/bin/bash", "-c", cmd});
 		try {
@@ -402,11 +470,14 @@ public class MetaStoreClient {
 	    List<String> doubleOptsList = new ArrayList<String>();
 	    String dbName = null, tableName = null, partName = null, to_dc = null, to_db = null, to_nas_devid = null,
 	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
-	    int prop = 0, pplen = 0, ppnr = 1;
+	    int prop = 0, pplen = 0, ppnr = 1, ppthread = 1, lfdc_thread = 1;
 	    String devid = null;
 	    String node_name = null;
 	    String sap_key = null, sap_value = null;
 	    String flt_l1_key = null, flt_l1_value = null, flt_l2_key = null, flt_l2_value = null;
+	    int flctc_nr = 0;
+	    String digest = "";
+	    boolean lfd_verbose = false;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -458,9 +529,12 @@ public class MetaStoreClient {
 	    		System.out.println("-frr : read the file object by fid.");
 	    		System.out.println("-sap : set attribution parameters.");
 	    		System.out.println("-lst : list table files.");
+	    		System.out.println("-lfd : list files by digest.");
 	    		System.out.println("-flt : filter table files.");
 	    		System.out.println("-tct : truncate table files.");
 	    		System.out.println("-pp  : ping pong latency test.");
+	    		System.out.println("-flctc : lots of file createtion test.");
+	    		System.out.println("-lfdc: concurrent list files by digest test.");
 
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
@@ -637,6 +711,46 @@ public class MetaStoreClient {
 	    		}
 	    		ppnr = Integer.parseInt(o.opt);
 	    	}
+	    	if (o.flag.equals("-ppthread")) {
+	    		// set ping pong thread number
+	    		if (o.opt == null) {
+	    			System.out.println("-ppthread number");
+	    			System.exit(0);
+	    		}
+	    		ppthread = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-flctc_nr")) {
+	    		// set lots of files number
+	    		if (o.opt == null) {
+	    			System.out.println("-flctc_nr number");
+	    			System.exit(0);
+	    		}
+	    		flctc_nr = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-lfd_digest")) {
+	    		// set digest string
+	    		if (o.opt == null) {
+	    			System.out.println("-lfd_digest STRING");
+	    			System.exit(0);
+	    		}
+	    		digest = o.opt;
+	    	}
+	    	if (o.flag.equals("-lfd_verbose")) {
+	    		// set LFD verbose flag
+	    		if (o.opt == null) {
+	    			System.out.println("-lfd_verbose");
+	    			System.exit(0);
+	    		}
+	    		lfd_verbose = true;
+	    	}
+	    	if (o.flag.equals("-lfdc_thread")) {
+	    		// set LFD thread number
+	    		if (o.opt == null) {
+	    			System.out.println("-lfdc_thread number");
+	    			System.exit(0);
+	    		}
+	    		lfdc_thread = Integer.parseInt(o.opt);
+	    	}
 	    }
 	    if (cli == null) {
 	    	try {
@@ -658,25 +772,47 @@ public class MetaStoreClient {
 	    for (Option o : optsList) {
 	    	if (o.flag.equals("-pp")) {
 	    		// ping pong test
-	    		StringBuffer sb = new StringBuffer();
-	    		for (int i = 0; i < pplen; i++) {
-	    			sb.append("a");
+	    		long tppnr;
+	    		
+	    		tppnr = ppnr / ppthread * ppthread;
+	    		List<PingPongThread> ppts = new ArrayList<PingPongThread>();
+	    		for (int i = 0; i < ppthread; i++) {
+	    			MetaStoreClient tcli = null;
+	    			
+	    			if (serverName == null)
+						try {
+							tcli = new MetaStoreClient();
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+					else
+						try {
+							tcli = new MetaStoreClient(serverName, serverPort);
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+	    			ppts.add(new PingPongThread(tcli, tppnr, pplen));
 	    		}
 	    		long begin = System.nanoTime();
-	    		try {
-	    			for (int i = 0; i < ppnr; i++) {
-	    				cli.client.pingPong(sb.toString());
-	    			}
-	    		} catch (MetaException e) {
-	    			e.printStackTrace();
-	    			break;
-	    		} catch (TException e) {
-	    			e.printStackTrace();
-	    			break;
+	    		for (PingPongThread t : ppts) {
+	    			t.start();
 	    		}
-
+	    		for (PingPongThread t : ppts) {
+	    			try {
+						t.join();
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+	    		}
 	    		long end = System.nanoTime();
-	    		System.out.println("PingPong: nr " + ppnr + " len " + pplen + " avg latency " + (end - begin) / ppnr / 1000.0 + " us.");
+	    		long tp = 0;
+	    		for (PingPongThread t : ppts) {
+	    			tp += t.ppnr / ((end - begin) / 1000000000.0);
+	    		}
+	    		System.out.println("PingPong: thread " + ppthread + " nr " + tppnr + " len " + pplen + 
+	    				" avg Latency " + (end - begin) / tppnr / 1000.0 + " us, ThroughPut " + tp + ".");
 	    	}
 	    	if (o.flag.equals("-authtest")) {
 	    		// auth test
@@ -1161,6 +1297,76 @@ public class MetaStoreClient {
 					break;
 				}
 			}
+			if (o.flag.equals("-lfd")) {
+				// list files by digest
+				System.out.println("Please use -lfd_digest to change digest string; -lfd_verbose to dump more file info.");
+				try {
+					long start = System.nanoTime();
+					List<Long> files = cli.client.listFilesByDigest(digest);
+					long stop = System.nanoTime();
+					if (files.size() > 0) {
+						long begin = System.nanoTime();
+						for (Long fid : files) {
+							SFile f = cli.client.get_file_by_id(fid);
+							String line = "fid " + fid;
+							if (lfd_verbose) {
+								line += " -> " + toStringSFile(f);
+							}
+							System.out.println(line);
+						}
+						long end = System.nanoTime();
+						System.out.println("--> Search by digest consumed " + (stop - start) / 1000.0 + " us.");
+						System.out.println("--> Get " + files.size() + " files in " + (end - begin) / 1000.0 + " us, GPS is " + files.size() * 1000000000.0 / (end - begin));
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-lfdc")) {
+				// list files by digest with concurrent mgets
+				System.out.println("ONLY USED for TEST. Set lfdc_thread to thread number.");
+				List<LFDThread> lfdts = new ArrayList<LFDThread>();
+				for (int i = 0; i < lfdc_thread; i++) {
+					MetaStoreClient tcli = null;
+	    			
+	    			if (serverName == null)
+						try {
+							tcli = new MetaStoreClient();
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+					else
+						try {
+							tcli = new MetaStoreClient(serverName, serverPort);
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+	    			lfdts.add(new LFDThread(tcli, digest));
+				}
+				for (LFDThread t : lfdts) {
+					t.start();
+				}
+				for (LFDThread t : lfdts) {
+					try {
+						t.join();
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+				long tfnr = 0, tgps = 0;
+				for (LFDThread t : lfdts) {
+					tfnr += t.fnr;
+					tgps += t.fnr / ((t.end - t.begin) / 1000000000.0);
+				}
+				System.out.println("LFDCON: thread " + lfdc_thread + " total got " + tfnr + 
+						" files, total GPS " + tgps);
+			}
 			if (o.flag.equals("-lst")) {
 				// list table files
 				if (dbName == null || tableName == null) {
@@ -1181,6 +1387,34 @@ public class MetaStoreClient {
 				} catch (TException e) {
 					e.printStackTrace();
 					break;
+				}
+			}
+			if (o.flag.equals("-flctc")) {
+				// create lots of files, touch it, close it to do pressure-test
+				System.out.println("Please use -flctc_nr to set file numbers, default is " + flctc_nr + ".");
+				List<SplitValue> values = new ArrayList<SplitValue>();
+				DevMap dm = new DevMap();
+				
+				try {
+					long begin = System.nanoTime();
+					for (int i = 0; i < flctc_nr; i++) {
+						file = cli.client.create_file(node, repnr, null, null, values);
+						System.out.print("Create file: " + file.getFid());
+						file.setDigest("MSTOOL_LARGE_SCALE_FILE_TEST");
+						String path = dm.getPath(file.getLocations().get(0).getDevid(), file.getLocations().get(0).getLocation());
+						File nf = new File(path);
+						nf.mkdirs();
+						System.out.println(", write to location " + path + ", and close it");
+						cli.client.close_file(file);
+					}
+					long end = System.nanoTime();
+					System.out.println("--> Create " + flctc_nr + " files in " + (end - begin) / 1000 + " us, CPS is " + flctc_nr * 1000000000.0 / (end - begin));
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-fcr")) {

@@ -72,7 +72,7 @@ public class DevMap {
     }
     
     public DevStat findDev(String devid) {
-    	if (last_refresh_ts + 60  < System.currentTimeMillis()) {
+    	if (last_refresh_ts + 5 * 1000  < System.currentTimeMillis()) {
     		System.out.println("[DEVMAP NOTICE] Current devmap might be out-of-date, refresh it firstly!");
     		refreshDevMap();
     	}
