@@ -25,6 +25,8 @@ import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
+import org.apache.hadoop.hive.metastore.api.CreateOperation;
+import org.apache.hadoop.hive.metastore.api.CreatePolicy;
 import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.Device;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
@@ -515,6 +517,7 @@ public class MetaStoreClient {
 	    		// print help message
 	    		System.out.println("-h   : print this help.");
 	    		System.out.println("-r   : server name.");
+	    		System.out.println("-p   : server port.");
 	    		System.out.println("-n   : add current machine as a new node.");
 	    		System.out.println("-f   : auto test file operations, from create to delete.");
 	    		System.out.println("-sd  : show device");
@@ -1273,6 +1276,7 @@ public class MetaStoreClient {
 					for (SFile f : files) {
 						System.out.println("fid " + f.getFid() + " -> " + toStringSFile(f));
 					}
+					System.out.println("Total " + files.size() + " file(s) listed.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1381,6 +1385,7 @@ public class MetaStoreClient {
 							System.out.println("fid " + fid + " -> " + toStringSFile(f));
 						}
 					}
+					System.out.println("Total " + files.size() + "file(s) listed.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1417,6 +1422,27 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				}
 			}
+			if (o.flag.equals("-fcrp")) {
+				// create a new file by policy
+				CreatePolicy cp = new CreatePolicy();
+				cp.setOperation(CreateOperation.CREATE_IF_NOT_EXIST_AND_GET_IF_EXIST);
+				
+				try {
+					List<SplitValue> values = new ArrayList<SplitValue>();
+					values.add(new SplitValue("rel_time", 1, "1024", 0));
+					values.add(new SplitValue("rel_time", 1, "2048", 0));
+					values.add(new SplitValue("isp_name", 2, "2", 0));
+
+					file = cli.client.create_file_by_policy(cp, 2, "db1", "wb", values);
+					System.out.println("Create file: " + toStringSFile(file));
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-fcr")) {
 				// create a new file and return the fid
 				try {
@@ -1437,8 +1463,10 @@ public class MetaStoreClient {
 				// read the file object
 				try {
 					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
-					for (SFileLocation sfl : file.getLocations()) {
-						System.out.println("SFL: node " + sfl.getNode_name() + ", dev " + sfl.getDevid() + ", loc " + sfl.getLocation());
+					if (file.getLocations() != null && file.getLocationsSize() > 0) {
+						for (SFileLocation sfl : file.getLocations()) {
+							System.out.println("SFL: node " + sfl.getNode_name() + ", dev " + sfl.getDevid() + ", loc " + sfl.getLocation());
+						}
 					}
 				} catch (NumberFormatException e) {
 					// TODO Auto-generated catch block

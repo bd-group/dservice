@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-05-27 14:47:11 macan>
+# Time-stamp: <2013-10-18 14:34:59 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -55,7 +55,9 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
-CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR)
+MM_CP = $(shell pwd)/lib/jedis-2.1.0.jar:$(shell pwd)/lib/junixsocket-1.3.jar
+
+CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
 IIE = iie
 MSCLI = mscli
@@ -87,8 +89,11 @@ $(JTEST).class : $(JTEST).java $(IIE)
 $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@$(ECHO) -e " " JAVAC"\t" $@
 	@CLASSPATH=$(CP) javac -d build $(IIE)/index/lucene/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/metastore/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
 	@$(ECHO) -e " " JAR"\t" devmap.jar
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class
 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
