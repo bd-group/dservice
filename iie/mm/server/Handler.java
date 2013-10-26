@@ -26,6 +26,7 @@ public class Handler implements Runnable{
 		this.sq = sq;
 		dis = new DataInputStream(this.s.getInputStream());
 		dos = new DataOutputStream(this.s.getOutputStream());
+		sp = new StorePhoto(conf);
 	}
 	
 	@Override
@@ -45,41 +46,17 @@ public class Handler implements Runnable{
 					byte[] setmd5content = readBytes(setlen + md5len + contentlen, dis);
 					String set = new String(setmd5content, 0, setlen);
 					String md5 = new String(setmd5content, setlen, md5len);
-					
+
+					String result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
 					// 统计写入的字节数
 					ServerProfile.addWrite(contentlen);
 					
-					WriteTask t = new WriteTask(set, md5, setmd5content, setlen + md5len, contentlen);
-					synchronized (t) {
-						BlockingQueue<WriteTask> bq = sq.get(set);
-						
-						if (bq != null)	{
-							//存在这个键,表明该写线程已经存在,直接把任务加到任务队列里即可
-							bq.add(t);
-						} else {
-							//如果不存在这个键,则需要新开启一个写线程
-							BlockingQueue<WriteTask> tasks = new LinkedBlockingQueue<WriteTask>();
-							tasks.add(t);
-							sq.put(set, tasks);
-							WriteThread wt = new WriteThread(conf, tasks);
-							new Thread(wt).start();
-						}
-						while (true) {
-							try {
-								t.wait();
-								break;
-							} catch (InterruptedException e) {
-								e.printStackTrace();
-							}
-						}
-					}
-					
 					//把写的结果返回给客户端
-					if (t.getResult() == null)		//说明结果已经在redis里存在
+					if (result == null)		//说明结果已经在redis里存在
 						dos.writeInt(-1);
 					else {
-						dos.writeInt(t.getResult().length());
-						dos.write(t.getResult().getBytes());
+						dos.writeInt(result.length());
+						dos.write(result.getBytes());
 					}
 					dos.flush();
 				} else if (header[0] == ActionType.SEARCH) {
@@ -89,8 +66,6 @@ public class Handler implements Runnable{
 					//每次都有39 40ms延迟
 					String info = new String(readBytes(infolen, dis));			
 
-					if (sp == null)			//有读请求时,才初始化该对象
-						sp = new StorePhoto(conf);
 					byte[] content = sp.searchPhoto(info);
 					// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
 					if (content != null) {
@@ -111,8 +86,6 @@ public class Handler implements Runnable{
 						bq.add(new WriteTask(null, null, null, 0, 0));
 						sq.remove(set);
 					}
-					if(sp == null)			//有该请求时,才初始化该对象
-						sp = new StorePhoto(conf);
 					sp.delSet(set);
 					dos.write(1);			//返回一个字节1,代表删除成功
 				}
