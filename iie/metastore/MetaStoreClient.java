@@ -326,10 +326,12 @@ public class MetaStoreClient {
 		public String digest;
 		public String line = "";
 		public long fnr = 0;
+		public int batch = 1;
 
-		public LFDThread(MetaStoreClient cli, String digest) {
+		public LFDThread(MetaStoreClient cli, String digest, int batch) {
 			this.cli = cli;
 			this.digest = digest;
+			this.batch = batch;
 		}
 		
 		public void run() {
@@ -337,14 +339,26 @@ public class MetaStoreClient {
 				long start = System.nanoTime();
 				List<Long> files = cli.client.listFilesByDigest(digest);
 				long stop = System.nanoTime();
+				System.out.println(Thread.currentThread().getId() + "--> Search by digest consumed " + (stop - start) / 1000.0 + " us.");
 				
 				fnr = files.size();
 				if (fnr > 0) {
 					begin = System.nanoTime();
-					for (Long fid : files) {
-						SFile f = cli.client.get_file_by_id(fid);
-						line += "fid " + f.getFid();
-					}
+						if (batch == 1) {
+							for (Long fid : files) {
+								SFile f = cli.client.get_file_by_id(fid);
+								line += "fid " + f.getFid();
+							}
+						} else {
+							for (int k = 0; k < files.size(); k += batch) {
+								List<Long> fids = files.subList(k, k + Math.min(files.size() - k, batch));
+								List<SFile> fl = cli.client.get_files_by_ids(fids);
+								
+								for (int l = 0; l < fl.size(); l++) {
+									line += "fid " + fl.get(l).getFid();
+								}
+							}
+						}
 					end = System.nanoTime();
 					System.out.println(Thread.currentThread().getId() + "--> Search by digest consumed " + (stop - start) / 1000.0 + " us.");
 					System.out.println(Thread.currentThread().getId() + "--> Get " + files.size() + " files in " + (end - begin) / 1000.0 + " us, GPS is " + files.size() * 1000000000.0 / (end - begin));
@@ -480,6 +494,8 @@ public class MetaStoreClient {
 	    int flctc_nr = 0;
 	    String digest = "";
 	    boolean lfd_verbose = false;
+	    int lfdc_batch = 1;
+	    String luser = null, lpassword = null, ruser = null, rpassword = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -740,11 +756,11 @@ public class MetaStoreClient {
 	    	}
 	    	if (o.flag.equals("-lfd_verbose")) {
 	    		// set LFD verbose flag
-	    		if (o.opt == null) {
-	    			System.out.println("-lfd_verbose");
-	    			System.exit(0);
-	    		}
 	    		lfd_verbose = true;
+	    	}
+	    	if (o.flag.equals("-lfdc_batch")) {
+	    		// set LFD batch size
+	    		lfdc_batch = Integer.parseInt(o.opt);
 	    	}
 	    	if (o.flag.equals("-lfdc_thread")) {
 	    		// set LFD thread number
@@ -753,6 +769,38 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		lfdc_thread = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-ruser")) {
+	    		// set migration target's user name
+	    		if (o.opt == null) {
+	    			System.out.println("-ruser user_name");
+	    			System.exit(0);
+	    		}
+	    		ruser = o.opt;
+	    	}
+	    	if (o.flag.equals("-luser")) {
+	    		// set local user name
+	    		if (o.opt == null) {
+	    			System.out.println("-luser user_name");
+	    			System.exit(0);
+	    		}
+	    		luser = o.opt;
+	    	}
+	    	if (o.flag.equals("-lpassword")) {
+	    		// set local user password
+	    		if (o.opt == null) {
+	    			System.out.println("-lpassword user_password");
+	    			System.exit(0);
+	    		}
+	    		lpassword = o.opt;
+	    	}
+	    	if (o.flag.equals("-rpassword")) {
+	    		// set local user password
+	    		if (o.opt == null) {
+	    			System.out.println("-rpassword user_password");
+	    			System.exit(0);
+	    		}
+	    		rpassword = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -844,12 +892,267 @@ public class MetaStoreClient {
 				}
 
 	    	}
-	    	if (o.flag.equals("-m")) {
-	    		// migrate
-	    		if (dbName == null || tableName == null || partName == null || to_dc == null) {
-	    			System.out.println("Please set dbname,tableName,partName,to_dc!");
+	    	if (o.flag.equals("-m11")) {
+	    		// migrate by NAS based on file: stage 1
+	    		if (dbName == null || tableName == null || to_db == null || to_nas_devid == null ||
+	    				flt_l1_key == null || flt_l1_value == null) {
+	    			System.out.println("Please set dbname,tableName,to_db,tonasdev,flt_l1_key,flt_l1_value!");
 	    			System.exit(0);
 	    		}
+	    		// get file list by values
+	    		List<SplitValue> values = new ArrayList<SplitValue>();
+				if (flt_l1_key != null && flt_l1_value != null) {
+					// split value into many sub values
+					String[] l1vs = flt_l1_value.split(";");
+					for (String vs : l1vs) {
+						values.add(new SplitValue(flt_l1_key, 1, vs, 0));
+					}
+					if (flt_l2_key != null && flt_l2_value != null) {
+						String[] l2vs = flt_l2_value.split(";");
+						for (String vs : l2vs) {
+							values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+						}
+					}
+				}
+				try {
+					List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
+					System.out.println("#Got total " + files.size() + " file(s).");
+					List<Long> fids = new ArrayList<Long>();
+					for (SFile f : files) {
+						fids.add(f.getFid());
+					}
+					List<SFileLocation> fls = cli.client.migrate_stage1(dbName, tableName, fids, to_db);
+					for (SFileLocation sfl : fls) {
+						if (sfl.getNode_name().equals("")) {
+							System.out.println("#Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation() + ":" + sfl.getDigest());
+						} else {
+							System.out.println("#Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+						}
+						// calculate the source path: tunnel_in + location
+						String sourceFile = tunnel_in + sfl.getLocation();
+    					// calculate the target path
+    					String targetFile = tunnel_out + sfl.getLocation();
+    					// create the target directory now
+    					File tf = new File(targetFile);
+    					System.out.println("#Create parent DIR " + "@" + tunnel_node + ": " + tf.getParent());
+    					String cmd = "mkdir -p " + tf.getParent() + "; " + "chmod ugo+rw " + tf.getParent() + ";";
+    					System.out.println(cmd);
+    					
+    					// do copy now
+    					if (sfl.getNode_name().equals("")) {
+    						System.out.println("#Copy     NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+    						cmd = "cp -r " + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
+    						System.out.println(cmd);
+    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+    						System.out.println(cmd);
+    					} else {
+    						// reset sourceFile
+    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+    						System.out.println("#Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+    						cmd = "scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
+    						System.out.println(cmd);
+    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+    						System.out.println(cmd);
+    					}
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-m12")) {
+	    		// migrate by NAS based on file: stage 2
+	    		if (dbName == null || tableName == null || to_db == null || to_nas_devid == null ||
+	    				flt_l1_key == null || flt_l1_value == null ||
+	    				tunnel_in == null || tunnel_out == null || tunnel_node == null) {
+	    			System.out.println("Please set dbname,tableName,to_db,tonasdev,flt_l1_key,flt_l1_value!");
+	    			System.exit(0);
+	    		}
+	    		if (tunnel_user == null) {
+	    			System.out.println("#Copy using default user, this might not be your purpose.");
+	    		}
+	    		// get file list by values
+	    		List<SplitValue> values = new ArrayList<SplitValue>();
+				if (flt_l1_key != null && flt_l1_value != null) {
+					// split value into many sub values
+					String[] l1vs = flt_l1_value.split(";");
+					for (String vs : l1vs) {
+						values.add(new SplitValue(flt_l1_key, 1, vs, 0));
+					}
+					if (flt_l2_key != null && flt_l2_value != null) {
+						String[] l2vs = flt_l2_value.split(";");
+						for (String vs : l2vs) {
+							values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+						}
+					}
+				}
+				try {
+					List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
+					List<Long> fids = new ArrayList<Long>();
+					for (SFile f : files) {
+						fids.add(f.getFid());
+					}
+					if (fids.size() <= 0) {
+						System.out.println("No data to migrate, done.");
+						System.exit(0);
+					} else 
+						System.out.println("Got total " + files.size() + " file(s) to migrate.");
+					
+					Database ldb = cli.client.get_local_attribution();
+					if (ldb == null) {
+						System.out.println("Got local attribution failed.");
+						System.exit(0);
+					}
+					
+					// authenticate the connection now
+					if (luser == null && ruser != null)
+						luser = ruser;
+					if (lpassword == null && rpassword != null)
+						lpassword = rpassword;
+					if (!cli.client.authentication(luser, lpassword)) {
+						System.out.println("Local authentication failed with user " + luser);
+					}
+					
+					if (ruser == null && luser != null)
+						ruser = luser;
+					if (rpassword == null && lpassword != null)
+						rpassword = lpassword;
+
+					if (cli.client.migrate_stage2(dbName, tableName, fids, ldb.getName(), to_db, to_nas_devid, ruser, rpassword)) {
+						System.out.println("Migrate stage2 done: metadata updated, files will be clear automatically.");
+					} else {
+						System.out.println("Migrate stage2 failed.");
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+
+	    	}
+	    	if (o.flag.equals("-m1")) {
+	    		// migrate by NAS based on file: stage 1 and stage 2
+	    		if (dbName == null || tableName == null || to_db == null || to_nas_devid == null ||
+	    				flt_l1_key == null || flt_l1_value == null ||
+	    				tunnel_in == null || tunnel_out == null || tunnel_node == null) {
+	    			System.out.println("Please set dbname,tableName,to_db,tonasdev,flt_l1_key,flt_l1_value!");
+	    			System.exit(0);
+	    		}
+	    		if (tunnel_user == null) {
+	    			System.out.println("#Copy using default user, this might not be your purpose.");
+	    		}
+	    		// get file list by values
+	    		List<SplitValue> values = new ArrayList<SplitValue>();
+				if (flt_l1_key != null && flt_l1_value != null) {
+					// split value into many sub values
+					String[] l1vs = flt_l1_value.split(";");
+					for (String vs : l1vs) {
+						values.add(new SplitValue(flt_l1_key, 1, vs, 0));
+					}
+					if (flt_l2_key != null && flt_l2_value != null) {
+						String[] l2vs = flt_l2_value.split(";");
+						for (String vs : l2vs) {
+							values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+						}
+					}
+				}
+				try {
+					List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
+					System.out.println("Got total " + files.size() + " file(s).");
+					List<Long> fids = new ArrayList<Long>();
+					for (SFile f : files) {
+						fids.add(f.getFid());
+					}
+					List<SFileLocation> fls = cli.client.migrate_stage1(dbName, tableName, fids, to_db);
+					for (SFileLocation sfl : fls) {
+						if (sfl.getNode_name().equals("")) {
+							System.out.println("#Get NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation() + ":" + sfl.getDigest());
+						} else {
+							System.out.println("#Get non-NAS LOC " + sfl.getDevid() + ":" + sfl.getLocation());
+						}
+						
+						// calculate the source path: tunnel_in + location
+    					String sourceFile = tunnel_in + sfl.getLocation();
+    					// calculate the target path
+    					String targetFile = tunnel_out + sfl.getLocation();
+    					// create the target directory now
+    					File tf = new File(targetFile);
+    					System.out.println("Create parent DIR " + "@" + tunnel_node + ": " + tf.getParent());
+    					String cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'mkdir -p " + tf.getParent() + "; " + "chmod ugo+rw " + tf.getParent() + ";'";
+    					System.out.println(cmd);
+    					if (!runRemoteCmd(cmd)) {
+    						System.exit(1);
+    					}
+    						    					
+    					// do copy now
+    					if (sfl.getNode_name().equals("")) {
+    						System.out.println("Copy     NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'cp -r " + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
+    						System.out.println(cmd);
+    						if (!runRemoteCmd(cmd)) {
+    							System.exit(1);
+    						}
+    						
+    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node;
+    						cmd += " find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
+    						System.out.println(cmd);
+    						String md5 = runRemoteCmdWithResult(cmd);
+    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
+    							System.out.println("MD5 mismatch: original MD5 " + sfl.getDigest() + ", target MD5 " + md5 + ".");
+    							System.exit(1);
+    						}
+    					} else {
+    						// reset sourceFile
+    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+    						System.out.println("Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
+    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
+    						System.out.println(cmd);
+    						if (!runRemoteCmd(cmd)) {
+    							System.exit(1);
+    						}
+    						
+    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node;
+    						cmd += " \"find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';\"";
+    						System.out.println(cmd);
+    						String md5 = runRemoteCmdWithResult(cmd);
+    						if (!sfl.getDigest().equalsIgnoreCase(md5) && !sfl.getDigest().equals("MIGRATE2-DIGESTED!") && !sfl.getDigest().equals("REMOTE-DIGESTED!") && !sfl.getDigest().equals("SFL_DEFAULT")) {
+    							System.out.println("MD5 mismatch: original MD5 " + sfl.getDigest() + ", target MD5 " + md5 + ".");
+    							System.exit(1);
+    						}
+    					}
+					}
+					
+					// authenticate the connection now
+					if (luser == null && ruser != null)
+						luser = ruser;
+					if (lpassword == null && rpassword != null)
+						lpassword = rpassword;
+					if (!cli.client.authentication(luser, lpassword)) {
+						System.out.println("Local authentication failed with user " + luser);
+					}
+					
+					if (ruser == null && luser != null)
+						ruser = luser;
+					if (rpassword == null && lpassword != null)
+						rpassword = lpassword;
+					
+					if (cli.client.migrate_stage2(dbName, tableName, fids, "db1", to_db, to_nas_devid, ruser, rpassword)) {
+						System.out.println("Migration files OK.");
+					} else {
+						System.out.println("Migration files FAILED.");
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
 	    	}
 	    	if (o.flag.equals("-m21")) {
 	    		// migrate by NAS stage 1
@@ -1242,6 +1545,7 @@ public class MetaStoreClient {
 					Map<String, String> nmap = db.getParameters();
 					nmap.put(sap_key, sap_value);
 					db.setParameters(nmap);
+					System.out.println(nmap);
 					cli.client.alterDatabase(db.getName(), db);
 				} catch (MetaException e) {
 					e.printStackTrace();
@@ -1332,7 +1636,7 @@ public class MetaStoreClient {
 			}
 			if (o.flag.equals("-lfdc")) {
 				// list files by digest with concurrent mgets
-				System.out.println("ONLY USED for TEST. Set lfdc_thread to thread number.");
+				System.out.println("ONLY USED for TEST. Set lfdc_thread to thread number, lfdc_batch to batch size.");
 				List<LFDThread> lfdts = new ArrayList<LFDThread>();
 				for (int i = 0; i < lfdc_thread; i++) {
 					MetaStoreClient tcli = null;
@@ -1351,7 +1655,7 @@ public class MetaStoreClient {
 							e.printStackTrace();
 							System.exit(0);
 						}
-	    			lfdts.add(new LFDThread(tcli, digest));
+	    			lfdts.add(new LFDThread(tcli, digest, lfdc_batch));
 				}
 				for (LFDThread t : lfdts) {
 					t.start();

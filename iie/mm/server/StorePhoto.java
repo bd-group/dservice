@@ -84,67 +84,73 @@ public class StorePhoto {
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
 		StringBuffer rVal = new StringBuffer();
+		StoreSetContext ssc;
 		
-		StoreSetContext ssc = writeContextHash.get(set);
-		
-		if (ssc == null) {
-			ssc = new StoreSetContext(set);
-			writeContextHash.put(set, ssc);
+		synchronized (writeContextHash) {
+			ssc = writeContextHash.get(set);
+			
+			if (ssc == null) {
+				ssc = new StoreSetContext(set);
+				writeContextHash.put(set, ssc);
+			}
 		}
 
 		//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
 		//用curBlock缓存当前可写的块，减少查询jedis的次数
-		
-		try {
-			if (ssc.curBlock < 0) {
-				String reply = jedis.get(set + ".blk." + localHostName);
-				if (reply != null) {
-					ssc.curBlock = Long.parseLong(reply);		//需要通过节点名字来标示不同节点上相同名字的集合
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-				} else {
-					ssc.curBlock = 0;
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-					//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-					jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
-					jedis.set(set + ".blk." + localHostName, "" + ssc.curBlock);
-				}
-				ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-				ssc.offset = ssc.newf.length();
-				ssc.raf.seek(ssc.offset);
-			} else {
-				if (ssc.newf.length() + content.length > blocksize) {
-					ssc.curBlock++;
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-					if(ssc.raf != null)			//如果换了一个新块,则先把之前的关掉
-						ssc.raf.close();
+		synchronized (ssc) {
+			try {
+				if (ssc.curBlock < 0) {
+					String reply = jedis.get(set + ".blk." + localHostName);
+					if (reply != null) {
+						ssc.curBlock = Long.parseLong(reply);		//需要通过节点名字来标示不同节点上相同名字的集合
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+					} else {
+						ssc.curBlock = 0;
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
+						jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
+						jedis.set(set + ".blk." + localHostName, "" + ssc.curBlock);
+					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-					jedis.incr(set + ".blk." + localHostName);			//当前可写的块号加一
-					ssc.offset = 0;
+					ssc.offset = ssc.newf.length();
+					ssc.raf.seek(ssc.offset);
+				} else {
+					if (ssc.newf.length() + content.length > blocksize) {
+						ssc.curBlock++;
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						//如果换了一个新块,则先把之前的关掉
+						if(ssc.raf != null)
+							ssc.raf.close();
+						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						//当前可写的块号加一
+						jedis.incr(set + ".blk." + localHostName);
+						ssc.offset = 0;
+					}
 				}
+				ssc.raf.write(content, coff, clen);
+	
+				// 构造返回值
+				rVal.append("1#"); // type
+				rVal.append(set);
+				rVal.append("#");
+				rVal.append(localHostName); // node name
+				rVal.append("#");
+				rVal.append(serverport); // port #
+				rVal.append("#");
+				rVal.append(ssc.curBlock);
+				rVal.append("#");
+				rVal.append(ssc.offset);
+				rVal.append("#");
+				rVal.append(clen);
+	
+				ssc.offset += clen;
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+				return "#FAIL:" + e.getMessage();
+			} catch (IOException e) {
+				e.printStackTrace();
+				return "#FAIL:" + e.getMessage();
 			}
-			ssc.raf.write(content, coff, clen);
-
-			// 构造返回值
-			rVal.append("1#"); // type
-			rVal.append(set);
-			rVal.append("#");
-			rVal.append(localHostName); // node name
-			rVal.append("#");
-			rVal.append(serverport); // port #
-			rVal.append("#");
-			rVal.append(ssc.curBlock);
-			rVal.append("#");
-			rVal.append(ssc.offset);
-			rVal.append("#");
-			rVal.append(clen);
-
-			ssc.offset += clen;
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
-		} catch (IOException e) {
-			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
 		}
 
 		String returnVal = rVal.toString();

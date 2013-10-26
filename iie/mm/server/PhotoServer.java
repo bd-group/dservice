@@ -2,8 +2,10 @@ package iie.mm.server;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.channels.ServerSocketChannel;
 import java.util.Timer;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +18,7 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 public class PhotoServer {
 	private ServerConf conf;
 	private ServerSocket ss;
+	private ServerSocketChannel listener;
 	private int serverport;
 	private int period ;					//每隔period秒统计一次读写信息
 //	private String destRoot = "photo/";
@@ -28,7 +31,12 @@ public class PhotoServer {
 		this.conf = conf;
 		serverport = conf.getServerPort();
 		period = conf.getPeriod();
-		ss = new ServerSocket(serverport);
+		InetSocketAddress inetSocketAddress = new InetSocketAddress(serverport);
+		listener = ServerSocketChannel.open();
+		ss = listener.socket();
+		ss.setReuseAddress(true);
+		ss.bind(inetSocketAddress);
+		
 		pool = Executors.newCachedThreadPool();
 	}
 	
@@ -38,14 +46,16 @@ public class PhotoServer {
 		Timer t = new Timer();
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
 		
+		/**
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();
+		 */
 		
 		while(true) {
 			try {
 				// 接收tcp请求,来自tcp的请求是读取请求或者写请求
-				pool.execute(new Handler(conf, ss.accept(), sq));
+				pool.execute(new Handler(conf, listener.accept(), sq));
 			} catch (IOException e) {
 				e.printStackTrace();
 				pool.shutdown();
@@ -57,7 +67,6 @@ public class PhotoServer {
 	 * 专门用来接收写请求，使用junixsocket,应该可以实现并tcp更快的进程间通信
 	 * @author zhaoyang
 	 *
-	 */
 	class WriteServer implements Runnable
 	{
 		@Override
@@ -83,5 +92,7 @@ public class PhotoServer {
 		}
 		
 	}
+	 */
+
 }
 
