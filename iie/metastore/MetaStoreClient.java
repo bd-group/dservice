@@ -524,6 +524,7 @@ public class MetaStoreClient {
 	    		System.out.println("-md  : modify device: change prop or attached node.");
 	    		System.out.println("-cd  : add new device.");
 	    		System.out.println("-dd  : delete device.");
+	    		System.out.println("-ld  : list existing devices.");
 	    		System.out.println("-nn  : add node with specified name.");
 	    		System.out.println("-dn  : delete node.");
 	    		System.out.println("-ln  : list existing node.");
@@ -1031,6 +1032,24 @@ public class MetaStoreClient {
 	    			break;
 	    		}
 	    	}
+	    	if (o.flag.equals("-ld")) {
+	    		// list device
+	    		List<Device> ds;
+				try {
+					ds = cli.client.listDevice();
+					if (ds.size() > 0) {
+		    			for (Device d : ds) {
+		    				System.out.println("-node " + d.getNode_name() + " -devid " + d.getDevid() + " -prop " + d.getProp());
+		    			}
+					}
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+	    	}
 	    	if (o.flag.equals("-sd")) {
 	    		// show device
 	    		if (devid == null) {
@@ -1293,6 +1312,7 @@ public class MetaStoreClient {
 				}
 				try {
 					cli.client.truncTableFiles(dbName, tableName);
+					System.out.println("Begin backgroud table truncate now, please wait!");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1385,7 +1405,7 @@ public class MetaStoreClient {
 							System.out.println("fid " + fid + " -> " + toStringSFile(f));
 						}
 					}
-					System.out.println("Total " + files.size() + "file(s) listed.");
+					System.out.println("Total " + files.size() + " file(s) listed.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1406,6 +1426,7 @@ public class MetaStoreClient {
 						file = cli.client.create_file(node, repnr, null, null, values);
 						System.out.print("Create file: " + file.getFid());
 						file.setDigest("MSTOOL_LARGE_SCALE_FILE_TEST");
+						file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE); 
 						String path = dm.getPath(file.getLocations().get(0).getDevid(), file.getLocations().get(0).getLocation());
 						File nf = new File(path);
 						nf.mkdirs();
@@ -1443,6 +1464,30 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				}
 			}
+			if (o.flag.equals("-fro")) {
+				// reopen a file
+				boolean ok = false;
+				long fid = 0;
+				
+				try {
+					fid = Long.parseLong(o.opt);
+					ok = cli.client.reopen_file(fid);
+					file = cli.client.get_file_by_id(fid);
+					System.out.println("Reopen file: " + toStringSFile(file));
+				} catch (NumberFormatException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-fcr")) {
 				// create a new file and return the fid
 				try {
@@ -1468,6 +1513,7 @@ public class MetaStoreClient {
 							System.out.println("SFL: node " + sfl.getNode_name() + ", dev " + sfl.getDevid() + ", loc " + sfl.getLocation());
 						}
 					}
+					System.out.println("Read file: " + toStringSFile(file));
 				} catch (NumberFormatException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -1487,6 +1533,7 @@ public class MetaStoreClient {
 				try {
 					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
 					file.setDigest("MSTOOL Digested!");
+					file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
 					cli.client.close_file(file);
 					System.out.println("Close file: " + toStringSFile(file));
 					DevMap dm = new DevMap();
@@ -1548,11 +1595,11 @@ public class MetaStoreClient {
 					} while (true);
 					filepath = ds.mount_point + "/" + file.getLocations().get(0).getLocation();
 					System.out.println("Trying to write to file location: " + filepath);
-					File newfile = new File(filepath);
+					File newfile = new File(filepath + "/test_file");
 					try {
 						newfile.getParentFile().mkdirs();
 						newfile.createNewFile();
-						FileOutputStream out = new FileOutputStream(filepath);
+						FileOutputStream out = new FileOutputStream(filepath + "/test_file");
 						out.close();
 					} catch (IOException e) {
 						e.printStackTrace();
@@ -1560,6 +1607,7 @@ public class MetaStoreClient {
 						break;
 					}
 					file.setDigest("DIGESTED!");
+					file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
 					cli.client.close_file(file);
 					System.out.println("Closed file: " + toStringSFile(file));
 					r = cli.client.get_file_by_id(file.getFid());
