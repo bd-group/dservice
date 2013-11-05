@@ -14,7 +14,9 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,11 +37,13 @@ import org.apache.hadoop.hive.metastore.api.MSOperation;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
+import org.apache.hadoop.hive.metastore.api.NodeGroup;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
 import org.apache.hadoop.hive.metastore.api.SplitValue;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.api.User;
+import org.apache.hadoop.hive.metastore.api.statfs;
 import org.apache.hadoop.hive.metastore.model.MetaStoreConst;
 import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
@@ -480,6 +484,11 @@ public class MetaStoreClient {
 	    int flctc_nr = 0;
 	    String digest = "";
 	    boolean lfd_verbose = false;
+	    long begin_time = -1, end_time = -1;
+	    String ANSI_RESET = "\u001B[0m";
+	    String ANSI_RED = "\u001B[31m";
+	    long ofl_fid = -1;
+	    String ofl_sfl_dev = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -754,6 +763,22 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		lfdc_thread = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-begin_time")) {
+	    		// set begin_time
+	    		if (o.opt == null) {
+	    			System.out.println("-begin_time timestamp");
+	    			System.exit(0);
+	    		}
+	    		begin_time = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-end_time")) {
+	    		// set end time
+	    		if (o.opt == null) {
+	    			System.out.println("-end_time timestamp");
+	    			System.exit(0);
+	    		}
+	    		end_time = Long.parseLong(o.opt);
 	    	}
 	    }
 	    if (cli == null) {
@@ -1237,6 +1262,81 @@ public class MetaStoreClient {
 				}
 				System.out.println(dms);
 			}
+			if (o.flag.equals("-statfs")) {
+				// stat the file system
+				if (begin_time < 0 || end_time < 0) {
+					System.out.println("Please set -begin_time and -end_time");
+					System.exit(0);
+				}
+				try {
+					statfs s = cli.client.statFileSystem(begin_time, end_time);
+					System.out.println("Query on time range [" + begin_time + "," + end_time + ") {" +
+							new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(begin_time * 1000)) + "," + 
+							new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(end_time * 1000)) + 
+							"} -> ");
+					System.out.println(" INCREATE     " + s.getIncreate());
+					System.out.println(" CLOSE        " + s.getClose());
+					System.out.println(" REPLICATED   " + s.getReplicated());
+					System.out.println(" RM_LOGICAL   " + s.getRm_logical());
+					System.out.println(" RM_PHYSICAL  " + s.getRm_physical());
+					System.out.println("");
+					System.out.println(" OVERREP      " + s.getOverrep());
+					System.out.println(" UNDERREP     " + s.getUnderrep());
+					System.out.println(" LINGER       " + s.getLinger());
+					System.out.println(" SUSPECT      " + s.getSuspect());
+					System.out.println("");
+					System.out.println(" INC OFFLINE  " + (s.getIncreate() - s.getInc_ons() - s.getInc_ons2()));
+					System.out.println(" INC ONLINE   " + s.getInc_ons());
+					System.out.println(" INC ONLINE2+ " + ANSI_RED + s.getInc_ons2() + ANSI_RESET);
+					System.out.println(" CLS OFFLINE  " + ANSI_RED + s.getCls_offs() + ANSI_RESET);
+					System.out.println("");
+					System.out.println(" COLS         " + s.getClos());
+					System.out.println(" INCS O2ERR   " + s.getIncs());
+					if (s.getIncsSize() > 0) {
+						System.out.println(ANSI_RED + "BAD State in Our Store! Please notify macan@iie.ac.cn" + ANSI_RESET);
+					}
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-ofl")) {
+				// offline a file location
+				if (ofl_fid < 0 || ofl_sfl_dev == null) {
+					System.out.println("Please set -ofl_fid and -ofl_sfl_dev.");
+					System.exit(0);
+				}
+				SFile f;
+				try {
+					f = cli.client.get_file_by_id(ofl_fid);
+					SFileLocation sfl = null;
+				
+					if (f.getLocationsSize() > 0) {
+						for (SFileLocation fl : f.getLocations()) {
+							if (fl.getDevid().equalsIgnoreCase(ofl_sfl_dev)) {
+								sfl = fl;
+								break;
+							}
+						}
+					}
+					if (sfl != null)
+						cli.client.offline_filelocation(sfl);
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-tsm")) {
 				// toggle safe mode, do NOT use it unless you know what are you doing
 				try {
@@ -1391,6 +1491,30 @@ public class MetaStoreClient {
 				System.out.println("LFDCON: thread " + lfdc_thread + " total got " + tfnr + 
 						" files, total GPS " + tgps);
 			}
+			if (o.flag.equals("-ltg")) {
+				// list table groups
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table.");
+					System.exit(0);
+				}
+				try {
+					List<NodeGroup> ngs = cli.client.getTableNodeGroups(dbName, tableName);
+					for (NodeGroup ng : ngs) {
+						System.out.println("NG: " + ng.getNode_group_name() + " -> {");
+						if (ng.getNodesSize() > 0) {
+							for (Node n : ng.getNodes()) {
+								System.out.println(" Node " + n.getNode_name());
+							}
+						}
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
 			if (o.flag.equals("-lst")) {
 				// list table files
 				if (dbName == null || tableName == null) {
@@ -1398,14 +1522,20 @@ public class MetaStoreClient {
 					System.exit(0);
 				}
 				try {
-					List<Long> files = cli.client.listTableFiles(dbName, tableName, 0, Integer.MAX_VALUE);
-					if (files.size() > 0) {
-						for (Long fid : files) {
-							SFile f = cli.client.get_file_by_id(fid);
-							System.out.println("fid " + fid + " -> " + toStringSFile(f));
+					long size = 0;
+					for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
+					List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
+						if (files.size() > 0) {
+							for (Long fid : files) {
+								SFile f = cli.client.get_file_by_id(fid);
+								System.out.println("fid " + fid + " -> " + toStringSFile(f));
+							}
 						}
+						size += files.size();
+						if (files.size() == 0)
+							break;
 					}
-					System.out.println("Total " + files.size() + " file(s) listed.");
+					System.out.println("Total " + size + " file(s) listed.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1472,8 +1602,12 @@ public class MetaStoreClient {
 				try {
 					fid = Long.parseLong(o.opt);
 					ok = cli.client.reopen_file(fid);
-					file = cli.client.get_file_by_id(fid);
-					System.out.println("Reopen file: " + toStringSFile(file));
+					if (ok) {
+						file = cli.client.get_file_by_id(fid);
+						System.out.println("Reopen file: " + toStringSFile(file));
+					} else {
+						System.out.println("Reopen file failed.");
+					}
 				} catch (NumberFormatException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();

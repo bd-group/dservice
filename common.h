@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-07-09 11:43:48 macan>
+ * Time-stamp: <2013-10-31 20:15:26 macan>
  *
  */
 
@@ -37,6 +37,8 @@
 
 HVFS_TRACING_INIT();
 
+#define GET_GL_DISK_SN "find /dev/disk/by-id/ -iregex '.*%s-[^-]*$' -exec stat -c '%%N' {} \\; | sed -e 's/.*%s-\\([0-9a-zA-Z_]*\\).*..\\/..\\/\\([a-z]*\\).*/OK \\1 \\2/g'"
+
 #define GET_SCSI_DISK_SN "find /dev/disk/by-id/ -iregex '.*scsi-[^-]*$' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_]*\\).*..\\/..\\/\\([a-z]*\\).*/OK \\1 \\2/g'"
 
 struct disk_info
@@ -45,9 +47,13 @@ struct disk_info
     char *dev_id;               /* local sd* */
 };
 
-#define GET_SCSI_DISKPART_SN "find /dev/disk/by-id/ -iregex '.*scsi-.*part.*' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \" $2; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
+#define GET_GL_DISKPART_SN "find /dev/disk/by-id/ -iregex '.*%s-.*part.*' -exec stat -c '%%N' {} \\; | sed -e 's/.*%s-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \\\"\" $2 \" \\\"\"; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
 
-#define GET_SCSI_DISK_SN_EXT "find /dev/disk/by-id/ -iregex '.*scsi-[^-]*$' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \" $2; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
+#define GET_GL_DISK_SN_EXT "find /dev/disk/by-id/ -iregex '.*%s-.*$' -exec stat -c '%%N' {} \\; | grep -v '\\-part' | sed -e 's/.*%s-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \\\"\" $2 \" \\\"\"; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
+
+#define GET_SCSI_DISKPART_SN "find /dev/disk/by-id/ -iregex '.*scsi-.*part.*' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \\\"\" $2 \" \\\"\"; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
+
+#define GET_SCSI_DISK_SN_EXT "find /dev/disk/by-id/ -iregex '.*scsi-[^-]*$' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \\\"\" $2 \" \\\"\"; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
 
 struct disk_part_info
 {

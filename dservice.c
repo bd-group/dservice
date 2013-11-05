@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-10-25 21:42:43 macan>
+ * Time-stamp: <2013-11-01 08:48:27 macan>
  *
  */
 
@@ -56,6 +56,8 @@ static int g_rep_thread_stop = 0;
 static int g_del_thread_stop = 0;
 static int g_main_thread_stop = 0;
 static int g_async_recv_thread_stop = 0;
+
+static char *g_devtype = NULL;
 
 static int g_sockfd;
 static struct sockaddr_in g_server;
@@ -156,16 +158,19 @@ out:
     return err;
 }
 
-int get_disks(struct disk_info **di, int *nr)
+int get_disks(struct disk_info **di, int *nr, char *label)
 {
+    char buf[1024];
     char *line = NULL;
     size_t len = 0;
-    FILE *f = popen(GET_SCSI_DISK_SN, "r");
+    FILE *f;
     int err = 0, lnr = 0;
 
+    sprintf(buf, GET_GL_DISK_SN, label, label);
+    f = popen(buf, "r");
     if (f == NULL) {
         err = -errno;
-        hvfs_err(lib, "popen(GET_SCSI_DISK_SN) failed w/ %s\n",
+        hvfs_err(lib, "popen(GET_GL_DISK_SN) failed w/ %s\n",
                  strerror(errno));
     } else {
         *di = NULL;
@@ -236,18 +241,20 @@ void di_free(struct disk_info *di, int nr)
     xfree(di);
 }
 
-int get_disk_parts_sn(struct disk_part_info **dpi, int *nr)
+int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 {
+    char buf[1024];
     char *line = NULL;
     size_t len = 0;
     FILE *f;
     int err = 0, lnr = 0;
 
-    f = popen(GET_SCSI_DISKPART_SN, "r");
+    sprintf(buf, GET_GL_DISKPART_SN, label, label);
+    f = popen(buf, "r");
 
     if (f == NULL) {
         err = -errno;
-        hvfs_err(lib, "popen(GET_SCSI_DISKPART_SN) failed w/ %s\n",
+        hvfs_err(lib, "popen(GET_GL_DISKPART_SN) failed w/ %s\n",
                  strerror(errno));
         goto out;
     } else {
@@ -376,18 +383,20 @@ out:
     return err;
 }
 
-int get_disk_sn_ext(struct disk_part_info **dpi, int *nr)
+int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
 {
+    char buf[1024];
     char *line = NULL;
     size_t len = 0;
     FILE *f;
     int err = 0, lnr = 0;
 
-    f = popen(GET_SCSI_DISK_SN_EXT, "r");
+    sprintf(buf, GET_GL_DISK_SN_EXT, label, label);
+    f = popen(buf, "r");
 
     if (f == NULL) {
         err = -errno;
-        hvfs_err(lib, "popen(GET_SCSI_DISKPART_SN) failed w/ %s\n",
+        hvfs_err(lib, "popen(GET_GL_DISKPART_SN) failed w/ %s\n",
                  strerror(errno));
         goto out;
     } else {
@@ -516,18 +525,18 @@ out:
     return err;
 }
 
-int get_disk_parts(struct disk_part_info **dpi, int *nr)
+int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label)
 {
     int err = 0;
 
     *dpi = NULL;
     *nr = 0;
     
-    err = get_disk_parts_sn(dpi, nr);
+    err = get_disk_parts_sn(dpi, nr, label);
     if (err) {
         goto out;
     }
-    err = get_disk_sn_ext(dpi, nr);
+    err = get_disk_sn_ext(dpi, nr, label);
     if (err) {
         goto out;
     }
@@ -854,7 +863,7 @@ void refresh_map(time_t cur)
 
     /* map refresh interval */
     if (cur - last > g_ds_conf.mr_interval) {
-        err = get_disk_parts(&dpi, &nr);
+        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
         if (err) {
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto update_last;
@@ -1095,7 +1104,7 @@ int __do_heartbeat()
     len += sprintf(query, "+node:%s\n", g_hostname);
     
     if (!g_specify_dev) {
-        err = get_disk_parts(&dpi, &nr);
+        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
         if (err) {
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto out;
@@ -1317,6 +1326,8 @@ void do_help()
                "-p, --port        UDP port of DiskManager.\n"
                "-t, --host        Set local host name.\n"
                "-d, --dev         Use this specified dev: DEVID:MOUNTPOINT.\n"
+               "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
+               "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -1695,7 +1706,7 @@ int main(int argc, char *argv[])
     int nr = 0, nr2 = 0;
     int err = 0;
 
-    char *shortflags = "r:p:t:d:h?f:m:x";
+    char *shortflags = "r:p:t:d:h?f:m:xT:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -1704,6 +1715,7 @@ int main(int argc, char *argv[])
         {"sdfilter", required_argument, 0, 'f'},
         {"mpfilter", required_argument, 0, 'm'},
         {"mkdirs", no_argument, 0, 'x'},
+        {"devtype", required_argument, 0, 'T'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1733,6 +1745,9 @@ int main(int argc, char *argv[])
             break;
         case 'x':
             g_rep_mkdir_on_nosuchfod = 1;
+            break;
+        case 'T':
+            g_devtype = strdup(optarg);
             break;
         case 'f':
         {
@@ -1862,10 +1877,10 @@ int main(int argc, char *argv[])
     }
     sem_post(&g_async_recv_sem);
 
-    get_disks(&di, &nr);
+    get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
     di_free(di, nr);
     
-    get_disk_parts(&dpi, &nr2);
+    get_disk_parts(&dpi, &nr2, g_devtype == NULL ? "scsi" : g_devtype);
 
     hvfs_info(lib, "Got NR %d\n", nr);
     hvfs_info(lib, "Got NR %d\n", nr2);
