@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-11-01 08:48:27 macan>
+ * Time-stamp: <2013-11-05 14:09:30 macan>
  *
  */
 
@@ -1706,7 +1706,7 @@ int main(int argc, char *argv[])
     int nr = 0, nr2 = 0;
     int err = 0;
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -1716,6 +1716,7 @@ int main(int argc, char *argv[])
         {"mpfilter", required_argument, 0, 'm'},
         {"mkdirs", no_argument, 0, 'x'},
         {"devtype", required_argument, 0, 'T'},
+        {"timeo", required_argument, 0, 'o'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1748,6 +1749,9 @@ int main(int argc, char *argv[])
             break;
         case 'T':
             g_devtype = strdup(optarg);
+            break;
+        case 'o':
+            g_ds_conf.hb_interval = atoi(optarg);
             break;
         case 'f':
         {
