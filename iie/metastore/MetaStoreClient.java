@@ -14,6 +14,7 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -487,6 +488,7 @@ public class MetaStoreClient {
 	    long begin_time = -1, end_time = -1;
 	    String ANSI_RESET = "\u001B[0m";
 	    String ANSI_RED = "\u001B[31m";
+	    String ANSI_GREEN = "\u001B[32m";
 	    long ofl_fid = -1;
 	    String ofl_sfl_dev = null;
 	    
@@ -548,6 +550,8 @@ public class MetaStoreClient {
 	    		System.out.println("-pp  : ping pong latency test.");
 	    		System.out.println("-flctc : lots of file createtion test.");
 	    		System.out.println("-lfdc: concurrent list files by digest test.");
+	    		System.out.println("-fro : reopen a file.");
+	    		System.out.println("-cvt : convert date to timestamp.");
 
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
@@ -1292,8 +1296,13 @@ public class MetaStoreClient {
 					System.out.println("");
 					System.out.println(" COLS         " + s.getClos());
 					System.out.println(" INCS O2ERR   " + s.getIncs());
+					System.out.println("");
+					System.out.println(" File in Tab  " + s.getFnrs());
+					System.out.println("");
 					if (s.getIncsSize() > 0) {
-						System.out.println(ANSI_RED + "BAD State in Our Store! Please notify macan@iie.ac.cn" + ANSI_RESET);
+						System.out.println(ANSI_RED + "BAD STATE in Our Store! Please notify <macan@iie.ac.cn>" + ANSI_RESET);
+					} else {
+						System.out.println(ANSI_GREEN + "GOOD STATE ;)");
 					}
 				} catch (MetaException e) {
 					// TODO Auto-generated catch block
@@ -1592,6 +1601,17 @@ public class MetaStoreClient {
 				} catch (TException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-cvt")) {
+				// convert date to timestamp
+				try {
+					Date d = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(o.opt);
+					System.out.println(d.getTime() / 1000);
+				} catch (ParseException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
 				}
 			}
 			if (o.flag.equals("-fro")) {
