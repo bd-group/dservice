@@ -489,7 +489,8 @@ public class MetaStoreClient {
 	    String ANSI_RESET = "\u001B[0m";
 	    String ANSI_RED = "\u001B[31m";
 	    String ANSI_GREEN = "\u001B[32m";
-	    long ofl_fid = -1;
+	    long ofl_fid = -1, srep_fid = -1, fsck_begin = -1, fsck_end = -1;
+	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
 	    
 	    // parse the args
@@ -551,6 +552,7 @@ public class MetaStoreClient {
 	    		System.out.println("-flctc : lots of file createtion test.");
 	    		System.out.println("-lfdc: concurrent list files by digest test.");
 	    		System.out.println("-fro : reopen a file.");
+	    		System.out.println("-srep: (re)set file repnr.");
 	    		System.out.println("-cvt : convert date to timestamp.");
 
 	    		System.out.println("");
@@ -783,6 +785,54 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		end_time = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-ofl_fid")) {
+	    		// set offline file id
+	    		if (o.opt == null) {
+	    			System.out.println("-ofl_fid fid");
+	    			System.exit(0);
+	    		}
+	    		ofl_fid = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-ofl_sfl_dev")) {
+	    		// set offline sfl device
+	    		if (o.opt == null) {
+	    			System.out.println("-ofl_sfl_dev DEV");
+	    			System.exit(0);
+	    		}
+	    		ofl_sfl_dev = o.opt;
+	    	}
+	    	if (o.flag.equals("-srep_fid")) {
+	    		// set rep file id
+	    		if (o.opt == null) {
+	    			System.out.println("-srep_fid fid");
+	    			System.exit(0);
+	    		}
+	    		srep_fid = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-srep_repnr")) {
+	    		// set file repnr
+	    		if (o.opt == null) {
+	    			System.out.println("-srep_repnr NR");
+	    			System.exit(0);
+	    		}
+	    		srep_repnr = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-fsck_begin")) {
+	    		// set fsck max
+	    		if (o.opt == null) {
+	    			System.out.println("-fsck_begin NR");
+	    			System.exit(0);
+	    		}
+	    		fsck_begin = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-fsck_end")) {
+	    		// set fsck max
+	    		if (o.opt == null) {
+	    			System.out.println("-fsck_end NR");
+	    			System.exit(0);
+	    		}
+	    		fsck_end = Long.parseLong(o.opt);
 	    	}
 	    }
 	    if (cli == null) {
@@ -1273,6 +1323,7 @@ public class MetaStoreClient {
 					System.exit(0);
 				}
 				try {
+					cli.client.setTimeout(120);
 					statfs s = cli.client.statFileSystem(begin_time, end_time);
 					System.out.println("Query on time range [" + begin_time + "," + end_time + ") {" +
 							new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(begin_time * 1000)) + "," + 
@@ -1299,10 +1350,12 @@ public class MetaStoreClient {
 					System.out.println("");
 					System.out.println(" File in Tab  " + s.getFnrs());
 					System.out.println("");
+					System.out.println(" Total Rec #  " + s.getRecordnr());
+					System.out.println(" Total Length " + (s.getLength() / 1000000000.0) + " GB");
 					if (s.getIncsSize() > 0) {
 						System.out.println(ANSI_RED + "BAD STATE in Our Store! Please notify <macan@iie.ac.cn>" + ANSI_RESET);
 					} else {
-						System.out.println(ANSI_GREEN + "GOOD STATE ;)");
+						System.out.println(ANSI_GREEN + "GOOD STATE ;)" + ANSI_RESET);
 					}
 				} catch (MetaException e) {
 					// TODO Auto-generated catch block
@@ -1400,11 +1453,14 @@ public class MetaStoreClient {
 					}
 				}
 				try {
+					long recordnr = 0, length = 0;
 					List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
 					for (SFile f : files) {
 						System.out.println("fid " + f.getFid() + " -> " + toStringSFile(f));
+						recordnr += f.getRecord_nr();
+						length += f.getLength();
 					}
-					System.out.println("Total " + files.size() + " file(s) listed.");
+					System.out.println("Total " + files.size() + " file(s) listed, record # " + recordnr + ", length " + (length / 1000000.0) + "MB.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1531,12 +1587,14 @@ public class MetaStoreClient {
 					System.exit(0);
 				}
 				try {
-					long size = 0;
+					long size = 0, recordnr = 0, length = 0;
 					for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
 					List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
 						if (files.size() > 0) {
 							for (Long fid : files) {
 								SFile f = cli.client.get_file_by_id(fid);
+								recordnr += f.getRecord_nr();
+								length += f.getLength();
 								System.out.println("fid " + fid + " -> " + toStringSFile(f));
 							}
 						}
@@ -1544,7 +1602,7 @@ public class MetaStoreClient {
 						if (files.size() == 0)
 							break;
 					}
-					System.out.println("Total " + size + " file(s) listed.");
+					System.out.println("Total " + size + " file(s) listed, record # " + recordnr + ", length " + (length / 1000000.0) + "MB.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1614,6 +1672,79 @@ public class MetaStoreClient {
 					break;
 				}
 			}
+			if (o.flag.equals("-srep")) {
+				// set file repnr
+				if (srep_fid < 0 || srep_repnr <= 0) {
+					System.out.println("Please set -srep_fid and -srep_repnr");
+					System.exit(0);
+				}
+				try {
+					cli.client.set_file_repnr(srep_fid, srep_repnr);
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-FSCK")) {
+				// do file system checking
+				if (fsck_begin < 0 || fsck_end < 0 || fsck_end < fsck_begin) {
+					System.out.println("Please set -fsck_begin NR -fsck_end NR");
+					System.exit(0);
+				}
+				List<Long> badfiles = new ArrayList<Long>();
+				
+				for (long i = fsck_begin; i < fsck_end; i++) {
+					try {
+						SFile f = cli.client.get_file_by_id(i);
+						if (f.getLocationsSize() > 0) {
+							String[] md5s = new String[f.getLocationsSize()];
+							int j = 0;
+							
+							for (SFileLocation sfl : f.getLocations()) {
+								String cmd = "ssh " + sfl.getNode_name();
+								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+								cmd += " \"cd " + mp + "/" + sfl.getLocation() + "; find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';\"";
+								//System.out.println(cmd);
+								md5s[j] = runRemoteCmdWithResult(cmd);
+								j++;
+							}
+							String lastmd5 = md5s[0];
+							boolean isConsistent = true;
+							for (j = 1; j < f.getLocationsSize(); j++) {
+								if (f.getLocations().get(j).getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
+									if (!lastmd5.equalsIgnoreCase(md5s[j])) {
+										isConsistent = false;
+										break;
+									}
+								}
+							}
+							if (!isConsistent) {
+								// dump all md5s
+								j = 0;
+								System.out.println("FID " + f.getFid());
+								for (SFileLocation sfl : f.getLocations()) {
+									System.out.println("SFL: " + sfl.getNode_name() + ":" + sfl.getDevid() + ":" + sfl.getLocation() + " -> SAVED{" + sfl.getDigest() + "} COMPUTED{" + md5s[j] + "}");
+									j++;
+								}
+								badfiles.add(f.getFid());
+							}
+						}
+					} catch (FileOperationException e) {
+						// it is ok
+					} catch (MetaException e) {
+						// it is ok
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+				}
+				System.out.println("Bad Files: " + badfiles);
+			}
 			if (o.flag.equals("-fro")) {
 				// reopen a file
 				boolean ok = false;
@@ -1668,6 +1799,13 @@ public class MetaStoreClient {
 						}
 					}
 					System.out.println("Read file: " + toStringSFile(file));
+					// iterator on file locations
+					if (file.getLocationsSize() > 0) {
+						for (SFileLocation sfl : file.getLocations()) {
+							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+							System.out.println("ssh " + sfl.getNode_name() + " ls -l " + mp + "/" + sfl.getLocation());
+						}
+					}
 				} catch (NumberFormatException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();

@@ -1580,7 +1580,7 @@ static void *__rep_thread_main(void *args)
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
-                        "find %s/%s -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
+                        "cd %s/%s ; find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
                         pos->from.node, pos->from.mp, pos->from.location,
