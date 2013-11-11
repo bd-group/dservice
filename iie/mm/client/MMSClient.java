@@ -61,6 +61,8 @@ public class MMSClient {
 		String set = "default";
 		int redisPort = 0;
 		long lpt_nr = 1, lpt_size = 1;
+		int lgt_nr = -1;
+		String lpt_type = "";
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -77,6 +79,8 @@ public class MMSClient {
 				System.out.println("-del  : delete set from server.");
 				
 				System.out.println("-lpt  : large scacle put test.");
+				System.out.println("-lgt  : large scacle get test.");
+				System.out.println("-getserverinfo  :  get info from all servers online" ); 
 				
 				System.exit(0);
 			}
@@ -103,6 +107,14 @@ public class MMSClient {
 			if (o.flag.equals("-lpt_size")) {
 				// set lpt size
 				lpt_size = Long.parseLong(o.opt);
+			}
+			if (o.flag.equals("-lpt_type")) {
+				//sync or async
+				lpt_type = o.opt;
+			}
+			if (o.flag.equals("-lgt_nr"))
+			{
+				lgt_nr = Integer.parseInt(o.opt);
 			}
 		}
 		
@@ -134,7 +146,7 @@ public class MMSClient {
 					}
 				}
 				try {
-					System.out.println("MD5:" + o.opt + " -> INFO: " + pc.storePhoto(set, o.opt, content));
+					System.out.println("MD5:" + o.opt + " -> INFO: " + pc.syncStorePhoto(set, o.opt, content));
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
@@ -142,7 +154,7 @@ public class MMSClient {
 			if (o.flag.equals("-lpt")) {
 				// large scale put test
 				System.out.println("Provide the number of iterations, and mm object size.");
-				System.out.println("LPT args: nr " + lpt_nr + ", size " + lpt_size);
+				System.out.println("LPT args: nr " + lpt_nr + ", size " + lpt_size +", type "+lpt_type);
 				
 				try {
 					long begin = System.currentTimeMillis();
@@ -160,7 +172,19 @@ public class MMSClient {
 						for (int j = 0; j < mdbytes.length; j++) {
 							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 						}
-						pc.storePhoto(set, sb.toString(), content);
+						if(lpt_type.equals("sync"))
+							pc.syncStorePhoto(set, sb.toString(), content);
+						else if(lpt_type.equals("async"))
+							pc.asyncStorePhoto(set, sb.toString(), content);
+						else
+						{
+							if(lpt_type.equals(""))
+								System.out.println("please provide lpt_type");
+							else
+								System.out.println("wrong lpt_type,should be sync or async");
+							System.exit(0);
+						}
+							
 					}
 					long end = System.currentTimeMillis();
 					System.out.println("LPT nr " + lpt_nr + " size " + lpt_size + 
@@ -172,12 +196,77 @@ public class MMSClient {
 					e.printStackTrace();
 				}
 			}
+			
+			if(o.flag.equals("-lgt"))
+			{
+				System.out.println("Provide the number of iterations.");
+				System.out.println("LGT args: nr " + lgt_nr );
+				if(lgt_nr == -1)
+				{
+					System.out.println("please provide number of iterations using -lgt_nr");
+					System.exit(0);
+				}
+				try{
+					
+					long begin = System.currentTimeMillis();
+					for(int i = 0;i<lgt_nr;i++)
+					{
+						pc.getPhoto(set,i+"");
+					}
+					long dur = System.currentTimeMillis() - begin;
+					System.out.println("average read latency:"+((double)dur/lgt_nr)+"ms");
+					
+				}catch(IOException e){
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-get")) {
+
+				String md5 = o.opt;
+				System.out.println("Provide the set and md5 about a photo.");
+				System.out.println("get args: set " + set + ", md5 " + md5);
+				try{
+					byte[] content = pc.getPhoto(set,md5);
+					System.out.println("get content length:"+content.length);
+				}catch(IOException e){
+					e.printStackTrace();
+				}
+				
 			}
 			if (o.flag.equals("-getbi")) {
+				String info = o.opt;
+				System.out.println("Provide the INFO about a photo.");
+				System.out.println("get args:  " + info);
+				try{
+					
+					byte[] content = pc.searchPhoto(info);
+					System.out.println("get content length:"+content.length);
+				}catch(IOException e){
+					e.printStackTrace();
+				}
 			}
 			if (o.flag.equals("-del")) {
-				
+				String sname = o.opt;
+				System.out.println("Provide the set name to be deleted.");
+				System.out.println("get args: set name  " + sname);
+				DeleteSet ds = new DeleteSet(redisHost,redisPort);
+				ds.delSet(sname);
+				ds.closeJedis();
+			}
+			if (o.flag.equals("-getserverinfo"))
+			{
+				System.out.println("get server info.");
+				DeleteSet ds = new DeleteSet(redisHost,redisPort);
+				List<String> ls = ds.getAllServerInfo();
+				if(ls == null)
+				{
+					System.out.println("出现错误");
+					return;
+				}
+				for(String s : ls)
+				{
+					System.out.println(s);
+				}
 			}
 		}
 	}

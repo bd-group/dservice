@@ -9,6 +9,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
+import org.hyperic.sigar.SigarException;
+
 public class Handler implements Runnable{
 	private ServerConf conf;
 	private ConcurrentHashMap<String,BlockingQueue<WriteTask>> sq;
@@ -36,7 +38,7 @@ public class Handler implements Runnable{
 				
 				if((dis.read(header)) == -1) {
 					break;
-				} else if (header[0] == ActionType.STORE) {
+				} else if (header[0] == ActionType.SYNCSTORE) {
 					int setlen = header[1];
 					int md5len = header[2];
 					int contentlen = dis.readInt();
@@ -47,8 +49,22 @@ public class Handler implements Runnable{
 					String md5 = new String(setmd5content, setlen, md5len);
 					
 					// 统计写入的字节数
-					ServerProfile.addWrite(contentlen);
+					//放在storephoto类中统计
+					//ServerProfile.addWrite(contentlen);
 					
+					if(sp == null)
+						sp = new StorePhoto(conf);
+					String result = sp.storePhoto(set,md5,setmd5content,setlen + md5len,contentlen);
+
+					if(result == null)
+						dos.writeInt(-1);
+					else
+					{
+						dos.writeInt(result.getBytes().length);
+						dos.write(result.getBytes());
+					}
+					dos.flush();
+					/*
 					WriteTask t = new WriteTask(set, md5, setmd5content, setlen + md5len, contentlen);
 					synchronized (t) {
 						BlockingQueue<WriteTask> bq = sq.get(set);
@@ -82,11 +98,38 @@ public class Handler implements Runnable{
 						dos.write(t.getResult().getBytes());
 					}
 					dos.flush();
-				} else if (header[0] == ActionType.SEARCH) {
+					
+					*/
+				} else if(header[0] == ActionType.ASYNCSTORE){
+					int setlen = header[1];
+					int md5len = header[2];
+					int contentlen = dis.readInt();
+					
+					//一次把所有的都读出来,减少读取次数
+					byte[] setmd5content = readBytes(setlen + md5len + contentlen, dis);
+					String set = new String(setmd5content, 0, setlen);
+					String md5 = new String(setmd5content, setlen, md5len);
+					
+					WriteTask t = new WriteTask(set, md5, setmd5content, setlen + md5len, contentlen);
+					
+						BlockingQueue<WriteTask> bq = sq.get(set);
+						
+						if (bq != null)	{
+							//存在这个键,表明该写线程已经存在,直接把任务加到任务队列里即可
+							bq.add(t);
+						} else {
+							//如果不存在这个键,则需要新开启一个写线程
+							BlockingQueue<WriteTask> tasks = new LinkedBlockingQueue<WriteTask>();
+							tasks.add(t);
+							sq.put(set, tasks);
+							WriteThread wt = new WriteThread(conf,set, sq);
+							new Thread(wt).start();
+						}
+						
+				}else if (header[0] == ActionType.SEARCH) {
 					long start = System.currentTimeMillis();
 					int infolen = header[1];
 
-					//每次都有39 40ms延迟
 					String info = new String(readBytes(infolen, dis));			
 
 					if (sp == null)			//有读请求时,才初始化该对象
@@ -104,17 +147,38 @@ public class Handler implements Runnable{
 					ServerProfile.addDelay(System.currentTimeMillis() - start);
 				} else if (header[0] == ActionType.DELSET) {
 					String set = new String(readBytes(header[1], dis));
+
 					BlockingQueue<WriteTask> bq = sq.get(set);
 					
 					if(bq != null) {
 						// 要删除这个集合,把在这个集合上进行写的线程停掉, null作为标志
 						bq.add(new WriteTask(null, null, null, 0, 0));
-						sq.remove(set);
+						
 					}
 					if(sp == null)			//有该请求时,才初始化该对象
 						sp = new StorePhoto(conf);
 					sp.delSet(set);
 					dos.write(1);			//返回一个字节1,代表删除成功
+					dos.flush();
+				}
+				else if(header[0] == ActionType.SERVERINFO)
+				{
+					ServerInfo si = new ServerInfo();
+					String str = "";
+					try {
+						str += si.getCpuTotalInfo() + System.getProperty("line.separator");
+						str += si.getMemInfo()+ System.getProperty("line.separator");
+						for(String s : si.getDiskInfo())
+							str += s+ System.getProperty("line.separator");
+					} catch (SigarException e) {
+						// TODO Auto-generated catch block
+						str = "#FAIL:" + e.getMessage();
+						e.printStackTrace();
+					}
+					
+					dos.writeInt(str.getBytes().length);
+					dos.write(str.getBytes());
+					dos.flush();
 				}
 			}
 			if(sp != null)

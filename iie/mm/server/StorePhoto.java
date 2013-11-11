@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.Random;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
@@ -20,9 +21,11 @@ public class StorePhoto {
 	private int serverport;							//本机监听的端口,在这里的作用就是构造存图片时返回值
 	private String destRoot = "./mm_data/";
 	private Set<String> storeArray = new HashSet<String>();
+	private String[] diskArray;			//代表磁盘的数组
 	private long blocksize;							//文件块的大小，单位是B
 	
-	private static Map<String, StoreSetContext> writeContextHash;
+	//两级的hash,集合->磁盘->上下文
+	private static Map<String,ConcurrentHashMap<String, StoreSetContext>> writeContextHash = new ConcurrentHashMap<String,ConcurrentHashMap<String, StoreSetContext>>();		//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
 	private Map<String, RandomAccessFile> readRafHash;			//读文件时的随机访问流，用哈希来缓存
 	private Jedis jedis;
 	
@@ -41,9 +44,12 @@ public class StorePhoto {
 		
 		private String path = null;
 		
-		public StoreSetContext(String set) {
+		
+		public StoreSetContext(String set,String disk) {
 			// 根据set和md5构造存储的路径
 			StringBuffer sb = new StringBuffer();
+			sb.append(disk);
+			sb.append("/");
 			sb.append(destRoot);
 			sb.append(set);
 			sb.append("/");
@@ -65,12 +71,12 @@ public class StorePhoto {
 		if (storeArray.size() == 0) {
 			storeArray.add(".");
 		}
-
+		diskArray = storeArray.toArray(new String[0]);
 		jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
-		writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();
+		
 	}
 
 	/**
@@ -79,19 +85,26 @@ public class StorePhoto {
 	 * @param set	集合名
 	 * @param md5	文件的md5
 	 * @param content	文件内容
-	 * @return		type#set#node#port＃block＃offset＃length,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
-	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数
+	 * @return		type#set#node#port＃block＃offset＃length＃disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
+	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
 		StringBuffer rVal = new StringBuffer();
 		
-		StoreSetContext ssc = writeContextHash.get(set);
+		int diskid = new Random().nextInt(diskArray.length);		//随机选一个磁盘
+		StoreSetContext ssc = null;
+		synchronized (writeContextHash) {
+			
+		if(!writeContextHash.containsKey(set))
+			writeContextHash.put(set, new ConcurrentHashMap<String,StoreSetContext>());
+		ssc = writeContextHash.get(set).get(diskArray[diskid]);
 		
 		if (ssc == null) {
-			ssc = new StoreSetContext(set);
-			writeContextHash.put(set, ssc);
+			ssc = new StoreSetContext(set,diskArray[diskid]);
+			writeContextHash.get(set).put(diskArray[diskid], ssc);
 		}
-
+		}//end of sync writeContextHash
+		synchronized (ssc) {
 		//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
 		//用curBlock缓存当前可写的块，减少查询jedis的次数
 		
@@ -123,7 +136,8 @@ public class StorePhoto {
 				}
 			}
 			ssc.raf.write(content, coff, clen);
-
+			// 统计写入的字节数
+			ServerProfile.addWrite(clen);
 			// 构造返回值
 			rVal.append("1#"); // type
 			rVal.append(set);
@@ -137,6 +151,8 @@ public class StorePhoto {
 			rVal.append(ssc.offset);
 			rVal.append("#");
 			rVal.append(clen);
+			rVal.append("#");
+			rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 
 			ssc.offset += clen;
 		} catch (FileNotFoundException e) {
@@ -146,9 +162,15 @@ public class StorePhoto {
 			e.printStackTrace();
 			return "#FAIL:" + e.getMessage();
 		}
-
+		}//end of synchronized block
 		String returnVal = rVal.toString();
+		long r = jedis.hsetnx(set,md5,returnVal);
+		if(r == 1)
+			return returnVal;
+		else
+			return null;
 		// 确保多个进程生成的字符串只有一个被记录下来并且被完整的记录下
+		/*
 		Pipeline pipeline = jedis.pipelined();
 		pipeline.hincrBy(set, "r." + md5, 1);
 		pipeline.hsetnx(set, md5, returnVal);
@@ -162,6 +184,8 @@ public class StorePhoto {
 		} else {
 			return "#FAIL:update STR to redis server failed.";
 		}
+		*/
+		
 	}
 	
 	/**
@@ -209,13 +233,13 @@ public class StorePhoto {
 	}
 	/**
 	 * 获得图片内容
-	 * @param info		对应storePhoto的type#set#node#port#block＃offset＃length格式的返回值
+	 * @param info		对应storePhoto的type#set#node#port#block＃offset＃length＃disk格式的返回值
 	 * @return			图片内容content
 	 */
 	public byte[] searchPhoto(String info) {
 		String[] infos = info.split("#");
 		
-		if (infos.length != 7) {
+		if (infos.length != 8) {
 			System.out.println("Invalid INFO string: " + info);
 			return null;
 		}
@@ -228,7 +252,7 @@ public class StorePhoto {
 			if(readRafHash.containsKey(path)) {
 				readr = readRafHash.get(path);
 			} else {
-				readr = new RandomAccessFile(destRoot + path, "r");
+				readr = new RandomAccessFile(infos[7]+"/"+destRoot + path, "r");	//构造路径时加上磁盘 
 				readRafHash.put(path, readr);
 			}
 			readr.seek(Long.parseLong(infos[5]));
@@ -247,7 +271,9 @@ public class StorePhoto {
 	}
 	
 	public void delSet(String set) {
-		delFile(new File(destRoot + set));
+		for(String d : diskArray)		//删除每个磁盘上的该集合
+			delFile(new File(d+"/"+destRoot + set));
+		writeContextHash.remove(set);			//删除一个集合后,同时删除关于该集合的全局的上下文
 	}
 	
 	/**
@@ -255,6 +281,7 @@ public class StorePhoto {
 	 * @param f
 	 */
 	private void delFile(File f) {
+
 		if(!f.exists())
 			return;
 		if(f.isFile())
@@ -272,10 +299,12 @@ public class StorePhoto {
 	//关闭jedis连接,关闭文件访问流
 	public void close() {
 		try {
-			for (Map.Entry<String, StoreSetContext> entry : writeContextHash.entrySet()) {
-				if (entry.getValue().raf != null)
-					entry.getValue().raf.close();
-			}
+			//该变量是静态的,因此这段代码会关闭所有的raf,导致其他线程在写入时异常
+			
+//			for (Map.Entry<String, StoreSetContext> entry : writeContextHash.entrySet()) {
+//				if (entry.getValue().raf != null)
+//					entry.getValue().raf.close();
+//			}
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}

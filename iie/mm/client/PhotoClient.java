@@ -18,7 +18,8 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
-	private Socket storeSocket;
+	private Socket syncStoreSocket;			//用于同步写的socket
+	private Socket asyncStoreSocket;	//用于异步写
 	private int localport = 0;
 
 	
@@ -63,29 +64,29 @@ public class PhotoClient {
 	}
 	
 	/**
-	 * 
+	 * 同步写
 	 * @param set
 	 * @param md5
 	 * @param content
 	 * @return		
 	 */
-	public String storePhoto(String set, String md5, byte[] content) throws IOException {
-		String info = jedis.hget(set, md5);
+	public String syncStorePhoto(String set, String md5, byte[] content) throws IOException {
+		//String info = jedis.hget(set, md5);
 		
-		if(info == null) {
+		//if(info == null) {
 			//图片不存在, 只在第一次写的时候连接服务器
-			if(storeSocket == null && localport > 0) {
-				storeSocket = new Socket();
-				storeSocket.setTcpNoDelay(true);
-				storeSocket.connect(new InetSocketAddress("localhost", localport));
+			if(syncStoreSocket == null && localport > 0) {
+				syncStoreSocket = new Socket();
+				syncStoreSocket.setTcpNoDelay(true);
+				syncStoreSocket.connect(new InetSocketAddress("localhost", localport));
 				
-				storeos = new DataOutputStream(storeSocket.getOutputStream());
-				storeis = new DataInputStream(storeSocket.getInputStream());
+				storeos = new DataOutputStream(syncStoreSocket.getOutputStream());
+				storeis = new DataInputStream(syncStoreSocket.getInputStream());
 			}
 			
 			//action,set,md5,content的length写过去
 			byte[] header = new byte[4];
-			header[0] = ActionType.STORE;
+			header[0] = ActionType.SYNCSTORE;
 			header[1] = (byte) set.length();
 			header[2] = (byte) md5.length();
 			storeos.write(header);
@@ -97,7 +98,6 @@ public class PhotoClient {
 			storeos.write(content);
 			storeos.flush();
 			
-			//时间大部分可以保持在个位数
 			int count = storeis.readInt();
 			if (count == -1)
 				return jedis.hget(set,md5);
@@ -108,14 +108,52 @@ public class PhotoClient {
 				throw new IOException("MM server failure: " + s);
 			}
 			return s;
+/*
 		} else {
 			System.out.println(set + "." + md5 + " exists in redis server");
 			jedis.hincrBy(set, "r." + md5, 1);
 			
 			return info;
 		}
+*/
 	}
 	
+	public void asyncStorePhoto(String set, String md5, byte[] content)	throws IOException {
+		// String info = jedis.hget(set, md5);
+
+		// if(info == null) {
+			// 图片不存在, 只在第一次写的时候连接服务器
+			if (asyncStoreSocket == null && localport > 0) {
+				asyncStoreSocket = new Socket();
+				asyncStoreSocket.setTcpNoDelay(true);
+				asyncStoreSocket.connect(new InetSocketAddress("localhost", localport));
+	
+				storeos = new DataOutputStream(asyncStoreSocket.getOutputStream());
+				storeis = new DataInputStream(asyncStoreSocket.getInputStream());
+			}
+	
+			// action,set,md5,content的length写过去
+			byte[] header = new byte[4];
+			header[0] = ActionType.ASYNCSTORE;
+			header[1] = (byte) set.length();
+			header[2] = (byte) md5.length();
+			storeos.write(header);
+			storeos.writeInt(content.length);
+	
+			// set,md5,content的实际内容写过去
+			storeos.write(set.getBytes());
+			storeos.write(md5.getBytes());
+			storeos.write(content);
+			storeos.flush();
+	
+			
+		/*
+		 } else { System.out.println(set + "." + md5 +
+		  " exists in redis server"); jedis.hincrBy(set, "r." + md5, 1);
+		  
+		 return info; }
+		 */
+	}
 	/**
 	 * 
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
@@ -137,7 +175,7 @@ public class PhotoClient {
 	public byte[] searchPhoto(String info) throws IOException {
 		String[] infos = info.split("#");
 		
-		if (infos.length != 7) {
+		if (infos.length != 8) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
 		
@@ -164,7 +202,6 @@ public class PhotoClient {
 		searchos.write(info.getBytes());
 		searchos.flush();
 
-		//时间几乎全部消耗在这,每次需要78,79ms
 		int count = searchis.readInt();					
 		if (count >= 0) {
 			return readBytes(count, searchis);
@@ -180,6 +217,7 @@ public class PhotoClient {
 	 */
 	public byte[] readBytes(int count, InputStream istream) throws IOException
 	{
+
 		byte[] buf = new byte[count];			
 		int n = 0;
 		
@@ -201,9 +239,10 @@ public class PhotoClient {
 				storeos.close();
 			if(storeis != null)
 				storeis.close();
-			if(storeSocket != null)
-				storeSocket.close();
-			
+			if(syncStoreSocket != null)
+				syncStoreSocket.close();
+			if(asyncStoreSocket != null)
+				asyncStoreSocket.close();
 			for (Map.Entry<String, Socket> entry : socketHash.entrySet()) {
 				entry.getValue().close();
 			}
