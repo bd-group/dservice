@@ -485,7 +485,7 @@ public class MetaStoreClient {
 	    int flctc_nr = 0;
 	    String digest = "";
 	    boolean lfd_verbose = false;
-	    long begin_time = -1, end_time = -1;
+	    long begin_time = -1, end_time = -1, statfs_range = -1;
 	    String ANSI_RESET = "\u001B[0m";
 	    String ANSI_RED = "\u001B[31m";
 	    String ANSI_GREEN = "\u001B[32m";
@@ -785,6 +785,14 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		end_time = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-statfs_range")) {
+	    		// set statfs time range
+	    		if (o.opt == null) {
+	    			System.out.println("-statfs_range timelength");
+	    			System.exit(0);
+	    		}
+	    		statfs_range = Long.parseLong(o.opt);
 	    	}
 	    	if (o.flag.equals("-ofl_fid")) {
 	    		// set offline file id
@@ -1319,8 +1327,15 @@ public class MetaStoreClient {
 			if (o.flag.equals("-statfs")) {
 				// stat the file system
 				if (begin_time < 0 || end_time < 0) {
-					System.out.println("Please set -begin_time and -end_time");
+					System.out.println("Please set (-begin_time and -end_time) or -statfs_range");
 					System.exit(0);
+				} else if (statfs_range <= 0) {
+					System.out.println("Please set (-begin_time and -end_time) or -statfs_range");
+					System.exit(0);
+				}
+				if (statfs_range > 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					begin_time = end_time - statfs_range;
 				}
 				try {
 					cli.client.setTimeout(120);
