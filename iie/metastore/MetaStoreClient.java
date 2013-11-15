@@ -1326,10 +1326,7 @@ public class MetaStoreClient {
 			}
 			if (o.flag.equals("-statfs")) {
 				// stat the file system
-				if (begin_time < 0 || end_time < 0) {
-					System.out.println("Please set (-begin_time and -end_time) or -statfs_range");
-					System.exit(0);
-				} else if (statfs_range <= 0) {
+				if ((begin_time < 0 || end_time < 0) && statfs_range <= 0) {
 					System.out.println("Please set (-begin_time and -end_time) or -statfs_range");
 					System.exit(0);
 				}
@@ -1716,12 +1713,29 @@ public class MetaStoreClient {
 				for (long i = fsck_begin; i < fsck_end; i++) {
 					try {
 						SFile f = cli.client.get_file_by_id(i);
+						List<NodeGroup> ngs;
+						String backupNodeName = null;
+						
+						if (f.getTableName() != null && !f.getTableName().equals("")) {
+							ngs = cli.client.getTableNodeGroups(f.getDbName(), f.getTableName());
+						} else {
+							ngs = cli.client.listNodeGroups();
+						}
+						
+						/* select a backup node */
+						if (ngs.size() > 0) {
+							for (Node n : ngs.get(0).getNodes()) {
+								backupNodeName = n.getNode_name();
+								break;
+							}
+						}
+						
 						if (f.getLocationsSize() > 0) {
 							String[] md5s = new String[f.getLocationsSize()];
 							int j = 0;
 							
 							for (SFileLocation sfl : f.getLocations()) {
-								String cmd = "ssh " + sfl.getNode_name();
+								String cmd = "ssh " + (sfl.getNode_name().equals("") ? backupNodeName : sfl.getNode_name());
 								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
 								cmd += " \"cd " + mp + "/" + sfl.getLocation() + "; find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';\"";
 								//System.out.println(cmd);
