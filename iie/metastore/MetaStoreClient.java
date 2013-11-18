@@ -492,6 +492,7 @@ public class MetaStoreClient {
 	    long ofl_fid = -1, srep_fid = -1, fsck_begin = -1, fsck_end = -1;
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
+	    String ng_name = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -841,6 +842,14 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		fsck_end = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-ng_name")) {
+	    		// set ng name
+	    		if (o.opt == null) {
+	    			System.out.println("-ng_name NAME");
+	    			System.exit(0);
+	    		}
+	    		ng_name = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -1194,6 +1203,7 @@ public class MetaStoreClient {
 	    			Node n = cli.client.get_node(node_name);
 					Device d = cli.client.getDevice(devid);
 					d.setProp(prop);
+					d.setNg_name(ng_name);
 					cli.client.changeDeviceLocation(d, n);
 				} catch (MetaException e) {
 					e.printStackTrace();
@@ -1772,7 +1782,7 @@ public class MetaStoreClient {
 						break;
 					}
 				}
-				System.out.println("Bad Files: " + badfiles);
+				System.out.println("Total Scaned Files:" + (fsck_end - fsck_begin) + ", Bad Files: " + badfiles);
 			}
 			if (o.flag.equals("-fro")) {
 				// reopen a file
