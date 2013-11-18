@@ -14,30 +14,7 @@ ECHO = /bin/echo
 CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST_
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
-ifeq ($(DSHOME),)
-DSHOME = $(shell pwd)/..
-$(info Please set env DSHOME as Top-level workspace, default '$(DSHOME)')
-endif
-
-ifeq ($(MSHOME),)
-MSHOME = $(DSHOME)/hive-0.10.0/src/build/dist/lib
-$(info Please set env MSHOME as metastore\'s lib home, default '$(MSHOME)')
-endif
-
-ifeq ($(LCHOME),)
-LCHOME = $(DSHOME)/dservice/lib
-$(info Please set env LCHOME as lucene home, default as '$(LCHOME)')
-endif
-
-ifeq ($(HADOOP_HOME),)
-HADOOP_HOME = $(DSHOME)/hadoop-1.0.3
-$(info Please set env HADOOP_HOME as hadoop home, default as '$(HADOOP_HOME)')
-endif
-
-ifeq ($(JAVA_HOME),)
-JAVA_HOME=/usr/lib/jvm/java-6-openjdk-amd64
-$(info Please set env JAVA_HOME as JDK home, default as '$(JAVA_HOME)')
-endif
+include Makefile.profile
 
 HEADERS = common.h jsmn.h
 DSERVICE = dservice
