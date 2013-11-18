@@ -6,18 +6,25 @@ import java.net.UnknownHostException;
 public class ClientConf {
 	private String redisHost;
 	private int redisPort;
-	private String localHostName; 
+	private String serverName;
+	private int serverPort;
+	public static enum MODE {
+		DEDUP, NODEDUP,
+	};
+	private MODE mode;
 	
-	public ClientConf(String localHostName, String redisHost, int redisPort) throws UnknownHostException {
-		if (localHostName != null)
-			this.setLocalHostName(localHostName);
+	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode) throws UnknownHostException {
+		if (serverName != null)
+			this.setServerName(serverName);
 		else
-			this.setLocalHostName(InetAddress.getLocalHost().getHostName());
+			this.setServerName(InetAddress.getLocalHost().getHostName());
+		this.setServerPort(serverPort);
 		if (redisHost == null) {
 			throw new UnknownHostException("Invalid redis server host name.");
 		}
 		this.redisHost = redisHost;
 		this.redisPort = redisPort;
+		this.mode = mode;
 	}
 
 	public String getRedisHost() {
@@ -36,12 +43,28 @@ public class ClientConf {
 		this.redisPort = redisPort;
 	}
 
-	public String getLocalHostName() {
-		return localHostName;
+	public String getServerName() {
+		return serverName;
 	}
 
-	public void setLocalHostName(String localHostName) {
-		this.localHostName = localHostName;
+	public void setServerName(String serverName) {
+		this.serverName = serverName;
+	}
+
+	public int getServerPort() {
+		return serverPort;
+	}
+
+	public void setServerPort(int serverPort) {
+		this.serverPort = serverPort;
+	}
+
+	public MODE getMode() {
+		return mode;
+	}
+
+	public void setMode(MODE mode) {
+		this.mode = mode;
 	}
 	
 }

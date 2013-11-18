@@ -55,7 +55,7 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
-MM_CP = $(shell pwd)/lib/jedis-2.1.0.jar:$(shell pwd)/lib/junixsocket-1.3.jar
+MM_CP = $(shell pwd)/lib/jedis-2.1.0.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
