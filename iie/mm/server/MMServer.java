@@ -1,7 +1,9 @@
 package iie.mm.server;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
 
 public class MMServer {
 	public static ServerConf conf;
@@ -53,6 +55,7 @@ public class MMServer {
 				redisPort = ServerConf.DEFAULT_REDIS_PORT, 
 				blockSize = ServerConf.DEFAULT_BLOCK_SIZE, 
 				period = ServerConf.DEFAULT_PERIOD;
+		Set<String> sa = new HashSet<String>();
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -64,38 +67,75 @@ public class MMServer {
 				System.out.println("-rp   : redis server port.");
 				System.out.println("-blk  : block size.");
 				System.out.println("-prd  : logging period.");
+				System.out.println("-sa   : storage array.");
 				
 				System.exit(0);
 			}
 			if (o.flag.equals("-r")) {
 				// set serverName
+				if (o.opt == null) {
+					System.out.println("-r serverName");
+					System.exit(0);
+				}
 				serverName = o.opt;
 			}
 			if (o.flag.equals("-p")) {
 				// set serverPort
+				if (o.opt == null) {
+					System.out.println("-p serverPort");
+					System.exit(0);
+				}
 				serverPort = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-rr")) {
 				// set redis server name
+				if (o.opt == null) {
+					System.out.println("-rr redisServerName");
+					System.exit(0);
+				}
 				redisServer = o.opt;
 			}
 			if (o.flag.equals("-rp")) {
 				// set redis server port
+				if (o.opt == null) {
+					System.out.println("-rp redisServerPort");
+					System.exit(0);
+				}
 				redisPort = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-blk")) {
 				// set block size
+				if (o.opt == null) {
+					System.out.println("-blk blockSize");
+					System.exit(0);
+				}
 				blockSize = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-prd")) {
 				// set logging period
+				if (o.opt == null) {
+					System.out.println("-prd period");
+					System.exit(0);
+				}
 				period = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-sa")) {
+				// parse storage array by ';'
+				if (o.opt == null) {
+					System.out.println("-sa path;path;path");
+					System.exit(0);
+				}
+				String[] paths = o.opt.split(";");
+				for (int i = 0; i < paths.length; i++) {
+					sa.add(paths[i]);
+				}
 			}
 		}
 		
 		// set the serverConf
 		try {
 			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period);
+			conf.setStoreArray(sa);
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(0);

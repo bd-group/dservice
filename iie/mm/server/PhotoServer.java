@@ -18,13 +18,11 @@ public class PhotoServer {
 	private ServerSocket ss;
 	private int serverport;
 	private int period ;					//每隔period秒统计一次读写信息
-//	private String destRoot = "photo/";
 	private ExecutorService pool;
 	//集合跟到这个集合上的写操作队列的映射
 	private ConcurrentHashMap<String,BlockingQueue<WriteTask>> sq = new ConcurrentHashMap<String, BlockingQueue<WriteTask>>();		
 	
-	public PhotoServer(ServerConf conf) throws Exception
-	{
+	public PhotoServer(ServerConf conf) throws Exception {
 		this.conf = conf;
 		serverport = conf.getServerPort();
 		period = conf.getPeriod();
@@ -32,8 +30,7 @@ public class PhotoServer {
 		pool = Executors.newCachedThreadPool();
 	}
 	
-	public void startUp()
-	{
+	public void startUp() {
 		//服务端每隔一段时间进行一次读写速率统计,1秒后开始统计，每10秒输出一次平均信息
 		Timer t = new Timer();
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
@@ -58,8 +55,7 @@ public class PhotoServer {
 	 * @author zhaoyang
 	 *
 	 */
-	class WriteServer implements Runnable
-	{
+	class WriteServer implements Runnable {
 		@Override
 		public void run() {
 			//在本机部署多个服务端,要修改
@@ -79,9 +75,7 @@ public class PhotoServer {
 				e.printStackTrace();
 				pool.shutdown();
 			}
-		       
 		}
-		
 	}
 }
 
