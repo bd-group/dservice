@@ -21,18 +21,20 @@ public class StorePhoto {
 	private int serverport;							//本机监听的端口,在这里的作用就是构造存图片时返回值
 	private String destRoot = "./mm_data/";
 	private Set<String> storeArray = new HashSet<String>();
-	private String[] diskArray;			//代表磁盘的数组
+	private String[] diskArray;						//代表磁盘的数组
 	private long blocksize;							//文件块的大小，单位是B
 	
-	//两级的hash,集合->磁盘->上下文
-	private static Map<String,ConcurrentHashMap<String, StoreSetContext>> writeContextHash = new ConcurrentHashMap<String,ConcurrentHashMap<String, StoreSetContext>>();		//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
+	//一级的hash,集合 + 磁盘->上下文
+	//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
+	private static Map<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();		
 	private Map<String, RandomAccessFile> readRafHash;			//读文件时的随机访问流，用哈希来缓存
 	private Jedis jedis;
 	
 	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
 
 	public class StoreSetContext {
-		public String set;
+		public String key;
+		public String disk;
 		
 		//当前可写的块
 		private long curBlock = -1;
@@ -44,8 +46,7 @@ public class StorePhoto {
 		
 		private String path = null;
 		
-		
-		public StoreSetContext(String set,String disk) {
+		public StoreSetContext(String set, String disk) {
 			// 根据set和md5构造存储的路径
 			StringBuffer sb = new StringBuffer();
 			sb.append(disk);
@@ -59,7 +60,8 @@ public class StorePhoto {
 			if (!dir.exists()) 
 				dir.mkdirs();
 			
-			this.set = set;
+			this.key = set + ":" + disk;
+			this.disk = disk;
 		}
 	}
 	
@@ -89,82 +91,83 @@ public class StorePhoto {
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
-		StringBuffer rVal = new StringBuffer();
+		StringBuffer rVal = new StringBuffer(128);
 		
 		int diskid = new Random().nextInt(diskArray.length);		//随机选一个磁盘
 		StoreSetContext ssc = null;
 		synchronized (writeContextHash) {
+			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
 			
-		if(!writeContextHash.containsKey(set))
-			writeContextHash.put(set, new ConcurrentHashMap<String,StoreSetContext>());
-		ssc = writeContextHash.get(set).get(diskArray[diskid]);
-		
-		if (ssc == null) {
-			ssc = new StoreSetContext(set,diskArray[diskid]);
-			writeContextHash.get(set).put(diskArray[diskid], ssc);
-		}
-		}//end of sync writeContextHash
-		synchronized (ssc) {
-		//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
-		//用curBlock缓存当前可写的块，减少查询jedis的次数
-		
-		try {
-			if (ssc.curBlock < 0) {
-				String reply = jedis.get(set + ".blk." + localHostName);
-				if (reply != null) {
-					ssc.curBlock = Long.parseLong(reply);		//需要通过节点名字来标示不同节点上相同名字的集合
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-				} else {
-					ssc.curBlock = 0;
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-					//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-					jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
-					jedis.set(set + ".blk." + localHostName, "" + ssc.curBlock);
-				}
-				ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-				ssc.offset = ssc.newf.length();
-				ssc.raf.seek(ssc.offset);
-			} else {
-				if (ssc.newf.length() + content.length > blocksize) {
-					ssc.curBlock++;
-					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-					if(ssc.raf != null)			//如果换了一个新块,则先把之前的关掉
-						ssc.raf.close();
-					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-					jedis.incr(set + ".blk." + localHostName);			//当前可写的块号加一
-					ssc.offset = 0;
-				}
+			if (ssc == null) {
+				ssc = new StoreSetContext(set, diskArray[diskid]);
+				writeContextHash.put(ssc.key, ssc);
 			}
-			ssc.raf.write(content, coff, clen);
-			// 统计写入的字节数
-			ServerProfile.addWrite(clen);
-			// 构造返回值
-			rVal.append("1#"); // type
-			rVal.append(set);
-			rVal.append("#");
-			rVal.append(localHostName); // node name
-			rVal.append("#");
-			rVal.append(serverport); // port #
-			rVal.append("#");
-			rVal.append(ssc.curBlock);
-			rVal.append("#");
-			rVal.append(ssc.offset);
-			rVal.append("#");
-			rVal.append(clen);
-			rVal.append("#");
-			rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
-
-			ssc.offset += clen;
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
-		} catch (IOException e) {
-			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
 		}
-		}//end of synchronized block
+		synchronized (ssc) {
+			//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
+			//用curBlock缓存当前可写的块，减少查询jedis的次数
+		
+			try {
+				if (ssc.curBlock < 0) {
+					//需要通过节点名字来标示不同节点上相同名字的集合
+					String reply = jedis.get(set + ".blk." + localHostName + "." + ssc.disk);
+					if (reply != null) {
+						ssc.curBlock = Long.parseLong(reply);
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+					} else {
+						ssc.curBlock = 0;
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
+						jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
+						jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
+					}
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.offset = ssc.newf.length();
+					ssc.raf.seek(ssc.offset);
+				} else {
+					if (ssc.offset + content.length > blocksize) {
+						ssc.curBlock++;
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						//如果换了一个新块,则先把之前的关掉
+						if(ssc.raf != null)
+							ssc.raf.close();
+						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						//当前可写的块号加一
+						jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
+						ssc.offset = 0;
+					}
+				}
+				ssc.raf.write(content, coff, clen);
+				// 统计写入的字节数
+				ServerProfile.addWrite(clen);
+				// 构造返回值
+				rVal.append("1#"); // type
+				rVal.append(set);
+				rVal.append("#");
+				rVal.append(localHostName); // node name
+				rVal.append("#");
+				rVal.append(serverport); // port #
+				rVal.append("#");
+				rVal.append(ssc.curBlock);
+				rVal.append("#");
+				rVal.append(ssc.offset);
+				rVal.append("#");
+				rVal.append(clen);
+				rVal.append("#");
+				rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+	
+				ssc.offset += clen;
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+				return "#FAIL:" + e.getMessage();
+			} catch (IOException e) {
+				e.printStackTrace();
+				return "#FAIL:" + e.getMessage();
+			}
+		}
+		
 		String returnVal = rVal.toString();
-		long r = jedis.hsetnx(set,md5,returnVal);
+		long r = jedis.hsetnx(set, md5, returnVal);
 		if(r == 1)
 			return returnVal;
 		else
@@ -208,6 +211,7 @@ public class StorePhoto {
 			return null;
 		}
 	}
+	
 	/**
 	 *获得md5值所代表的图片的内容
 	 * @param md5		与storePhoto中的参数md5相对应
@@ -243,16 +247,17 @@ public class StorePhoto {
 			System.out.println("Invalid INFO string: " + info);
 			return null;
 		}
-		String path = infos[1] + "/b" + infos[4];
+		String path = infos[7] + "/" + destRoot + infos[1] + "/b" + infos[4];
 		RandomAccessFile readr = null;
 		byte[] content = new byte[Integer.parseInt(infos[6])];
 	
 		try {
 			//用哈希缓存打开的文件随机访问流
-			if(readRafHash.containsKey(path)) {
+			if (readRafHash.containsKey(path)) {
 				readr = readRafHash.get(path);
 			} else {
-				readr = new RandomAccessFile(infos[7]+"/"+destRoot + path, "r");	//构造路径时加上磁盘 
+				//构造路径时加上磁盘 
+				readr = new RandomAccessFile(path, "r");
 				readRafHash.put(path, readr);
 			}
 			readr.seek(Long.parseLong(infos[5]));

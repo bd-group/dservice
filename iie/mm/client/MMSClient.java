@@ -2,13 +2,13 @@ package iie.mm.client;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 public class MMSClient {
@@ -57,20 +57,23 @@ public class MMSClient {
 	        }
 		}
 		
-		String localHostName = null, redisHost = null;
+		String serverName = null, redisHost = null;
 		String set = "default";
-		int redisPort = 0;
+		int serverPort = 0, redisPort = 0;
+		ClientConf.MODE mode = ClientConf.MODE.NODEDUP;
 		long lpt_nr = 1, lpt_size = 1;
 		int lgt_nr = -1;
-		String lpt_type = "";
+		String lpt_type = "", lgt_type = "";
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
 				// print help message
 				System.out.println("-h    : print this help.");
-				System.out.println("-r    : local host name.");
+				System.out.println("-r    : server host name.");
+				System.out.println("-p    : server port.");
 				System.out.println("-rr   : redis server name.");
 				System.out.println("-rp   : redis server port.");
+				System.out.println("-m    : client operation mode.");
 				
 				System.out.println("-set  : specify set name.");
 				System.out.println("-put  : put an object to server.");
@@ -85,8 +88,24 @@ public class MMSClient {
 				System.exit(0);
 			}
 			if (o.flag.equals("-r")) {
-				// set local host name
-				localHostName = o.opt;
+				// set server host name
+				serverName = o.opt;
+			}
+			if (o.flag.equals("-p")) {
+				// set server port
+				serverPort = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-m")) {
+				// set client mode
+				if (o.opt == null) {
+					System.out.println("Please specify mode: [dedup, nodedup]");
+				} else {
+					if (o.opt.equalsIgnoreCase("dedup")) {
+						mode = ClientConf.MODE.DEDUP;
+					} else if (o.opt.equalsIgnoreCase("nodedup")) {
+						mode = ClientConf.MODE.NODEDUP;
+					}
+				}
 			}
 			if (o.flag.equals("-rr")) {
 				// set redis server name
@@ -112,20 +131,29 @@ public class MMSClient {
 				//sync or async
 				lpt_type = o.opt;
 			}
-			if (o.flag.equals("-lgt_nr"))
-			{
+			if (o.flag.equals("-lgt_nr")) {
 				lgt_nr = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lgt_type")) {
+				// get or search
+				lgt_type = o.opt;
 			}
 		}
 		
 		ClientConf conf = null;
 		try {
-			conf = new ClientConf(localHostName, redisHost, redisPort);
+			conf = new ClientConf(serverName, serverPort, redisHost, redisPort, mode);
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 			System.exit(0);
 		}
-		PhotoClient pc = new PhotoClient(conf);
+		PhotoClient pc = null;
+		try {
+			pc = new PhotoClient(conf);
+		} catch (IOException e) {
+			e.printStackTrace();
+			System.exit(0);
+		}
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-put")) {
@@ -154,7 +182,7 @@ public class MMSClient {
 			if (o.flag.equals("-lpt")) {
 				// large scale put test
 				System.out.println("Provide the number of iterations, and mm object size.");
-				System.out.println("LPT args: nr " + lpt_nr + ", size " + lpt_size +", type "+lpt_type);
+				System.out.println("LPT args: nr " + lpt_nr + ", size " + lpt_size +", type " + lpt_type);
 				
 				try {
 					long begin = System.currentTimeMillis();
@@ -172,19 +200,17 @@ public class MMSClient {
 						for (int j = 0; j < mdbytes.length; j++) {
 							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 						}
-						if(lpt_type.equals("sync"))
+						if (lpt_type.equalsIgnoreCase("sync"))
 							pc.syncStorePhoto(set, sb.toString(), content);
-						else if(lpt_type.equals("async"))
+						else if (lpt_type.equalsIgnoreCase("async"))
 							pc.asyncStorePhoto(set, sb.toString(), content);
-						else
-						{
-							if(lpt_type.equals(""))
-								System.out.println("please provide lpt_type");
+						else {
+							if (lpt_type.equals(""))
+								System.out.println("Please provide lpt_type");
 							else
-								System.out.println("wrong lpt_type,should be sync or async");
+								System.out.println("Wrong lpt_type, should be sync or async");
 							System.exit(0);
 						}
-							
 					}
 					long end = System.currentTimeMillis();
 					System.out.println("LPT nr " + lpt_nr + " size " + lpt_size + 
@@ -197,42 +223,73 @@ public class MMSClient {
 				}
 			}
 			
-			if(o.flag.equals("-lgt"))
-			{
+			if (o.flag.equals("-lgt")) {
+				// large scale get test
 				System.out.println("Provide the number of iterations.");
-				System.out.println("LGT args: nr " + lgt_nr );
-				if(lgt_nr == -1)
-				{
+				System.out.println("LGT args: nr " + lgt_nr);
+				if (lgt_nr == -1) {
 					System.out.println("please provide number of iterations using -lgt_nr");
 					System.exit(0);
 				}
-				try{
-					
+				try {
+					Map<String, String> stored = pc.getNrFromSet(set);
+					if (stored.size() < lgt_nr) {
+						lgt_nr = stored.size();
+					}
+					int i = 0;
+					long size = 0;
 					long begin = System.currentTimeMillis();
-					for(int i = 0;i<lgt_nr;i++)
-					{
-						pc.getPhoto(set,i+"");
+					
+					if (lgt_type.equalsIgnoreCase("get")) {
+						for (Map.Entry<String, String> e : stored.entrySet()) {
+							byte[] r = pc.getPhoto(set, e.getKey());
+							if (r != null)
+								size += r.length;
+							i++;
+							if (i >= lgt_nr)
+								break;
+						}
+					} else if (lgt_type.equalsIgnoreCase("search")) {
+						for (Map.Entry<String, String> e : stored.entrySet()) {
+							byte[] r = pc.searchPhoto(e.getValue());
+							if (r != null)
+								size += r.length;
+							i++;
+							if (i >= lgt_nr)
+								break;
+						}
+					} else {
+						if (lgt_type.equals("")) 
+							System.out.println("Please provide lgt_type.");
+						else 
+							System.out.println("Wrong lgt_type, expect 'get' or 'search'");
+						System.exit(0);
 					}
 					long dur = System.currentTimeMillis() - begin;
-					System.out.println("average read latency:"+((double)dur/lgt_nr)+"ms");
-					
-				}catch(IOException e){
+					System.out.println("LGT nr " + lgt_nr + " size " + size + "B " + 
+							": BW " + (size / 1024.0 / (dur)) + " KBps," + 
+							" LAT " + ((double)dur / lgt_nr) + " ms");
+				} catch(IOException e){
 					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-get")) {
-
+				if (o.opt == null) {
+					System.out.println("Please provide the get md5.");
+					System.exit(0);
+				}
 				String md5 = o.opt;
 				System.out.println("Provide the set and md5 about a photo.");
 				System.out.println("get args: set " + set + ", md5 " + md5);
-				try{
+				
+				try {
 					byte[] content = pc.getPhoto(set,md5);
-					System.out.println("get content length:"+content.length);
-				}catch(IOException e){
+					System.out.println("Get content length: " + content.length);
+				} catch(IOException e){
 					e.printStackTrace();
 				}
-				
 			}
+			
 			if (o.flag.equals("-getbi")) {
 				String info = o.opt;
 				System.out.println("Provide the INFO about a photo.");
@@ -253,18 +310,15 @@ public class MMSClient {
 				ds.delSet(sname);
 				ds.closeJedis();
 			}
-			if (o.flag.equals("-getserverinfo"))
-			{
+			if (o.flag.equals("-getserverinfo")) {
 				System.out.println("get server info.");
 				DeleteSet ds = new DeleteSet(redisHost,redisPort);
 				List<String> ls = ds.getAllServerInfo();
-				if(ls == null)
-				{
+				if(ls == null) {
 					System.out.println("出现错误");
 					return;
 				}
-				for(String s : ls)
-				{
+				for(String s : ls) {
 					System.out.println(s);
 				}
 			}

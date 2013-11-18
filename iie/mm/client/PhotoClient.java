@@ -20,7 +20,8 @@ import redis.clients.jedis.Jedis;
 public class PhotoClient {
 	private Socket syncStoreSocket;			//用于同步写的socket
 	private Socket asyncStoreSocket;	//用于异步写
-	private int localport = 0;
+	private ClientConf conf;
+	private int serverPort = 0;
 
 	
 	private DataInputStream storeis;
@@ -35,32 +36,104 @@ public class PhotoClient {
 	/**
 	 * 读取配置文件,进行必要初始化,并与redis服务器建立连接
 	 * It is not thread-safe!
+	 * @throws IOException 
 	 */
-	public PhotoClient(ClientConf conf)
-	{
+	public PhotoClient(ClientConf conf) throws IOException {
+		this.conf = conf;
+		
 		//连接服务器
 		jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 		socketHash = new ConcurrentHashMap<String, Socket>();
 
-		// get the local MM service (port) from redis server
-		Set<String> active = jedis.smembers("mm.active");
-		if (active != null && active.size() > 0) {
-			for (String s : active) {
-				if (s.startsWith(conf.getLocalHostName())) {
-					// ok, parse the port
-					String[] c = s.split("#");
-					if (c.length == 2) {
-						localport = Integer.parseInt(c[1]);
-						break;
+		if (conf.getServerPort() > 0)
+			serverPort = conf.getServerPort();
+		else {
+			// get the local MM service (port) from redis server
+			Set<String> active = jedis.smembers("mm.active");
+			if (active != null && active.size() > 0) {
+				for (String s : active) {
+					if (s.startsWith(conf.getServerName())) {
+						// ok, parse the port
+						String[] c = s.split("#");
+						if (c.length == 2) {
+							serverPort = Integer.parseInt(c[1]);
+							break;
+						}
 					}
 				}
 			}
 		}
-		if (localport == 0) {
-			System.out.println("[WARN] Invalid local mm server port for host " + conf.getLocalHostName() + "'s storage.");
+		if (serverPort == 0) {
+			System.out.println("[WARN] Invalid mm server port for host " + conf.getServerName() + "'s storage.");
+			throw new IOException("Invalid mm server port for host " + conf.getServerName() + "'s storage.");
 		} else {
-			System.out.println("[INFO] Resolve host " + conf.getLocalHostName() + "'s port to " + localport);
+			System.out.println("[INFO] Resolve host " + conf.getServerName() + "'s port to " + serverPort);
 		}
+	}
+	
+	private String __syncStorePhoto(String set, String md5, byte[] content) throws IOException {
+		//图片不存在, 只在第一次写的时候连接服务器
+		if (syncStoreSocket == null) {
+			assert(serverPort > 0);
+			syncStoreSocket = new Socket();
+			syncStoreSocket.setTcpNoDelay(true);
+			syncStoreSocket.connect(new InetSocketAddress(conf.getServerName(), serverPort));
+			
+			storeos = new DataOutputStream(syncStoreSocket.getOutputStream());
+			storeis = new DataInputStream(syncStoreSocket.getInputStream());
+		}
+		
+		//action,set,md5,content的length写过去
+		byte[] header = new byte[4];
+		header[0] = ActionType.SYNCSTORE;
+		header[1] = (byte) set.length();
+		header[2] = (byte) md5.length();
+		storeos.write(header);
+		storeos.writeInt(content.length);
+		
+		//set,md5,content的实际内容写过去
+		storeos.write(set.getBytes());
+		storeos.write(md5.getBytes());
+		storeos.write(content);
+		storeos.flush();
+		
+		int count = storeis.readInt();
+		if (count == -1)
+			return jedis.hget(set,md5);
+		
+		String s = new String(readBytes(count, storeis));
+		
+		if (s.startsWith("#FAIL:")) {
+			throw new IOException("MM server failure: " + s);
+		}
+		return s;
+	}
+	
+	private void __asyncStorePhoto(String set, String md5, byte[] content) throws IOException {
+		//图片不存在, 只在第一次写的时候连接服务器
+		if (asyncStoreSocket == null) {
+			assert(serverPort > 0);
+			asyncStoreSocket = new Socket();
+			asyncStoreSocket.setTcpNoDelay(true);
+			asyncStoreSocket.connect(new InetSocketAddress(conf.getServerName(), serverPort));
+			
+			storeos = new DataOutputStream(asyncStoreSocket.getOutputStream());
+			storeis = new DataInputStream(asyncStoreSocket.getInputStream());
+		}
+		
+		//action,set,md5,content的length写过去
+		byte[] header = new byte[4];
+		header[0] = ActionType.ASYNCSTORE;
+		header[1] = (byte) set.length();
+		header[2] = (byte) md5.length();
+		storeos.write(header);
+		storeos.writeInt(content.length);
+		
+		//set,md5,content的实际内容写过去
+		storeos.write(set.getBytes());
+		storeos.write(md5.getBytes());
+		storeos.write(content);
+		storeos.flush();
 	}
 	
 	/**
@@ -71,89 +144,47 @@ public class PhotoClient {
 	 * @return		
 	 */
 	public String syncStorePhoto(String set, String md5, byte[] content) throws IOException {
-		//String info = jedis.hget(set, md5);
+		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
+			return __syncStorePhoto(set, md5, content);
+		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
+			String info = jedis.hget(set, md5);
 		
-		//if(info == null) {
-			//图片不存在, 只在第一次写的时候连接服务器
-			if(syncStoreSocket == null && localport > 0) {
-				syncStoreSocket = new Socket();
-				syncStoreSocket.setTcpNoDelay(true);
-				syncStoreSocket.connect(new InetSocketAddress("localhost", localport));
+			if (info == null) {
+				return __syncStorePhoto(set, md5, content);
+			} else {
+				System.out.println(set + "." + md5 + " exists in redis server");
+				jedis.hincrBy(set, "r." + md5, 1);
 				
-				storeos = new DataOutputStream(syncStoreSocket.getOutputStream());
-				storeis = new DataInputStream(syncStoreSocket.getInputStream());
+				return info;
 			}
-			
-			//action,set,md5,content的length写过去
-			byte[] header = new byte[4];
-			header[0] = ActionType.SYNCSTORE;
-			header[1] = (byte) set.length();
-			header[2] = (byte) md5.length();
-			storeos.write(header);
-			storeos.writeInt(content.length);
-			
-			//set,md5,content的实际内容写过去
-			storeos.write(set.getBytes());
-			storeos.write(md5.getBytes());
-			storeos.write(content);
-			storeos.flush();
-			
-			int count = storeis.readInt();
-			if (count == -1)
-				return jedis.hget(set,md5);
-			
-			String s = new String(readBytes(count, storeis));
-			
-			if (s.startsWith("#FAIL:")) {
-				throw new IOException("MM server failure: " + s);
-			}
-			return s;
-/*
-		} else {
-			System.out.println(set + "." + md5 + " exists in redis server");
-			jedis.hincrBy(set, "r." + md5, 1);
-			
-			return info;
 		}
-*/
+		throw new IOException("Invalid Operation Mode.");
 	}
 	
 	public void asyncStorePhoto(String set, String md5, byte[] content)	throws IOException {
-		// String info = jedis.hget(set, md5);
+		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
+			__asyncStorePhoto(set, md5, content);
+		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
+			String info = jedis.hget(set, md5);
 
-		// if(info == null) {
-			// 图片不存在, 只在第一次写的时候连接服务器
-			if (asyncStoreSocket == null && localport > 0) {
-				asyncStoreSocket = new Socket();
-				asyncStoreSocket.setTcpNoDelay(true);
-				asyncStoreSocket.connect(new InetSocketAddress("localhost", localport));
-	
-				storeos = new DataOutputStream(asyncStoreSocket.getOutputStream());
-				storeis = new DataInputStream(asyncStoreSocket.getInputStream());
-			}
-	
-			// action,set,md5,content的length写过去
-			byte[] header = new byte[4];
-			header[0] = ActionType.ASYNCSTORE;
-			header[1] = (byte) set.length();
-			header[2] = (byte) md5.length();
-			storeos.write(header);
-			storeos.writeInt(content.length);
-	
-			// set,md5,content的实际内容写过去
-			storeos.write(set.getBytes());
-			storeos.write(md5.getBytes());
-			storeos.write(content);
-			storeos.flush();
-	
-			
-		/*
-		 } else { System.out.println(set + "." + md5 +
-		  " exists in redis server"); jedis.hincrBy(set, "r." + md5, 1);
-		  
-		 return info; }
-		 */
+			if (info == null) {
+				__asyncStorePhoto(set, md5, content);
+			} /* else { 
+				// FIXME: this should increase reference in Server.
+				System.out.println(set + "." + md5 + " exists in redis server");
+				jedis.hincrBy(set, "r." + md5, 1);
+
+				return info;
+			}*/
+		} else {
+			throw new IOException("Invalid Operation Mode.");
+		}
 	}
+	
+	public Map<String, String> getNrFromSet(String set) throws IOException {
+		return jedis.hgetAll(set);
+	}
+	
 	/**
 	 * 
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名

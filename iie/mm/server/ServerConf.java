@@ -46,6 +46,8 @@ public class ServerConf {
 	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, int blockSize, int period, int httpPort) throws Exception {
 		if (nodeName == null)
 			this.nodeName = InetAddress.getLocalHost().getHostName();
+		else
+			this.nodeName = nodeName;
 		if (serverPort > 0)
 			this.serverPort = serverPort;
 		if (redisHost == null)
