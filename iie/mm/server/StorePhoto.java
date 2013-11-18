@@ -226,7 +226,7 @@ public class StorePhoto {
 			info = jedis.hget(set, md5);
 			
 			if(info == null) {
-				System.out.println("MM: md5" + md5 + " doesn't exist in set " + set + ".");
+				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
 				return null;
 			} else {
 				// append this entry to lookup cache

@@ -26,6 +26,7 @@ public class ServerConf {
 	public static int DEFAULT_PERIOD = 10;
 	public static int DEFAULT_FLUSH_INTERVAL = 10;
 	public static int DEFAULT_REQNR_TO_FLUSH = 15;
+	public static int DEFAULT_HTTP_PORT = 20202;
 	
 	private boolean use_junixsocket = false;
 	
@@ -34,6 +35,7 @@ public class ServerConf {
 	private String redisHost;
 	private int redisPort = DEFAULT_REDIS_PORT;
 	private int blockSize = DEFAULT_BLOCK_SIZE;
+	private int httpPort = DEFAULT_HTTP_PORT;
 	private int period = DEFAULT_PERIOD; // 每隔period秒统计一次读写速率
 	
 	private int flush_interval = DEFAULT_FLUSH_INTERVAL;
@@ -41,7 +43,7 @@ public class ServerConf {
 	
 	private Set<String> storeArray = new HashSet<String>();
 
-	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, int blockSize, int period) throws Exception {
+	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, int blockSize, int period, int httpPort) throws Exception {
 		if (nodeName == null)
 			this.nodeName = InetAddress.getLocalHost().getHostName();
 		else
@@ -55,7 +57,8 @@ public class ServerConf {
 		this.redisPort = redisPort;
 		this.blockSize = blockSize;
 		this.period = period;
-
+		this.httpPort = httpPort;
+		
 		// ok, get global config if they exist.
 		Jedis jedis = new RedisFactory(this).getDefaultInstance();
 		Pipeline p = jedis.pipelined();
@@ -106,6 +109,13 @@ public class ServerConf {
 		this.redisPort = redisPort;
 	}
 
+	public int getHttpPort(){
+		return httpPort;
+	}
+	
+	public void setHttpPort(int httpPort){
+		this.httpPort = httpPort;
+	}
 	public int getBlockSize() {
 		return blockSize;
 	}

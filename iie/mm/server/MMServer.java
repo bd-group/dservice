@@ -54,7 +54,8 @@ public class MMServer {
 		int serverPort = ServerConf.DEFAULT_SERVER_PORT, 
 				redisPort = ServerConf.DEFAULT_REDIS_PORT, 
 				blockSize = ServerConf.DEFAULT_BLOCK_SIZE, 
-				period = ServerConf.DEFAULT_PERIOD;
+				period = ServerConf.DEFAULT_PERIOD,
+				httpPort = ServerConf.DEFAULT_HTTP_PORT;
 		Set<String> sa = new HashSet<String>();
 		
 		for (Option o : optsList) {
@@ -65,6 +66,7 @@ public class MMServer {
 				System.out.println("-p    : local server listen port.");
 				System.out.println("-rr   : redis server name.");
 				System.out.println("-rp   : redis server port.");
+				System.out.println("-hp   : http server port.");
 				System.out.println("-blk  : block size.");
 				System.out.println("-prd  : logging period.");
 				System.out.println("-sa   : storage array.");
@@ -103,6 +105,10 @@ public class MMServer {
 				}
 				redisPort = Integer.parseInt(o.opt);
 			}
+			if (o.flag.equals("-hp")) {
+				// set http server port
+				httpPort = Integer.parseInt(o.opt);
+			}
 			if (o.flag.equals("-blk")) {
 				// set block size
 				if (o.opt == null) {
@@ -134,7 +140,7 @@ public class MMServer {
 		
 		// set the serverConf
 		try {
-			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period);
+			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
 		} catch (Exception e) {
 			e.printStackTrace();
