@@ -25,14 +25,14 @@ public class ProfileTimerTask extends TimerTask {
 		File dir = new File(profileDir);
 		if(!dir.exists())
 			dir.mkdirs();
-		//向redis的数据库1中插入心跳信息
+		// 向redis的数据库1中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
-		hbkey = "mm.hb." + conf.getNodeName() + "#" + conf.getServerPort();
+		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
 		Pipeline pi = jedis.pipelined();
 		pi.set(hbkey, "1");
-		pi.expire(hbkey, 20);
-		//启动过的server
-		pi.sadd("mm.active", conf.getNodeName() + "#" + conf.getServerPort());
+		pi.expire(hbkey, period + 5);
+		// 启动过的server
+		pi.sadd("mm.active", conf.getNodeName() + ":" + conf.getServerPort());
 		pi.sync();
 	}
 
