@@ -50,7 +50,7 @@ public class PhotoClient {
 				for (String s : active) {
 					if (s.startsWith(conf.getServerName())) {
 						// ok, parse the port
-						String[] c = s.split("#");
+						String[] c = s.split(":");
 						if (c.length == 2) {
 							serverPort = Integer.parseInt(c[1]);
 							break;
@@ -284,8 +284,8 @@ public class PhotoClient {
 		}
 	}
 	
-	private byte[] searchPhoto(String info) throws IOException {
-		String[] infos = info.split("#");
+	public byte[] searchPhoto(String info) throws IOException {
+		String[] infos = info.split(":");
 		
 		if (infos.length != 8) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);

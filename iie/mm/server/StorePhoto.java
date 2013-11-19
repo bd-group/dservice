@@ -87,7 +87,7 @@ public class StorePhoto {
 	 * @param set	集合名
 	 * @param md5	文件的md5
 	 * @param content	文件内容
-	 * @return		type#set#node#port＃block＃offset＃length＃disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
+	 * @return		type:set:node:port:block:offset:length:disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
@@ -118,7 +118,7 @@ public class StorePhoto {
 						ssc.curBlock = 0;
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-						jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
+						jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
 						jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
 					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -141,19 +141,19 @@ public class StorePhoto {
 				// 统计写入的字节数
 				ServerProfile.addWrite(clen);
 				// 构造返回值
-				rVal.append("1#"); // type
+				rVal.append("1:"); // type
 				rVal.append(set);
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(localHostName); // node name
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(serverport); // port #
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(ssc.curBlock);
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(ssc.offset);
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(clen);
-				rVal.append("#");
+				rVal.append(":");
 				rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 	
 				ssc.offset += clen;
@@ -237,11 +237,11 @@ public class StorePhoto {
 	}
 	/**
 	 * 获得图片内容
-	 * @param info		对应storePhoto的type#set#node#port#block＃offset＃length＃disk格式的返回值
+	 * @param info		对应storePhoto的type:set:node:port:block:offset:length:disk格式的返回值
 	 * @return			图片内容content
 	 */
 	public byte[] searchPhoto(String info) {
-		String[] infos = info.split("#");
+		String[] infos = info.split(":");
 		
 		if (infos.length != 8) {
 			System.out.println("Invalid INFO string: " + info);

@@ -268,12 +268,13 @@ public class MMSClient {
 					}
 					long dur = System.currentTimeMillis() - begin;
 					System.out.println("LGT nr " + lgt_nr + " size " + size + "B " + 
-							": BW " + (size / 1024.0 / (dur)) + " KBps," + 
+							": BW " + (size * 1000.0 / 1024.0 / (dur)) + " KBps," + 
 							" LAT " + ((double)dur / lgt_nr) + " ms");
 				} catch(IOException e){
 					e.printStackTrace();
 				}
 			}
+			
 			if (o.flag.equals("-get")) {
 				if (o.opt == null) {
 					System.out.println("Please provide the get md5.");
@@ -303,6 +304,7 @@ public class MMSClient {
 					e.printStackTrace();
 				}
 			}
+			
 			if (o.flag.equals("-del")) {
 				String sname = o.opt;
 				System.out.println("Provide the set name to be deleted.");
@@ -311,6 +313,7 @@ public class MMSClient {
 				ds.delSet(sname);
 				ds.closeJedis();
 			}
+			
 			if (o.flag.equals("-getserverinfo")) {
 				System.out.println("get server info.");
 				DeleteSet ds = new DeleteSet(redisHost,redisPort);
