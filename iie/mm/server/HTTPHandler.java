@@ -75,10 +75,18 @@ public class HTTPHandler extends AbstractHandler {
 
 	private void doPut(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
+		badResponse(baseRequest, response, "#FAIL: not implemented yet.");
 	}
 
 	private void doInfo(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
+		response.setContentType("text/plain;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		response.getWriter().println("#In Current Server Session:");
+		response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
+		response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
+		response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

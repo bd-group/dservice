@@ -152,8 +152,9 @@ public class PhotoClient {
 			if (info == null) {
 				return __syncStorePhoto(set, md5, content);
 			} else {
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
+				// NOTE: the delete unit is SET, thus, do NOT need reference 
+				//System.out.println(set + "." + md5 + " exists in MM server");
+				//jedis.hincrBy(set, "r." + md5, 1);
 				
 				return info;
 			}
@@ -169,13 +170,7 @@ public class PhotoClient {
 
 			if (info == null) {
 				__asyncStorePhoto(set, md5, content);
-			} /* else { 
-				// FIXME: this should increase reference in Server.
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
-
-				return info;
-			}*/
+			}
 		} else {
 			throw new IOException("Invalid Operation Mode.");
 		}
