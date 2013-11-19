@@ -1,0 +1,9 @@
+Makefile.profile
+*.class
+build/*
+lib/*.[ao]
+.classpath
+.project
+.settings
+log
+test

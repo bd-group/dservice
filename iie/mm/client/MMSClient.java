@@ -21,7 +21,7 @@ public class MMSClient {
 	/**
 	 * @param args
 	 */
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception{
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
@@ -150,6 +150,7 @@ public class MMSClient {
 		PhotoClient pc = null;
 		try {
 			pc = new PhotoClient(conf);
+			pc.init(redisHost+"#"+redisPort);
 		} catch (IOException e) {
 			e.printStackTrace();
 			System.exit(0);
@@ -174,7 +175,7 @@ public class MMSClient {
 					}
 				}
 				try {
-					System.out.println("MD5:" + o.opt + " -> INFO: " + pc.syncStorePhoto(set, o.opt, content));
+					System.out.println("MD5:" + o.opt + " -> INFO: " + pc.put(set+"#"+o.opt, content));
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
@@ -201,9 +202,9 @@ public class MMSClient {
 							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 						}
 						if (lpt_type.equalsIgnoreCase("sync"))
-							pc.syncStorePhoto(set, sb.toString(), content);
+							pc.put(set+"#"+ sb.toString(), content);
 						else if (lpt_type.equalsIgnoreCase("async"))
-							pc.asyncStorePhoto(set, sb.toString(), content);
+							pc.put(set+"#"+sb.toString(), content);
 						else {
 							if (lpt_type.equals(""))
 								System.out.println("Please provide lpt_type");
@@ -241,8 +242,8 @@ public class MMSClient {
 					long begin = System.currentTimeMillis();
 					
 					if (lgt_type.equalsIgnoreCase("get")) {
-						for (Map.Entry<String, String> e : stored.entrySet()) {
-							byte[] r = pc.getPhoto(set, e.getKey());
+						for (String key : stored.keySet()) {
+							byte[] r = pc.get(set+"#"+ key);
 							if (r != null)
 								size += r.length;
 							i++;
@@ -250,8 +251,8 @@ public class MMSClient {
 								break;
 						}
 					} else if (lgt_type.equalsIgnoreCase("search")) {
-						for (Map.Entry<String, String> e : stored.entrySet()) {
-							byte[] r = pc.searchPhoto(e.getValue());
+						for (String val : stored.values()) {
+							byte[] r = pc.get(val);
 							if (r != null)
 								size += r.length;
 							i++;
@@ -283,7 +284,7 @@ public class MMSClient {
 				System.out.println("get args: set " + set + ", md5 " + md5);
 				
 				try {
-					byte[] content = pc.getPhoto(set,md5);
+					byte[] content = pc.get(set+"#"+md5);
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();
@@ -296,7 +297,7 @@ public class MMSClient {
 				System.out.println("get args:  " + info);
 				try{
 					
-					byte[] content = pc.searchPhoto(info);
+					byte[] content = pc.get(info);
 					System.out.println("get content length:"+content.length);
 				}catch(IOException e){
 					e.printStackTrace();

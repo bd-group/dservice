@@ -140,7 +140,7 @@ public class MMServer {
 		
 		// set the serverConf
 		try {
-			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period,httpPort);
+			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
 		} catch (Exception e) {
 			e.printStackTrace();
