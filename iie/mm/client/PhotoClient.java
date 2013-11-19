@@ -72,7 +72,7 @@ public class PhotoClient {
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
 	 * 如果初始化本对象时传入了conf，则使用conf中的redis地址，否则使用参数url
 	 * It is not thread-safe!
-	 * @param url redis的主机名#端口
+	 * @param url redis的主机名:端口
 	 * @return 
 	 */
 	public int init(String url) throws Exception{
@@ -83,7 +83,7 @@ public class PhotoClient {
 			{
 				throw new Exception("url can not be null.");
 			}
-			String[] redishp = url.split("#"); 
+			String[] redishp = url.split(":"); 
 			if(redishp.length != 2)
 				throw new Exception("wrong format of url:"+url);
 			jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
@@ -96,7 +96,7 @@ public class PhotoClient {
 		Set<String> active = jedis.smembers("mm.active");
 		if (active != null && active.size() > 0) {
 			for (String s : active) {
-				String[] c = s.split("#");
+				String[] c = s.split(":");
 				if (c.length == 2) {
 					Socket sock = new Socket();
 					try {
@@ -230,7 +230,7 @@ public class PhotoClient {
 	public String put(String key, byte[] content)  throws IOException, Exception{
 		if(key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
+		String[] keys = key.split(":");
 		if(keys.length != 2)
 			throw new Exception("wrong format of key:"+key);
 		String setName = keys[0];
@@ -251,13 +251,13 @@ public class PhotoClient {
 	
 	/**
 	 * 
-	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @param key	redis中的键以set开头+:+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public byte[] get(String key) throws Exception {
 		if(key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
+		String[] keys = key.split(":");
 		if(keys.length == 2)
 			return getPhoto(keys[0],keys[1]);
 		else if(keys.length == 8)

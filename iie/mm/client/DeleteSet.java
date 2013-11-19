@@ -41,7 +41,12 @@ public class DeleteSet {
 		while (ir.hasNext()) 
 		{
 			info = ir.next();
-			String[] infos = info.split("#");
+			String[] infos = info.split(":");
+			if(infos.length != 2)
+			{
+				System.out.println("invalid format addr:"+info);
+				continue;
+			}
 			Socket s = new Socket();
 			try {
 				s.setSoTimeout(10000);				//删除图片时接受该server的响应

@@ -83,6 +83,7 @@ public class HTTPHandler extends AbstractHandler {
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
+//		System.out.println(target);
 		if (target == null) {
 			// bad response
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
