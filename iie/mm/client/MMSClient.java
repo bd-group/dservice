@@ -175,8 +175,19 @@ public class MMSClient {
 					}
 				}
 				try {
-					System.out.println("MD5:" + o.opt + " -> INFO: " + pc.put(set+":"+o.opt, content));
+					MessageDigest md;
+					md = MessageDigest.getInstance("md5");
+					md.update(content);
+					byte[] mdbytes = md.digest();
+			
+					StringBuffer sb = new StringBuffer();
+					for (int j = 0; j < mdbytes.length; j++) {
+						sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+					}
+					System.out.println("MD5: " + sb.toString() + " -> INFO: " + pc.put(set+":"+ sb.toString(), content));
 				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (NoSuchAlgorithmException e) {
 					e.printStackTrace();
 				}
 			}

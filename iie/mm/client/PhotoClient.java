@@ -191,8 +191,9 @@ public class PhotoClient {
 			if (info == null) {
 				return __syncStorePhoto(set, md5, content,sock);
 			} else {
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
+				// NOTE: the delete unit is SET, thus, do NOT need reference 
+				//System.out.println(set + "." + md5 + " exists in MM server");
+				//jedis.hincrBy(set, "r." + md5, 1);
 				
 				return info;
 			}

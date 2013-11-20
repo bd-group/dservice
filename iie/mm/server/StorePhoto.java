@@ -93,7 +93,8 @@ public class StorePhoto {
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
 		StringBuffer rVal = new StringBuffer(128);
 		
-		int diskid = new Random().nextInt(diskArray.length);		//随机选一个磁盘
+		//随机选一个磁盘
+		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
 		synchronized (writeContextHash) {
 			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
@@ -114,29 +115,30 @@ public class StorePhoto {
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						ssc.offset = ssc.newf.length();
 					} else {
 						ssc.curBlock = 0;
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
 						jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
 						jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
-					}
-					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-					ssc.offset = ssc.newf.length();
-					ssc.raf.seek(ssc.offset);
-				} else {
-					if (ssc.offset + content.length > blocksize) {
-						ssc.curBlock++;
-						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-						//如果换了一个新块,则先把之前的关掉
-						if(ssc.raf != null)
-							ssc.raf.close();
-						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-						//当前可写的块号加一
-						jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
 						ssc.offset = 0;
 					}
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.raf.seek(ssc.offset);
 				}
+				if (ssc.offset + content.length > blocksize) {
+					ssc.curBlock++;
+					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+					//如果换了一个新块,则先把之前的关掉
+					if(ssc.raf != null)
+						ssc.raf.close();
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					//当前可写的块号加一
+					jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
+					ssc.offset = 0;
+				}
+
 				ssc.raf.write(content, coff, clen);
 				// 统计写入的字节数
 				ServerProfile.addWrite(clen);
@@ -154,7 +156,8 @@ public class StorePhoto {
 				rVal.append(":");
 				rVal.append(clen);
 				rVal.append(":");
-				rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+				//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+				rVal.append(diskArray[diskid]);
 	
 				ssc.offset += clen;
 			} catch (FileNotFoundException e) {
@@ -168,27 +171,10 @@ public class StorePhoto {
 		
 		String returnVal = rVal.toString();
 		long r = jedis.hsetnx(set, md5, returnVal);
-		if(r == 1)
+		if (r == 1)
 			return returnVal;
 		else
 			return null;
-		// 确保多个进程生成的字符串只有一个被记录下来并且被完整的记录下
-		/*
-		Pipeline pipeline = jedis.pipelined();
-		pipeline.hincrBy(set, "r." + md5, 1);
-		pipeline.hsetnx(set, md5, returnVal);
-		List<Object> l = pipeline.syncAndReturnAll();
-
-		if (l != null && l.size() == 2) {
-			if((Long)l.get(1) == 1)
-				return returnVal;
-			else
-				return null;
-		} else {
-			return "#FAIL:update STR to redis server failed.";
-		}
-		*/
-		
 	}
 	
 	/**
@@ -241,6 +227,7 @@ public class StorePhoto {
 	 * @return			图片内容content
 	 */
 	public byte[] searchPhoto(String info) {
+		long start = System.currentTimeMillis();
 		String[] infos = info.split(":");
 		
 		if (infos.length != 8) {
@@ -272,12 +259,14 @@ public class StorePhoto {
 			e.printStackTrace();
 			return null;
 		}
+		ServerProfile.updateRead(content.length, System.currentTimeMillis() - start);
+
 		return content;
 	}
 	
 	public void delSet(String set) {
 		for(String d : diskArray)		//删除每个磁盘上的该集合
-			delFile(new File(d+"/"+destRoot + set));
+			delFile(new File(d + "/" + destRoot + set));
 		writeContextHash.remove(set);			//删除一个集合后,同时删除关于该集合的全局的上下文
 	}
 	
