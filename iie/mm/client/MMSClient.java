@@ -147,10 +147,10 @@ public class MMSClient {
 			e.printStackTrace();
 			System.exit(0);
 		}
-		PhotoClient pc = null;
+		ClientAPI pcInfo = null;
 		try {
-			pc = new PhotoClient(conf);
-			pc.init(redisHost+":"+redisPort);
+			pcInfo = new ClientAPI(conf);
+			pcInfo.init(redisHost+":"+redisPort);
 		} catch (IOException e) {
 			e.printStackTrace();
 			System.exit(0);
@@ -184,7 +184,7 @@ public class MMSClient {
 					for (int j = 0; j < mdbytes.length; j++) {
 						sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 					}
-					System.out.println("MD5: " + sb.toString() + " -> INFO: " + pc.put(set+":"+ sb.toString(), content));
+					System.out.println("MD5: " + sb.toString() + " -> INFO: " + pcInfo.put(set+":"+ sb.toString(), content));
 				} catch (IOException e) {
 					e.printStackTrace();
 				} catch (NoSuchAlgorithmException e) {
@@ -213,9 +213,9 @@ public class MMSClient {
 							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 						}
 						if (lpt_type.equalsIgnoreCase("sync"))
-							pc.put(set+":"+ sb.toString(), content);
+							pcInfo.put(set+":"+ sb.toString(), content);
 						else if (lpt_type.equalsIgnoreCase("async"))
-							pc.put(set+":"+sb.toString(), content);
+							pcInfo.put(set+":"+sb.toString(), content);
 						else {
 							if (lpt_type.equals(""))
 								System.out.println("Please provide lpt_type");
@@ -244,7 +244,7 @@ public class MMSClient {
 					System.exit(0);
 				}
 				try {
-					Map<String, String> stored = pc.getNrFromSet(set);
+					Map<String, String> stored = pcInfo.getNrFromSet(set);
 					if (stored.size() < lgt_nr) {
 						lgt_nr = stored.size();
 					}
@@ -254,7 +254,7 @@ public class MMSClient {
 					
 					if (lgt_type.equalsIgnoreCase("get")) {
 						for (String key : stored.keySet()) {
-							byte[] r = pc.get(set+":"+ key);
+							byte[] r = pcInfo.get(set+":"+ key);
 							if (r != null)
 								size += r.length;
 							i++;
@@ -263,7 +263,7 @@ public class MMSClient {
 						}
 					} else if (lgt_type.equalsIgnoreCase("search")) {
 						for (String val : stored.values()) {
-							byte[] r = pc.get(val);
+							byte[] r = pcInfo.get(val);
 							if (r != null)
 								size += r.length;
 							i++;
@@ -295,7 +295,7 @@ public class MMSClient {
 				System.out.println("get args: set " + set + ", md5 " + md5);
 				
 				try {
-					byte[] content = pc.get(set+":"+md5);
+					byte[] content = pcInfo.get(set+":"+md5);
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();
@@ -308,7 +308,7 @@ public class MMSClient {
 				System.out.println("get args:  " + info);
 				try{
 					
-					byte[] content = pc.get(info);
+					byte[] content = pcInfo.get(info);
 					System.out.println("get content length:"+content.length);
 				}catch(IOException e){
 					e.printStackTrace();

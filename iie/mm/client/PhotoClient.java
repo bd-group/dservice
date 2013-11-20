@@ -6,23 +6,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.Enumeration;
-import java.util.Hashtable;
+//import java.util.Enumeration;
+//import java.util.Hashtable;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.*;
-import java.net.*;
-
-import org.newsclub.net.unix.AFUNIXSocket;
-import org.newsclub.net.unix.AFUNIXSocketAddress;
+//import java.util.Set;
+//import java.util.concurrent.ConcurrentHashMap;
+//import java.util.*;
+//import java.net.*;
+//import org.newsclub.net.unix.AFUNIXSocket;
+//import org.newsclub.net.unix.AFUNIXSocketAddress;
 
 import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
 	private ClientConf conf;
-	private int index;					
-	private List<String> keyList = new ArrayList<String>();
+//	private int index;					
+//	private List<String> keyList = new ArrayList<String>();
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash;
@@ -32,98 +31,33 @@ public class PhotoClient {
 	public PhotoClient(){
 		
 	}
-	/**
-	 * 读取配置文件,进行必要初始化,并与redis服务器建立连接
-	 * It is not thread-safe!
-	 * @throws IOException 
-	 */
-	public PhotoClient(ClientConf conf) throws IOException {
+	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
-		
-		/*
-		if (conf.getServerPort() > 0)
-			serverPort = conf.getServerPort();
-		else {
-			// get the local MM service (port) from redis server
-			Set<String> active = jedis.smembers("mm.active");
-			if (active != null && active.size() > 0) {
-				for (String s : active) {
-					if (s.startsWith(conf.getServerName())) {
-						// ok, parse the port
-						String[] c = s.split(":");
-						if (c.length == 2) {
-							serverPort = Integer.parseInt(c[1]);
-							break;
-						}
-					}
-				}
-			}
-		}
-		if (serverPort == 0) {
-			System.out.println("[WARN] Invalid mm server port for host " + conf.getServerName() + "'s storage.");
-			throw new IOException("Invalid mm server port for host " + conf.getServerName() + "'s storage.");
-		} else {
-			System.out.println("[INFO] Resolve host " + conf.getServerName() + "'s port to " + serverPort);
-		}
-		*/
+		this.jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 	}
 	
-	/**
-	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
-	 * 如果初始化本对象时传入了conf，则使用conf中的redis地址，否则使用参数url
-	 * It is not thread-safe!
-	 * @param url redis的主机名:端口
-	 * @return 
-	 */
-	public int init(String url) throws Exception{
-		//与jedis建立连接
-		if(conf == null)
-		{
-			if(url == null)
-			{
-				throw new Exception("url can not be null.");
-			}
-			String[] redishp = url.split(":"); 
-			if(redishp.length != 2)
-				throw new Exception("wrong format of url:"+url);
-			jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
-		}
-		else {
-			jedis = RedisFactory.getNewInstance(conf.getRedisHost(),conf.getRedisPort());
-		}
-		
-		socketHash = new ConcurrentHashMap<String, Socket>();
-		Set<String> active = jedis.smembers("mm.active");
-		if (active != null && active.size() > 0) {
-			for (String s : active) {
-				String[] c = s.split(":");
-				if (c.length == 2) {
-					Socket sock = new Socket();
-					try {
-						sock.setTcpNoDelay(true);//不要延迟
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
-						socketHash.put(s, sock);
-					}catch(ConnectException e){
-						e.printStackTrace();
-						return -1;
-					}catch (SocketException e) {
-						e.printStackTrace();
-						return -1;
-					} catch (NumberFormatException e) {
-						e.printStackTrace();
-						return -1;
-					} catch (IOException e) {
-						e.printStackTrace();
-						return -1;
-					}
-				}
-				
-			}
-		}
-		return 1;
+	public ClientConf getConf() {
+		return conf;
+	}
+	public void setConf(ClientConf conf) {
+		this.conf = conf;
 	}
 	
-	private String __syncStorePhoto(String set, String md5, byte[] content,Socket sock) throws IOException {
+	public Map<String, Socket> getSocketHash() {
+		return socketHash;
+	}
+	public void setSocketHash(Map<String, Socket> socketHash) {
+		this.socketHash = socketHash;
+	}
+	
+	public Jedis getJedis() {
+		return jedis;
+	}
+	public void setJedis(Jedis jedis) {
+		this.jedis = jedis;
+	}
+	
+	private String __syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		
 		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
 		DataInputStream storeis = new DataInputStream(sock.getInputStream());
@@ -182,7 +116,7 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	private String syncStorePhoto(String set, String md5, byte[] content,Socket sock) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content,Socket sock) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			return __syncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
@@ -221,34 +155,6 @@ public class PhotoClient {
 		}
 	}
 	
-	/**
-	 * 同步写,对外提供的接口
-	 * @param set
-	 * @param md5
-	 * @param content
-	 * @return		
-	 */
-	public String put(String key, byte[] content)  throws IOException, Exception{
-		if(key == null)
-			throw new Exception("key can not be null.");
-		String[] keys = key.split(":");
-		if(keys.length != 2)
-			throw new Exception("wrong format of key:"+key);
-		String setName = keys[0];
-		String md5 = keys[1];
-		keyList.addAll(socketHash.keySet());
-		Socket sock = socketHash.get(keyList.get(index));
-		String r = syncStorePhoto(setName, md5, content,sock);
-		index++;
-		if(index >= socketHash.size()){
-			index = 0;
-		}
-		return r;
-	}
-	
-	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return jedis.hgetAll(set);
-	}
 	
 	/**
 	 * 
@@ -273,7 +179,7 @@ public class PhotoClient {
 	 * @param md5	
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	private byte[] getPhoto(String set, String md5) throws IOException {
+	public byte[] getPhoto(String set, String md5) throws IOException {
 		String info = jedis.hget(set, md5);
 		
 		if(info == null) {
