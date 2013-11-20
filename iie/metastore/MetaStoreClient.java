@@ -1203,7 +1203,6 @@ public class MetaStoreClient {
 	    			Node n = cli.client.get_node(node_name);
 					Device d = cli.client.getDevice(devid);
 					d.setProp(prop);
-					d.setNg_name(ng_name);
 					cli.client.changeDeviceLocation(d, n);
 				} catch (MetaException e) {
 					e.printStackTrace();
