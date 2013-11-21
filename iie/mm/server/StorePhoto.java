@@ -14,6 +14,8 @@ import java.util.Random;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Transaction;
+import redis.clients.jedis.Response;
 
 public class StorePhoto {
 	private ServerConf conf;
@@ -174,18 +176,28 @@ public class StorePhoto {
 		}
 		
 		String returnVal = rVal.toString();
-//		long r = jedis.hsetnx(set, md5, returnVal);
+//		Pipeline pl = jedis.pipelined();
+//		pl.hsetnx(set,md5,returnVal);
+//		pl.hget(set,md5);
+//		List<Object> r = pl.syncAndReturnAll();
+//		if((Long)r.get(0) == 1)
+		Transaction t1 = jedis.multi();
+		Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+		Response<String> r2 = t1.hget(set,md5);
+		t1.exec();
+		if (r1.get() == 1)
+			return returnVal;
+		else{
+			returnVal = r2.get()+"#"+returnVal;
+			jedis.hset(set,md5,returnVal);
+			return returnVal;
+		}
 		
-//		if (r == 1)
-//			return returnVal;
-//		else
-//			return null;
-		
-		String r = jedis.hget(set,md5);
-		if(r != null)
-			returnVal = r+"#"+returnVal;
-		jedis.hset(set,md5,returnVal);
-		return returnVal;
+//		String r = jedis.hget(set,md5);
+//		if(r != null)
+//			returnVal = r+"#"+returnVal;
+//		jedis.hset(set,md5,returnVal);
+//		return returnVal;
 	}
 	
 	/**

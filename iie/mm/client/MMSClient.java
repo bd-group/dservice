@@ -64,6 +64,7 @@ public class MMSClient {
 		long lpt_nr = 1, lpt_size = 1;
 		int lgt_nr = -1;
 		String lpt_type = "", lgt_type = "";
+		int dupNum = 1;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -74,6 +75,7 @@ public class MMSClient {
 				System.out.println("-rr   : redis server name.");
 				System.out.println("-rp   : redis server port.");
 				System.out.println("-m    : client operation mode.");
+				System.out.println("-dn   : duplication number.");
 				
 				System.out.println("-set  : specify set name.");
 				System.out.println("-put  : put an object to server.");
@@ -104,6 +106,20 @@ public class MMSClient {
 						mode = ClientConf.MODE.DEDUP;
 					} else if (o.opt.equalsIgnoreCase("nodedup")) {
 						mode = ClientConf.MODE.NODEDUP;
+					}
+				}
+			}
+			if(o.flag.equals("-dn")){
+				//set duplication number
+				if(o.opt == null){
+					System.out.println("Please specify dn, or 1 is set by default");
+				}
+				else
+				{
+					dupNum = Integer.parseInt(o.opt);
+					if(dupNum < 0){
+						System.out.println("dn must be positive.");
+						System.exit(0);
 					}
 				}
 			}
@@ -142,7 +158,7 @@ public class MMSClient {
 		
 		ClientConf conf = null;
 		try {
-			conf = new ClientConf(serverName, serverPort, redisHost, redisPort, mode);
+			conf = new ClientConf(serverName, serverPort, redisHost, redisPort, mode,dupNum);
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 			System.exit(0);

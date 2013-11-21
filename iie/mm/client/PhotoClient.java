@@ -191,7 +191,31 @@ public class PhotoClient {
 		}
 	}
 	
-	public byte[] searchPhoto(String info) throws IOException {
+	/**
+	 * infos是拼接的元信息，各个元信息用#隔开
+	 */
+	public byte[] searchPhoto(String infos) 
+	{
+		byte[] r = null;
+		for(String info:infos.split("#"))
+		{
+			try{
+				r = searchByInfo(info);
+				if(r.length > 0)
+					break;
+			}
+			catch(IOException e){
+				e.printStackTrace();
+				continue;
+			}
+		}
+		return r;
+	}
+	
+	/**
+	 * info是一个文件的元信息，没有拼接的
+	 */
+	public byte[] searchByInfo(String info) throws IOException {
 		String[] infos = info.split(":");
 		
 		if (infos.length != 8) {
@@ -201,11 +225,12 @@ public class PhotoClient {
 		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
 			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
 		else {
-			// 读取图片时所用的socket
-			searchSocket = new Socket(); 
-			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
-			searchSocket.setTcpNoDelay(true);
-			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+			// 如果这个socket没有缓存，也没必要再尝试链接了吧
+			throw new IOException("Can not read file from server:"+infos[2] + ":" + infos[3]+",because no connection is established.");
+//			searchSocket = new Socket(); 
+//			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
+//			searchSocket.setTcpNoDelay(true);
+//			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
 		}
 
 		DataInputStream searchis = new DataInputStream(searchSocket.getInputStream());
@@ -225,7 +250,7 @@ public class PhotoClient {
 		if (count >= 0) {
 			return readBytes(count, searchis);
 		} else {
-			throw new IOException("Internal error in mm server.");
+			throw new IOException("Internal error in mm server:"+searchSocket.getRemoteSocketAddress());
 		}
 	}
 	

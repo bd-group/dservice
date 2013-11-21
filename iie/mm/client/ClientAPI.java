@@ -20,6 +20,7 @@ public class ClientAPI {
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash;
+	private int hashSize;
 	private Jedis jedis;
 	
 	public ClientAPI(ClientConf conf) {
@@ -69,18 +70,20 @@ public class ClientAPI {
 						socketHash.put(s, sock);
 					} catch (SocketException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					} catch (NumberFormatException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					} catch (IOException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					}
 				}
 				
 			}
 		}
+		hashSize = socketHash.size();
+		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
 		return 1;
 	}
@@ -100,11 +103,14 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:"+key);
 		String setName = keys[0];
 		String md5 = keys[1];
-		keyList.addAll(socketHash.keySet());
-		Socket sock = socketHash.get(keyList.get(index));
-		String r = pc.syncStorePhoto(setName, md5, content,sock);
+		String r = null;
+		for(int i = 0;i<conf.getDupNum();i++)
+		{
+			Socket sock = socketHash.get(keyList.get((index+i)%hashSize));
+			r = pc.syncStorePhoto(setName, md5, content,sock);
+		}
 		index++;
-		if(index >= socketHash.size()){
+		if(index >= hashSize){
 			index = 0;
 		}
 		return r;
@@ -116,16 +122,16 @@ public class ClientAPI {
 	
 	/**
 	 * 
-	 * @param key	redis中的键以set开头+:+md5的字符串形成key
+	 * @param key	或者是set:md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public byte[] get(String key) throws Exception {
 		if(key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split(":");
+		String[] keys = key.split(":|#");
 		if(keys.length == 2)
 			return pc.getPhoto(keys[0],keys[1]);
-		else if(keys.length == 8)
+		else if(keys.length%8 == 0)		//如果是拼接的元信息，分割后长度是8的倍数
 			return pc.searchPhoto(key);
 		else 
 			throw new Exception("wrong format of key:"+key);

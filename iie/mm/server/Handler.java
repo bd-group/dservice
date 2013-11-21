@@ -88,24 +88,24 @@ public class Handler implements Runnable{
 
 					if (infolen > 0) {
 						String infos = new String(readBytes(infolen, dis));		
-						boolean succ = false;
-						//解析拼接的元信息，返回其中一个读取成功的内容
-						for(String info : infos.split("#"))
-						{
-							byte[] content = sp.searchPhoto(info);
+//						boolean succ = false;
+//						解析拼接的元信息，返回其中一个读取成功的内容
+//						for(String info : infos.split("#"))
+//						{
+							byte[] content = sp.searchPhoto(infos);
 							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
 							if (content != null) {
 								dos.writeInt(content.length);
 								dos.write(content);
-								succ = true;
-								break;
+//								succ = true;
+//								break;
 							} else {
-								continue;
-//								dos.writeInt(-1);
+//								continue;
+								dos.writeInt(-1);
 							}
-						}
-						if(!succ)
-							dos.writeInt(-1);
+//						}
+//						if(!succ)
+//							dos.writeInt(-1);
 					} else {
 						dos.writeInt(-1);
 					}
