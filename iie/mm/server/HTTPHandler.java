@@ -60,7 +60,7 @@ public class HTTPHandler extends AbstractHandler {
 				} else {
 					okResponse(baseRequest, response, content);
 				}
-			} else if (infos.length == 8) {
+			} else if (infos.length == 7) {
 				byte[] content = sp.searchPhoto(key);
 				if (content == null || content.length == 0) {
 					notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);

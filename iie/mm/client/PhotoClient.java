@@ -8,9 +8,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Map;
 import java.util.HashMap;
-//import org.newsclub.net.unix.AFUNIXSocket;
-//import org.newsclub.net.unix.AFUNIXSocketAddress;
-
 import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
@@ -18,6 +15,7 @@ public class PhotoClient {
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash = new HashMap<String, Socket>();
+	private Map<String, String> servers = new HashMap<String, String>();
 	private Jedis jedis = null;
 	
 	public PhotoClient(){
@@ -34,6 +32,10 @@ public class PhotoClient {
 	}
 	public void setConf(ClientConf conf) {
 		this.conf = conf;
+	}
+	
+	public void addToServers(long id, String server) {
+		servers.put(Long.toString(id), server);
 	}
 	
 	public Map<String, Socket> getSocketHash() {
@@ -83,8 +85,7 @@ public class PhotoClient {
 	
 	private void __asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
-		DataInputStream storeis = new DataInputStream(sock.getInputStream());
-	
+		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.ASYNCSTORE;
@@ -189,17 +190,22 @@ public class PhotoClient {
 	 * info是一个文件的元信息，没有拼接的
 	 */
 	public byte[] searchByInfo(String info, String[] infos) throws IOException {
-		if (infos.length != 8) {
+		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
 		Socket searchSocket = null;
-		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
-			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+		String server = servers.get(infos[2]);
+		if (socketHash.containsKey(server))
+			searchSocket = socketHash.get(server);
 		else {
-			searchSocket = new Socket(); 
-			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
-			searchSocket.setTcpNoDelay(true);
-			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+			String[] s = server.split(":");
+			if (s.length == 2) {
+				searchSocket = new Socket(); 
+				searchSocket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
+				searchSocket.setTcpNoDelay(true);
+				socketHash.put(server, searchSocket);
+			} else 
+				throw new IOException("Invalid server name or port.");
 		}
 
 		DataInputStream searchis = new DataInputStream(searchSocket.getInputStream());

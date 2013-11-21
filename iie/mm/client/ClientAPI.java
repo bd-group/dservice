@@ -64,8 +64,12 @@ public class ClientAPI {
 		
 		socketHash = new ConcurrentHashMap<String, Socket>();
 		//从redis上获取所有的服务器地址
-		Set<String> active = jedis.smembers("mm.active");
+		Set<String> active = jedis.zrange("mm.active", 0, -1);
 		if (active != null && active.size() > 0) {
+			String[] aa = active.toArray(new String[0]);
+			for (int i = 0; i < aa.length; i++) {
+				pc.addToServers(i, aa[i]);
+			}
 			for (String s : active) {
 				String[] c = s.split(":");
 				if (c.length == 2) {
@@ -111,7 +115,7 @@ public class ClientAPI {
 			r = pc.syncStorePhoto(keys[0], keys[1], content, sock);
 		}
 		index++;
-		if (index >= keyList.size()){
+		if (index >= keyList.size()) {
 			index = 0;
 		}
 		return r;
@@ -128,12 +132,12 @@ public class ClientAPI {
 		String[] keys = key.split("@");
 		if (keys.length == 2)
 			return pc.getPhoto(keys[0], keys[1]);
-		else if (keys.length == 8)
+		else if (keys.length == 7)
 			return pc.searchByInfo(key, keys);
-		else if (keys.length % 8 == 0)		//如果是拼接的元信息，分割后长度是8的倍数
+		else if (keys.length % 7 == 0)		//如果是拼接的元信息，分割后长度是7的倍数
 			return pc.searchPhoto(key);
 		else 
-			throw new Exception("wrong format of key:"+key);
+			throw new Exception("wrong format of key:" + key);
 	}
 
 }
