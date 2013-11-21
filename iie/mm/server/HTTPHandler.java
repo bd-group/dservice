@@ -51,7 +51,7 @@ public class HTTPHandler extends AbstractHandler {
 			baseRequest.setHandled(true);
 			response.getWriter().println("#FAIL: key can not be null");
 		} else {
-			String[] infos = key.split(":");
+			String[] infos = key.split("@");
 			
 			if (infos.length == 2) {
 				byte[] content = sp.getPhoto(infos[0], infos[1]);

@@ -13,7 +13,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 
 public class ProfileTimerTask extends TimerTask {
-	public static int period;
+	public int period;
 	private double lastWn = 0;
 	private long lastDl = 0;
 	private long lastDnr = 0;

@@ -295,7 +295,7 @@ public class MMSClient {
 				System.out.println("get args: set " + set + ", md5 " + md5);
 				
 				try {
-					byte[] content = pc.getPhoto(set,md5);
+					byte[] content = pc.getPhoto(set, md5);
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();

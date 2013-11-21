@@ -190,7 +190,7 @@ public class PhotoClient {
 		String info = jedis.hget(set, md5);
 		
 		if(info == null) {
-			System.out.println(set + "." + md5 + " doesn't exist in redis server.");
+			System.out.println(set + "@" + md5 + " doesn't exist in redis server.");
 			
 			return new byte[0];
 		} else {
@@ -199,7 +199,7 @@ public class PhotoClient {
 	}
 	
 	public byte[] searchPhoto(String info) throws IOException {
-		String[] infos = info.split(":");
+		String[] infos = info.split("@");
 		
 		if (infos.length != 8) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
