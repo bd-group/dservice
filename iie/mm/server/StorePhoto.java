@@ -12,6 +12,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.Random;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Transaction;
+import redis.clients.jedis.Response;
 
 public class StorePhoto {
 	private ServerConf conf;
@@ -136,8 +139,10 @@ public class StorePhoto {
 					jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
 					ssc.offset = 0;
 				}
-
-				ssc.raf.write(content, coff, clen);
+				
+				//在每个文件前面写入它的md5和offset length，从而恢复元数据
+				//md5 32个字节，offset:length分配20个字节
+//				ssc.offset += 52;
 				// 统计写入的字节数
 				ServerProfile.addWrite(clen);
 				// 构造返回值
@@ -156,6 +161,8 @@ public class StorePhoto {
 				rVal.append("@");
 				//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 				rVal.append(diskArray[diskid]);
+				
+				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
 			} catch (FileNotFoundException e) {
@@ -168,11 +175,28 @@ public class StorePhoto {
 		}
 		
 		String returnVal = rVal.toString();
-		long r = jedis.hsetnx(set, md5, returnVal);
-		if (r == 1)
+//		Pipeline pl = jedis.pipelined();
+//		pl.hsetnx(set,md5,returnVal);
+//		pl.hget(set,md5);
+//		List<Object> r = pl.syncAndReturnAll();
+//		if((Long)r.get(0) == 1)
+		Transaction t1 = jedis.multi();
+		Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+		Response<String> r2 = t1.hget(set,md5);
+		t1.exec();
+		if (r1.get() == 1)
 			return returnVal;
-		else
-			return null;
+		else{
+			returnVal = r2.get()+"#"+returnVal;
+			jedis.hset(set,md5,returnVal);
+			return returnVal;
+		}
+		
+//		String r = jedis.hget(set,md5);
+//		if(r != null)
+//			returnVal = r+"#"+returnVal;
+//		jedis.hset(set,md5,returnVal);
+//		return returnVal;
 	}
 	
 	/**
@@ -265,7 +289,9 @@ public class StorePhoto {
 	public void delSet(String set) {
 		for(String d : diskArray)		//删除每个磁盘上的该集合
 			delFile(new File(d + "/" + destRoot + set));
-		writeContextHash.remove(set);			//删除一个集合后,同时删除关于该集合的全局的上下文
+		//删除一个集合后,同时删除关于该集合的全局的上下文
+		for(String d : diskArray)
+			writeContextHash.remove(set+":"+d);			
 	}
 	
 	/**
