@@ -2,6 +2,9 @@ package iie.mm.client;
 
 import java.io.IOException;
 import java.net.UnknownHostException;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import iie.mm.client.*;
 
@@ -29,14 +32,20 @@ public class TestInfo {
 			System.exit(0);
 		}
 		
-		byte[] content = new byte[7];
-		for(int i=0;i<content.length;i++){
-			content[i] = 7;
-		}
-		pcInfo.put("dsds#md5", content);
+//		byte[] content = new byte[8];
+//		for(int i=0;i<content.length;i++){
+//			content[i] = 7;
+//		}
+//		pcInfo.put("dsds#md5", content);
 		
-		byte[] a = pcInfo.get("dsds#md5");
-		System.out.println(a.length);
+		pcInfo.iGet("1#zzz#zhuqihan-pc#11111#0#0#6477#.");
+		Set<String> s = new HashSet<String>();
+		s.add("1#zzz#zhuqihan-pc#11111#0#0#6477#.");
+		Map<String, byte[]>  a = pcInfo.wait(s);
+		for(String str : a.keySet()){
+			System.out.println(a.get(str));
+		}
+		
 	}
 
 }

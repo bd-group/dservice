@@ -6,9 +6,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.HashMap;
 //import java.util.Enumeration;
 //import java.util.Hashtable;
 import java.util.Map;
+import java.util.Set;
 //import java.util.Set;
 //import java.util.concurrent.ConcurrentHashMap;
 //import java.util.*;
@@ -25,6 +27,7 @@ public class PhotoClient {
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash;
+	private Map<String, Socket> socketKeyHash;
 	private Jedis jedis;
 	
 	
@@ -134,7 +137,7 @@ public class PhotoClient {
 		throw new IOException("Invalid Operation Mode.");
 	}
 	
-	private void asyncStorePhoto(String set, String md5, byte[] content, Socket sock)	throws IOException {
+	public void asyncStorePhoto(String set, String md5, byte[] content, Socket sock)	throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			__asyncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
@@ -156,7 +159,7 @@ public class PhotoClient {
 	
 	
 	/**
-	 * 
+	 * 同步取
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
 	 * @param md5	
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
@@ -170,6 +173,21 @@ public class PhotoClient {
 			return new byte[0];
 		} else {
 			return searchPhoto(info);
+		}
+	}
+	
+	/**
+	 * 异步取
+	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
+	 * @param md5	
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
+	 */
+	public long iGetPhoto(String set, String md5) throws IOException {
+		String info = jedis.hget(set, md5);//拿到所有的元信息
+		if(info == null) {
+			throw new IOException(set + "." + md5 + " doesn't exist in redis server.");
+		} else {
+			return iSearchPhoto(info);
 		}
 	}
 	
@@ -211,6 +229,61 @@ public class PhotoClient {
 		}
 	}
 	
+	public long iSearchPhoto(String info) throws IOException {
+		String[] infos = info.split("#");
+		
+		if (infos.length != 8) {
+			throw new IOException("Invalid INFO string, info length is " + infos.length);
+		}
+		Socket searchSocket = null;
+		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
+			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+		else {
+			// 读取图片时所用的socket
+			searchSocket = new Socket(); 
+			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
+			searchSocket.setTcpNoDelay(true);
+			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+		}
+		socketKeyHash.put(info, searchSocket);
+		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());
+
+		//action,info的length写过去
+		byte[] header = new byte[4];
+		header[0] = ActionType.SEARCH;
+		header[1] = (byte) info.getBytes().length;
+		searchos.write(header);
+		
+		//info的实际内容写过去
+		searchos.write(info.getBytes());
+		searchos.flush();
+		return 1;
+
+	}
+	
+	/**
+	 * 通过keys异步取多媒体
+	 * @param count
+	 * @return
+	 */
+	public Map<String, byte[]> wait(Set<String> keys) throws IOException {
+		Map<String, byte[]> medias = new HashMap<String, byte[]>();
+		for(String key : keys){
+			for(String k : socketKeyHash.keySet()){
+				if(key.equals(k)){
+					DataInputStream iSearchis = new DataInputStream(socketKeyHash.get(k).getInputStream());
+					int count = iSearchis.readInt();					
+					if (count >= 0) {
+						medias.put(k, readBytes(count, iSearchis));
+					} else {
+						throw new IOException("Internal error in mm server.");
+					}
+				}
+			}
+		}
+		return medias;
+	}
+	
 	/**
 	 * 从输入流中读取count个字节
 	 * @param count
@@ -227,6 +300,10 @@ public class PhotoClient {
 		}
 		
 		return buf;
+	}
+	
+	public Map<String, String> getNrFromSet(String set) throws IOException {
+		return jedis.hgetAll(set);
 	}
 	
 	/**

@@ -1,14 +1,19 @@
 package iie.mm.client;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.eclipse.jetty.server.session.HashSessionIdManager;
 
 import redis.clients.jedis.Jedis;
 
@@ -110,8 +115,32 @@ public class ClientAPI {
 		return r;
 	}
 	
+	/**
+	 * 异步写,对外提供的接口
+	 * @param set
+	 * @param md5
+	 * @param content
+	 * @return		
+	 */
+	public void iPut(String key, byte[] content)  throws IOException, Exception{
+		if(key == null)
+			throw new Exception("key can not be null.");
+		String[] keys = key.split("#");
+		if(keys.length != 2)
+			throw new Exception("wrong format of key:"+key);
+		String setName = keys[0];
+		String md5 = keys[1];
+		keyList.addAll(socketHash.keySet());
+		Socket sock = socketHash.get(keyList.get(index));
+		pc.asyncStorePhoto(setName, md5, content,sock);
+		index++;
+		if(index >= socketHash.size()){
+			index = 0;
+		}
+	}
+	
 	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return jedis.hgetAll(set);
+		return pc.getNrFromSet(set);
 	}
 	
 	/**
@@ -131,5 +160,41 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:"+key);
 	}
 	
+	/**
+	 * 异步读，对外提供的接口
+	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
+	 */
+	public long iGet(String key) throws Exception {
+		if(key == null)
+			throw new Exception("key can not be null.");
+		String[] keys = key.split("#");
+		if(keys.length == 2)
+			return pc.iGetPhoto(keys[0],keys[1]);
+		else if(keys.length == 8)
+			return pc.iSearchPhoto(key);
+		else 
+			throw new Exception("wrong format of key:"+key);
+	}
 
+	/**
+	 * 从输入流中读取count个字节
+	 * @param count
+	 * @return
+	 */
+	public Map<String, byte[]> wait(Set<String> keys) throws Exception {
+		Set<String> key = new HashSet<String>(); 
+		for(String k : keys){
+			String[] ks = k.split("#");
+			if(ks.length == 2){
+				k = jedis.hget(ks[0], ks[1]);
+				key.add(k);
+			}else if (ks.length == 8){
+				key.add(k);
+			}else {
+				throw new Exception("wrong format of key:"+k);
+			}
+		}
+		return pc.wait(key);
+	}
 }
