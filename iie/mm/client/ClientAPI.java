@@ -19,7 +19,6 @@ import redis.clients.jedis.Jedis;
 
 public class ClientAPI {
 	private PhotoClient pc;
-	private ClientConf conf;
 	private int index;					
 	private List<String> keyList = new ArrayList<String>();
 	
@@ -28,44 +27,52 @@ public class ClientAPI {
 	private Jedis jedis;
 	
 	public ClientAPI(ClientConf conf) {
-		this.conf = conf;
 		pc = new PhotoClient(conf);
 	}
 
 	public ClientAPI() {
+		pc = new PhotoClient();
 	}
-
+	
+	public PhotoClient getPc() {
+		return pc;
+	}
 
 	/**
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
 	 * 如果初始化本对象时传入了conf，则使用conf中的redis地址，否则使用参数url
 	 * It is not thread-safe!
-	 * @param url redis的主机名#端口
+	 * @param url redis的主机名:端口
 	 * @return 
 	 */
-	public int init(String url) throws Exception{
+	public int init(String url) throws Exception {
 		//与jedis建立连接
-		if(conf == null)
-		{
-			if(url == null)
-			{
-				throw new Exception("The url can not be null.");
-			}
-			String[] redishp = url.split("#"); 
-			if(redishp.length != 2)
-				throw new Exception("wrong format of url:"+url);
+		if (url == null) {
+			throw new Exception("The url can not be null.");
+		}
+		String[] redishp = url.split(":"); 
+		if (redishp.length != 2)
+			throw new Exception("wrong format of url: " + url);
+		
+		if (pc.getConf() == null) {
+			pc.setConf(new ClientConf());
+		}
+		if (pc.getJedis() == null) {
 			jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
 			pc.setJedis(jedis);
+		} else {
+			// Use the Redis Server in conf
+			jedis = pc.getJedis();
 		}
-		else {
-			jedis = RedisFactory.getNewInstance(conf.getRedisHost(),conf.getRedisPort());
-		}
+		pc.getConf().setRedisHost(redishp[0]);
+		pc.getConf().setRedisPort(Integer.parseInt(redishp[1]));
 		
 		socketHash = new ConcurrentHashMap<String, Socket>();
-		Set<String> active = jedis.smembers("mm.active");//从redis上获取所有的服务器地址
+		//从redis上获取所有的服务器地址
+		Set<String> active = jedis.smembers("mm.active");
 		if (active != null && active.size() > 0) {
 			for (String s : active) {
-				String[] c = s.split("#");
+				String[] c = s.split(":");
 				if (c.length == 2) {
 					Socket sock = new Socket();
 					try {
@@ -74,20 +81,20 @@ public class ClientAPI {
 						socketHash.put(s, sock);
 					} catch (SocketException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					} catch (NumberFormatException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					} catch (IOException e) {
 						e.printStackTrace();
-						return -1;
+						continue;
 					}
 				}
-				
 			}
 		}
+		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
-		return 1;
+		return 0;
 	}
 	
 	/**
@@ -97,19 +104,19 @@ public class ClientAPI {
 	 * @param content
 	 * @return		
 	 */
-	public String put(String key, byte[] content)  throws IOException, Exception{
-		if(key == null)
+	public String put(String key, byte[] content) throws IOException, Exception{
+		if (key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
-		if(keys.length != 2)
-			throw new Exception("wrong format of key:"+key);
-		String setName = keys[0];
-		String md5 = keys[1];
-		keyList.addAll(socketHash.keySet());
-		Socket sock = socketHash.get(keyList.get(index));
-		String r = pc.syncStorePhoto(setName, md5, content,sock);
+		String[] keys = key.split("@");
+		if (keys.length != 2)
+			throw new Exception("wrong format of key:" + key);
+		String r = null;
+		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.syncStorePhoto(keys[0], keys[1], content, sock);
+		}
 		index++;
-		if(index >= socketHash.size()){
+		if (index >= keyList.size()){
 			index = 0;
 		}
 		return r;
@@ -139,22 +146,20 @@ public class ClientAPI {
 		}
 	}
 	
-	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return pc.getNrFromSet(set);
-	}
-	
 	/**
 	 * 
-	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public byte[] get(String key) throws Exception {
-		if(key == null)
+		if (key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
-		if(keys.length == 2)
-			return pc.getPhoto(keys[0],keys[1]);
-		else if(keys.length == 8)
+		String[] keys = key.split("@");
+		if (keys.length == 2)
+			return pc.getPhoto(keys[0], keys[1]);
+		else if (keys.length == 8)
+			return pc.searchByInfo(key, keys);
+		else if (keys.length % 8 == 0)		//如果是拼接的元信息，分割后长度是8的倍数
 			return pc.searchPhoto(key);
 		else 
 			throw new Exception("wrong format of key:"+key);

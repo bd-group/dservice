@@ -6,15 +6,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.HashMap;
-//import java.util.Enumeration;
-//import java.util.Hashtable;
 import java.util.Map;
 import java.util.Set;
-//import java.util.Set;
-//import java.util.concurrent.ConcurrentHashMap;
-//import java.util.*;
-//import java.net.*;
+import java.util.HashMap;
 //import org.newsclub.net.unix.AFUNIXSocket;
 //import org.newsclub.net.unix.AFUNIXSocketAddress;
 
@@ -22,18 +16,14 @@ import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
 	private ClientConf conf;
-//	private int index;					
-//	private List<String> keyList = new ArrayList<String>();
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, Socket> socketHash;
-	private Map<String, Socket> socketKeyHash;
-	private Jedis jedis;
-	
-	
+	private Map<String, Socket> socketHash = new HashMap<String, Socket>();
+	private Jedis jedis = null;
 	public PhotoClient(){
-		
+		conf = new ClientConf();
 	}
+
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
 		this.jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
@@ -64,7 +54,6 @@ public class PhotoClient {
 		
 		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
 		DataInputStream storeis = new DataInputStream(sock.getInputStream());
-		
 		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
@@ -119,7 +108,7 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content,Socket sock) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			return __syncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
@@ -128,8 +117,9 @@ public class PhotoClient {
 			if (info == null) {
 				return __syncStorePhoto(set, md5, content,sock);
 			} else {
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
+				// NOTE: the delete unit is SET, thus, do NOT need reference 
+				//System.out.println(set + "." + md5 + " exists in MM server");
+				//jedis.hincrBy(set, "r." + md5, 1);
 				
 				return info;
 			}
@@ -137,7 +127,7 @@ public class PhotoClient {
 		throw new IOException("Invalid Operation Mode.");
 	}
 	
-	public void asyncStorePhoto(String set, String md5, byte[] content, Socket sock)	throws IOException {
+	public void asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			__asyncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
@@ -157,7 +147,6 @@ public class PhotoClient {
 		}
 	}
 	
-	
 	/**
 	 * 同步取
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
@@ -165,10 +154,10 @@ public class PhotoClient {
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public byte[] getPhoto(String set, String md5) throws IOException {
-		String info = jedis.hget(set, md5);//拿到所有的元信息
+		String info = jedis.hget(set, md5);
 		
 		if(info == null) {
-			System.out.println(set + "." + md5 + " doesn't exist in redis server.");
+			System.out.println(set + "@" + md5 + " doesn't exist in redis server.");
 			
 			return new byte[0];
 		} else {
@@ -191,9 +180,30 @@ public class PhotoClient {
 		}
 	}
 	
-	public byte[] searchPhoto(String info) throws IOException {
-		String[] infos = info.split("#");
-		
+        /**
+	 * infos是拼接的元信息，各个元信息用#隔开
+	 */
+	public byte[] searchPhoto(String infos) {
+		byte[] r = null;
+		for (String info : infos.split("#")) {
+			try {
+				String[] si = info.split("@");
+				
+				r = searchByInfo(info, si);
+				if (r.length > 0)
+					break;
+			} catch(IOException e){
+				e.printStackTrace();
+				continue;
+			}
+		}
+		return r;
+	}
+	
+	/**
+	 * info是一个文件的元信息，没有拼接的
+	 */
+	public byte[] searchByInfo(String info, String[] infos) throws IOException {
 		if (infos.length != 8) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
@@ -201,7 +211,6 @@ public class PhotoClient {
 		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
 			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
 		else {
-			// 读取图片时所用的socket
 			searchSocket = new Socket(); 
 			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
 			searchSocket.setTcpNoDelay(true);
@@ -225,7 +234,7 @@ public class PhotoClient {
 		if (count >= 0) {
 			return readBytes(count, searchis);
 		} else {
-			throw new IOException("Internal error in mm server.");
+			throw new IOException("Internal error in mm server:"+searchSocket.getRemoteSocketAddress());
 		}
 	}
 	
@@ -245,7 +254,7 @@ public class PhotoClient {
 			searchSocket.setTcpNoDelay(true);
 			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
 		}
-		socketKeyHash.put(info, searchSocket);
+		//socketKeyHash.put(info, searchSocket);
 		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());
 
 		//action,info的length写过去
@@ -268,6 +277,7 @@ public class PhotoClient {
 	 */
 	public Map<String, byte[]> wait(Set<String> keys) throws IOException {
 		Map<String, byte[]> medias = new HashMap<String, byte[]>();
+/*
 		for(String key : keys){
 			for(String k : socketKeyHash.keySet()){
 				if(key.equals(k)){
@@ -281,7 +291,7 @@ public class PhotoClient {
 				}
 			}
 		}
-		return medias;
+*/		return medias;
 	}
 	
 	/**
@@ -289,9 +299,7 @@ public class PhotoClient {
 	 * @param count
 	 * @return
 	 */
-	private byte[] readBytes(int count, InputStream istream) throws IOException
-	{
-
+	private byte[] readBytes(int count, InputStream istream) throws IOException {
 		byte[] buf = new byte[count];			
 		int n = 0;
 		
@@ -302,10 +310,6 @@ public class PhotoClient {
 		return buf;
 	}
 	
-	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return jedis.hgetAll(set);
-	}
-	
 	/**
 	 * 关闭流、套接字和与redis的连接
 	 * 用于读和写的套接字全部都关闭
@@ -314,11 +318,15 @@ public class PhotoClient {
 		try {
 			jedis.quit();
 			
-			for (Socket s:socketHash.values()){
+			for (Socket s : socketHash.values()){
 				s.close();
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+		
+	public Map<String, String> getNrFromSet(String set) throws IOException {
+		return jedis.hgetAll(set);
 	}
 }

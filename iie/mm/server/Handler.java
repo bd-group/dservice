@@ -83,26 +83,33 @@ public class Handler implements Runnable{
 						new Thread(wt).start();
 					}
 				} else if (header[0] == ActionType.SEARCH) {
-					long start = System.currentTimeMillis();
-					int infolen = header[1];
+					//这样能把byte当成无符号的用，拼接的元信息长度最大可以255
+					int infolen = header[1]&0xff;		
 
 					if (infolen > 0) {
-						String info = new String(readBytes(infolen, dis));			
-	
-						byte[] content = sp.searchPhoto(info);
-						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
-						if (content != null) {
-							dos.writeInt(content.length);
-							dos.write(content);
-						} else {
-							dos.writeInt(-1);
-						}
+						String infos = new String(readBytes(infolen, dis));		
+//						boolean succ = false;
+//						解析拼接的元信息，返回其中一个读取成功的内容
+//						for(String info : infos.split("#"))
+//						{
+							byte[] content = sp.searchPhoto(infos);
+							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
+							if (content != null) {
+								dos.writeInt(content.length);
+								dos.write(content);
+//								succ = true;
+//								break;
+							} else {
+//								continue;
+								dos.writeInt(-1);
+							}
+//						}
+//						if(!succ)
+//							dos.writeInt(-1);
 					} else {
 						dos.writeInt(-1);
 					}
 					dos.flush();
-
-					ServerProfile.addDelay(System.currentTimeMillis() - start);
 				} else if (header[0] == ActionType.DELSET) {
 					String set = new String(readBytes(header[1], dis));
 
@@ -116,8 +123,7 @@ public class Handler implements Runnable{
 					sp.delSet(set);
 					dos.write(1);			//返回一个字节1,代表删除成功
 					dos.flush();
-				}
-				else if(header[0] == ActionType.SERVERINFO) {
+				} else if(header[0] == ActionType.SERVERINFO) {
 					ServerInfo si = new ServerInfo();
 					String str = "";
 					try {

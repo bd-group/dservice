@@ -5,7 +5,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +13,8 @@ import java.util.Random;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Transaction;
+import redis.clients.jedis.Response;
 
 public class StorePhoto {
 	private ServerConf conf;
@@ -87,13 +88,14 @@ public class StorePhoto {
 	 * @param set	集合名
 	 * @param md5	文件的md5
 	 * @param content	文件内容
-	 * @return		type#set#node#port＃block＃offset＃length＃disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
+	 * @return		type@set@node@port@block@offset@length@disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
 		StringBuffer rVal = new StringBuffer(128);
 		
-		int diskid = new Random().nextInt(diskArray.length);		//随机选一个磁盘
+		//随机选一个磁盘
+		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
 		synchronized (writeContextHash) {
 			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
@@ -114,47 +116,53 @@ public class StorePhoto {
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						ssc.offset = ssc.newf.length();
 					} else {
 						ssc.curBlock = 0;
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-						jedis.sadd(set + ".srvs", localHostName + "#" + serverport);
+						jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
 						jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
-					}
-					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-					ssc.offset = ssc.newf.length();
-					ssc.raf.seek(ssc.offset);
-				} else {
-					if (ssc.offset + content.length > blocksize) {
-						ssc.curBlock++;
-						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-						//如果换了一个新块,则先把之前的关掉
-						if(ssc.raf != null)
-							ssc.raf.close();
-						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
-						//当前可写的块号加一
-						jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
 						ssc.offset = 0;
 					}
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.raf.seek(ssc.offset);
 				}
-				ssc.raf.write(content, coff, clen);
+				if (ssc.offset + content.length > blocksize) {
+					ssc.curBlock++;
+					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+					//如果换了一个新块,则先把之前的关掉
+					if(ssc.raf != null)
+						ssc.raf.close();
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					//当前可写的块号加一
+					jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
+					ssc.offset = 0;
+				}
+				
+				//在每个文件前面写入它的md5和offset length，从而恢复元数据
+				//md5 32个字节，offset:length分配20个字节
+//				ssc.offset += 52;
 				// 统计写入的字节数
 				ServerProfile.addWrite(clen);
 				// 构造返回值
-				rVal.append("1#"); // type
+				rVal.append("1@"); // type
 				rVal.append(set);
-				rVal.append("#");
+				rVal.append("@");
 				rVal.append(localHostName); // node name
-				rVal.append("#");
+				rVal.append("@");
 				rVal.append(serverport); // port #
-				rVal.append("#");
+				rVal.append("@");
 				rVal.append(ssc.curBlock);
-				rVal.append("#");
+				rVal.append("@");
 				rVal.append(ssc.offset);
-				rVal.append("#");
+				rVal.append("@");
 				rVal.append(clen);
-				rVal.append("#");
-				rVal.append(diskArray[diskid]);		//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+				rVal.append("@");
+				//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+				rVal.append(diskArray[diskid]);
+				
+				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
 			} catch (FileNotFoundException e) {
@@ -167,28 +175,28 @@ public class StorePhoto {
 		}
 		
 		String returnVal = rVal.toString();
-		long r = jedis.hsetnx(set, md5, returnVal);
-		if(r == 1)
+//		Pipeline pl = jedis.pipelined();
+//		pl.hsetnx(set,md5,returnVal);
+//		pl.hget(set,md5);
+//		List<Object> r = pl.syncAndReturnAll();
+//		if((Long)r.get(0) == 1)
+		Transaction t1 = jedis.multi();
+		Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+		Response<String> r2 = t1.hget(set,md5);
+		t1.exec();
+		if (r1.get() == 1)
 			return returnVal;
-		else
-			return null;
-		// 确保多个进程生成的字符串只有一个被记录下来并且被完整的记录下
-		/*
-		Pipeline pipeline = jedis.pipelined();
-		pipeline.hincrBy(set, "r." + md5, 1);
-		pipeline.hsetnx(set, md5, returnVal);
-		List<Object> l = pipeline.syncAndReturnAll();
-
-		if (l != null && l.size() == 2) {
-			if((Long)l.get(1) == 1)
-				return returnVal;
-			else
-				return null;
-		} else {
-			return "#FAIL:update STR to redis server failed.";
+		else{
+			returnVal = r2.get()+"#"+returnVal;
+			jedis.hset(set,md5,returnVal);
+			return returnVal;
 		}
-		*/
 		
+//		String r = jedis.hget(set,md5);
+//		if(r != null)
+//			returnVal = r+"#"+returnVal;
+//		jedis.hset(set,md5,returnVal);
+//		return returnVal;
 	}
 	
 	/**
@@ -237,11 +245,12 @@ public class StorePhoto {
 	}
 	/**
 	 * 获得图片内容
-	 * @param info		对应storePhoto的type#set#node#port#block＃offset＃length＃disk格式的返回值
+	 * @param info		对应storePhoto的type@set@node@port@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
 	public byte[] searchPhoto(String info) {
-		String[] infos = info.split("#");
+		long start = System.currentTimeMillis();
+		String[] infos = info.split("@");
 		
 		if (infos.length != 8) {
 			System.out.println("Invalid INFO string: " + info);
@@ -272,13 +281,17 @@ public class StorePhoto {
 			e.printStackTrace();
 			return null;
 		}
+		ServerProfile.updateRead(content.length, System.currentTimeMillis() - start);
+
 		return content;
 	}
 	
 	public void delSet(String set) {
 		for(String d : diskArray)		//删除每个磁盘上的该集合
-			delFile(new File(d+"/"+destRoot + set));
-		writeContextHash.remove(set);			//删除一个集合后,同时删除关于该集合的全局的上下文
+			delFile(new File(d + "/" + destRoot + set));
+		//删除一个集合后,同时删除关于该集合的全局的上下文
+		for(String d : diskArray)
+			writeContextHash.remove(set+":"+d);			
 	}
 	
 	/**

@@ -32,21 +32,15 @@ public class PhotoServer {
 		pool = Executors.newCachedThreadPool();
 	}
 	
-	public void startUp() {
+	public void startUp() throws Exception {
 		//服务端每隔一段时间进行一次读写速率统计,1秒后开始统计，每10秒输出一次平均信息
 		Timer t = new Timer();
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
 		
 		//启动http服务
-		try{			
-			Server server = new Server(conf.getHttpPort());
-			server.setHandler(new HTTPHandler(conf));
-			server.start();
-		}
-		catch(Exception e)
-		{
-			e.printStackTrace();
-		}
+		Server server = new Server(conf.getHttpPort());
+		server.setHandler(new HTTPHandler(conf));
+		server.start();
 		
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())

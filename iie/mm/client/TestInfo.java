@@ -18,7 +18,7 @@ public class TestInfo {
 	public static void main(String[] args) throws Exception {
 		ClientConf conf = null;
 		try {
-			conf = new ClientConf("localhost", 11111, "localhost", 6379, ClientConf.MODE.NODEDUP);
+			conf = new ClientConf("localhost", 11111, "localhost", 6379, ClientConf.MODE.NODEDUP,1);
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 			System.exit(0);
