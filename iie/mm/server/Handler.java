@@ -149,8 +149,8 @@ public class Handler implements Runnable{
 						String info = new String( readBytes(infolen, dis));
 						byte[] content = sp.searchPhoto(info);
 						if (content != null) {
-							dos.writeInt(content.length);
 							dos.writeLong(id);
+							dos.writeInt(content.length);
 							dos.write(content);
 						} else {
 							dos.writeInt(-1);
