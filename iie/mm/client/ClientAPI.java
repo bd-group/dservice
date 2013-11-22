@@ -19,9 +19,10 @@ import redis.clients.jedis.Jedis;
 
 public class ClientAPI {
 	private PhotoClient pc;
-	private int index;					
+	private int index;				
+	private long id;
 	private List<String> keyList = new ArrayList<String>();
-	
+	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash;
 	private Jedis jedis;
@@ -129,23 +130,22 @@ public class ClientAPI {
 	 * @param content
 	 * @return		
 	 */
-	public String[] mput(String set, String[] md5s, byte[][] content) throws IOException, Exception{
-		String[] str = null;
+	public String[] mPut(String set,String[] md5s, byte[][] content) throws Exception
+	{	
 		if (set == null || md5s.length == 0 || content.length == 0){
 			throw new Exception("set or md5s or contents can not be null.");
-		}else if(md5s.length != content.length){
-			throw new Exception("md5s's length is not the same as content'slength.");
-		}else{
-			for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-				Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-				str = pc.mPut(set, md5s, content,sock);
-			}
-			index++;
-			if (index >= keyList.size()){
-				index = 0;
-			}
+		}else if(md5s.length != content.length)
+			throw new  Exception("arguments length mismatch.");
+		String[] r = null;
+		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.mPut(set, md5s, content, sock);
 		}
-		return str;
+		index++;
+		if (index >= keyList.size()){
+			index = 0;
+		}
+		return r;
 	}
 	
 	/**
@@ -195,16 +195,22 @@ public class ClientAPI {
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	public long iGet(String key) throws Exception {
+	public int iGet(String key) throws Exception {
 		if(key == null)
 			throw new Exception("key can not be null.");
+		pc.getSocketKeyHash().put(id, key);
+		pc.setId(id);
+		System.out.println(id);
+		id++;
 		String[] keys = key.split("#|@");
-		if(keys.length == 2)
+		if(keys.length == 2){
 			return pc.iGetPhoto(keys[0],keys[1]);
+		}
 		else if(keys.length % 8 == 0)
 			return pc.iSearchByInfo(key);
 		else 
 			throw new Exception("wrong format of key:"+key);
+		
 	}
 	
 	/**
@@ -213,15 +219,10 @@ public class ClientAPI {
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public Map<String, byte[]> mGet(Set<String> keys) throws Exception {
-		Set<Long> s = new HashSet<Long>();
 		for(String key : keys){
-			long l = iGet(key);
-			s.add(l);
+			iGet(key);
 		}
-		if(s.size() == keys.size()){
-			return wait(keys);
-		}
-		return null;
+		return wait(keys);
 	}
 	
 	/**
@@ -229,13 +230,11 @@ public class ClientAPI {
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	public Set<Long> imGet(Set<String> keys) throws Exception {
-		Set<Long> s = new HashSet<Long>();
+	public int imGet(Set<String> keys) throws Exception {
 		for(String key : keys){
-			long l = iGet(key);
-			s.add(l);
+			iGet(key);
 		}
-		return s;
+		return 1;
 	}
 	
 	/**

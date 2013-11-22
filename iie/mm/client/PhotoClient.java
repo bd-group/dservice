@@ -31,6 +31,14 @@ public class PhotoClient {
 		this.jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 	}
 	
+	public long getId() {
+		return id;
+	}
+
+	public void setId(long id) {
+		this.id = id;
+	}
+
 	public ClientConf getConf() {
 		return conf;
 	}
@@ -45,6 +53,14 @@ public class PhotoClient {
 		this.socketHash = socketHash;
 	}
 	
+	public Map<Long, String> getSocketKeyHash() {
+		return socketKeyHash;
+	}
+
+	public void setSocketKeyHash(Map<Long, String> socketKeyHash) {
+		this.socketKeyHash = socketKeyHash;
+	}
+
 	public Jedis getJedis() {
 		return jedis;
 	}
@@ -149,6 +165,39 @@ public class PhotoClient {
 		}
 	}
 	
+	//批量存储时没有判断重复
+	public String[] mPut(String set, String[] md5s, byte[][] content, Socket sock) throws IOException
+	{
+		DataOutputStream dos = new DataOutputStream(sock.getOutputStream());
+		DataInputStream dis = new DataInputStream(sock.getInputStream());
+		
+		int n = md5s.length;
+		String[] r = new String[n];
+		byte[] header = new byte[4];
+		header[0] = ActionType.MPUT;
+		header[1] = (byte) set.length();
+		dos.write(header);
+		dos.writeInt(n);
+		dos.write(set.getBytes());
+		for(int i = 0;i<n;i++)
+		{
+			dos.writeInt(md5s[i].getBytes().length);
+			dos.write(md5s[i].getBytes());
+		}
+		for(int i = 0; i<n;i++)
+			dos.writeInt(content[i].length);
+		for(int i = 0; i<n;i++)
+			dos.write(content[i]);
+		
+		int count = dis.readInt();
+		if (count == -1)
+			throw new IOException("MM server failure." );
+		r[0] = new String(readBytes(count, dis));
+		for(int i = 1;i<n;i++)
+			r[i] = new String(readBytes(dis.readInt(), dis));
+		return r;
+	}
+	
 	/**
 	 * 同步取
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
@@ -173,11 +222,12 @@ public class PhotoClient {
 	 * @param md5	
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	public long iGetPhoto(String set, String md5) throws IOException {
+	public int iGetPhoto(String set, String md5) throws IOException {
 		String info = jedis.hget(set, md5);//拿到所有的元信息
 		if(info == null) {
 			throw new IOException(set + "." + md5 + " doesn't exist in redis server.");
 		} else {
+			System.out.println(info);
 			return iSearchByInfo(info);
 		}
 	}
@@ -240,13 +290,14 @@ public class PhotoClient {
 		}
 	}
 	
-	public long iSearchByInfo(String info) throws IOException {
+	public int iSearchByInfo(String info) throws IOException {
 		String[] str = info.split("#");
 		for(String s : str){
 			String[] infos = s.split("@");
 			Socket searchSocket = null;
-			if (socketHash.containsKey(infos[2] + ":" + infos[3]))
+			if (socketHash.containsKey(infos[2] + ":" + infos[3])){
 				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+			}
 			else {
 				// 读取图片时所用的socket
 				searchSocket = new Socket(); 
@@ -258,16 +309,14 @@ public class PhotoClient {
 
 			//action,info的length写过去
 			byte[] header = new byte[4];
-			header[0] = ActionType.SEARCH;
-			header[1] = (byte) info.getBytes().length;
+			header[0] = ActionType.IGET;
+			header[1] = (byte) s.getBytes().length;
 			searchos.write(header);
 			searchos.writeLong(id);
-			socketKeyHash.put(id, info);
 			//info的实际内容写过去
-			searchos.write(info.getBytes());
+			searchos.write(s.getBytes());
 			searchos.flush();
 		}
-		id++;
 		return 1;
 
 	}
@@ -283,10 +332,13 @@ public class PhotoClient {
 			String[] infos = key.split("@");
 			Socket searchSocket = null;
 			if (socketHash.containsKey(infos[2] + ":" + infos[3])){
+				System.out.println(infos[2] + ":" + infos[3]);
 				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
 				DataInputStream iSearchis = new DataInputStream(searchSocket.getInputStream());
 				Long id = iSearchis.readLong();
+				System.out.println(id);
 				String info = socketKeyHash.get(id);
+				System.out.println(info);
 				int count = iSearchis.readInt();					
 				if (count >= 0) {
 					medias.put(info, readBytes(count, iSearchis));
@@ -334,43 +386,6 @@ public class PhotoClient {
 		
 	public Map<String, String> getNrFromSet(String set) throws IOException {
 		return jedis.hgetAll(set);
-	}
-	
-	public String[] mPut(String set, String[] md5s, byte[][] contents, Socket sock) throws Exception {
-		//action,info的length写过去
-		byte[] header = new byte[4];
-		header[0] = ActionType.MPUT;
-		header[1] = (byte) set.getBytes().length;
-		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
-		DataInputStream storeis = new DataInputStream(sock.getInputStream());
-		storeos.write(header);
-		storeos.write(set.getBytes());
-		storeos.writeInt(md5s.length);
-		for(String md5 : md5s){
-			storeos.write(md5.getBytes().length);
-			storeos.write(md5.getBytes());
-		}
-		for(byte[] content : contents){
-			storeos.writeInt(content.length);
-		}
-		for(byte[] content : contents){
-			storeos.write(content);
-		}
-		storeos.flush();
-		//循环接收返回值String
-		String[] md5Back = null;
-		for(int i = 0;i<md5s.length;i++){
-			int count = storeis.readInt();					
-			if (count >= 0) {
-				String s = new String(readBytes(count, storeis));
-				md5Back[i] = s;
-			} else {
-				throw new IOException("Internal error in mm server.");
-			}
-			
-		}
-		return md5Back;
-		
 	}
 	
 }
