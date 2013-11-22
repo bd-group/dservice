@@ -1,9 +1,11 @@
 package iie.mm.server;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -15,6 +17,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.Response;
+import redis.clients.jedis.exceptions.JedisDataException;
 
 public class StorePhoto {
 	private ServerConf conf;
@@ -200,24 +203,133 @@ public class StorePhoto {
 	}
 	
 	/**
-	 * 存储多个图片，通过反复调用storePhoto实现
+	 * 
 	 * @param set
 	 * @param md5
 	 * @param content
-	 * @return
+	 * @return	出现任何错误返回null，出现错误的话不知道哪些存储成功，哪些不成功
 	 */
-	public String[] mstorePhoto(String[] set, String[] md5, byte[][] content, int[] coff, int[] clen) {
-		if(set.length == md5.length && md5.length == content.length) {
-			int length = set.length;
-			String[] infos = new String[length];
-			for(int i = 0; i < length; i++) {
-				infos[i] = storePhoto(set[i],md5[i],content[i], coff[i], clen[i]);
-			}
-			return infos;
-		} else {
+	public String[] mstorePhoto(String set, String[] md5, byte[][] content) {
+		if(!(md5.length == content.length && md5.length == content.length)) {
 			System.out.println("Array lengths in arguments mismatch.");
 			return null;
 		}
+		String[] returnVal = new String[content.length];
+		int diskid = new Random().nextInt(diskArray.length);
+		StoreSetContext ssc = null;
+		synchronized (writeContextHash) {
+			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
+			
+			if (ssc == null) {
+				ssc = new StoreSetContext(set, diskArray[diskid]);
+				writeContextHash.put(ssc.key, ssc);
+			}
+		}
+		
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		Map<String,String> mcs = new HashMap<String,String>();
+		synchronized (ssc) {
+			for(int i = 0;i<content.length;i++)
+			{
+				StringBuffer rVal = new StringBuffer(128); 
+			
+				try {
+					if (ssc.curBlock < 0) {
+						//需要通过节点名字来标示不同节点上相同名字的集合
+						String reply = jedis.get(set + ".blk." + localHostName + "." + ssc.disk);
+						if (reply != null) {
+							ssc.curBlock = Long.parseLong(reply);
+							ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+							ssc.offset = ssc.newf.length();
+						} else {
+							ssc.curBlock = 0;
+							ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+							//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
+							jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
+							jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
+							ssc.offset = 0;
+						}
+						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						ssc.raf.seek(ssc.offset);
+							
+					}
+					
+					if (ssc.offset + content[i].length > blocksize)		
+					{
+						ssc.curBlock++;
+						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
+						//如果换了一个新块,先把之前的写进去，然后再关闭流
+						if(ssc.raf != null)
+						{
+							ssc.raf.write(baos.toByteArray());
+							ssc.raf.close();
+							baos.reset();
+						}
+						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						//当前可写的块号加一
+						jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
+						ssc.offset = 0;
+					}
+					
+					//在每个文件前面写入它的md5和offset length，从而恢复元数据
+					//md5 32个字节，offset:length分配20个字节
+	//				ssc.offset += 52;
+					// 统计写入的字节数
+					ServerProfile.addWrite(content[i].length);
+					// 构造返回值
+					rVal.append("1@"); // type
+					rVal.append(set);
+					rVal.append("@");
+					rVal.append(localHostName); // node name
+					rVal.append("@");
+					rVal.append(serverport); // port #
+					rVal.append("@");
+					rVal.append(ssc.curBlock);
+					rVal.append("@");
+					rVal.append(ssc.offset);
+					rVal.append("@");
+					rVal.append(content[i].length);
+					rVal.append("@");
+					//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+					rVal.append(diskArray[diskid]);
+					
+//					ssc.raf.write(content, coff, clen);
+					baos.write(content[i]);	
+					returnVal[i] = rVal.toString();
+					ssc.offset += content[i].length;
+				} catch (FileNotFoundException e) {
+					e.printStackTrace();
+//					returnVal[i] = "#FAIL:" + e.getMessage();
+					return null;
+				} catch (IOException e) {
+					e.printStackTrace();
+//					returnVal[i] = "#FAIL:" + e.getMessage();
+					return null;
+				}
+				
+				Transaction t1 = jedis.multi();
+				Response<Long> r1 = t1.hsetnx(set, md5[i], returnVal[i]);
+				Response<String> r2 = t1.hget(set,md5[i]);
+				t1.exec();
+				if (r1.get() == 0)
+				{
+					returnVal[i] = r2.get()+"#"+returnVal[i];
+					mcs.put(md5[i], returnVal[i]);
+				}	
+			}
+			try{
+				ssc.raf.write(baos.toByteArray());
+				//结果一次存入redis
+				if(mcs.size()>0)
+					jedis.hmset(set,mcs);
+			}
+			catch(IOException e){
+				e.printStackTrace();
+				return null;
+			}
+			
+		}
+		return returnVal;
 	}
 	
 	/**

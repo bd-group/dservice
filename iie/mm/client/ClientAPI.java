@@ -117,6 +117,22 @@ public class ClientAPI {
 		return r;
 	}
 	
+	public String[] mput(String set,String[] md5s, byte[][] content) throws Exception
+	{
+		if(md5s.length != content.length)
+			throw new  Exception("arguments length mismatch.");
+		String[] r = null;
+		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.mput(set, md5s, content, sock);
+		}
+		index++;
+		if (index >= keyList.size()){
+			index = 0;
+		}
+		return r;
+	}
+	
 	/**
 	 * 
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的

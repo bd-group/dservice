@@ -147,6 +147,39 @@ public class PhotoClient {
 		}
 	}
 	
+	//批量存储时没有判断重复。。。
+	public String[] mput(String set, String[] md5s, byte[][] content, Socket sock) throws IOException
+	{
+		DataOutputStream dos = new DataOutputStream(sock.getOutputStream());
+		DataInputStream dis = new DataInputStream(sock.getInputStream());
+		
+		int n = md5s.length;
+		String[] r = new String[n];
+		byte[] header = new byte[4];
+		header[0] = ActionType.MPUT;
+		header[1] = (byte) set.length();
+		dos.write(header);
+		dos.writeInt(n);
+		dos.write(set.getBytes());
+		for(int i = 0;i<n;i++)
+		{
+			dos.writeInt(md5s[i].getBytes().length);
+			dos.write(md5s[i].getBytes());
+		}
+		for(int i = 0; i<n;i++)
+			dos.writeInt(content[i].length);
+		for(int i = 0; i<n;i++)
+			dos.write(content[i]);
+		
+		int count = dis.readInt();
+		if (count == -1)
+			throw new IOException("MM server failure." );
+		r[0] = new String(readBytes(count, dis));
+		for(int i = 1;i<n;i++)
+			r[i] = new String(readBytes(dis.readInt(), dis));
+		return r;
+	}
+	
 	/**
 	 * 
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
