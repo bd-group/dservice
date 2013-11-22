@@ -1,5 +1,9 @@
 package iie.mm.client;
 
+import iie.mm.client.PhotoClient.SocketHashEntry;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -18,7 +22,7 @@ public class ClientAPI {
 	private List<String> keyList = new ArrayList<String>();
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, Socket> socketHash;
+	private Map<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
 	
 	public ClientAPI(ClientConf conf) {
@@ -62,7 +66,7 @@ public class ClientAPI {
 		pc.getConf().setRedisHost(redishp[0]);
 		pc.getConf().setRedisPort(Integer.parseInt(redishp[1]));
 		
-		socketHash = new ConcurrentHashMap<String, Socket>();
+		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
 		Set<String> active = jedis.zrange("mm.active", 0, -1);
 		if (active != null && active.size() > 0) {
@@ -73,11 +77,16 @@ public class ClientAPI {
 			for (String s : active) {
 				String[] c = s.split(":");
 				if (c.length == 2) {
+					@SuppressWarnings("resource")
 					Socket sock = new Socket();
+					SocketHashEntry she = new SocketHashEntry();
 					try {
 						sock.setTcpNoDelay(true);//不要延迟
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
-						socketHash.put(s, sock);
+						she.dis = new DataInputStream(sock.getInputStream());
+						she.dos = new DataOutputStream(sock.getOutputStream());
+						she.socket = sock;
+						socketHash.put(s, she);
 					} catch (SocketException e) {
 						e.printStackTrace();
 						continue;
@@ -103,7 +112,7 @@ public class ClientAPI {
 	 * @param content
 	 * @return		
 	 */
-	public String put(String key, byte[] content) throws IOException, Exception{
+	public String put(String key, byte[] content) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
 		String[] keys = key.split("@");
@@ -111,8 +120,8 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:" + key);
 		String r = null;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-			r = pc.syncStorePhoto(keys[0], keys[1], content, sock);
+			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.syncStorePhoto(keys[0], keys[1], content, she);
 		}
 		index++;
 		if (index >= keyList.size()) {
@@ -126,7 +135,7 @@ public class ClientAPI {
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	public byte[] get(String key) throws Exception {
+	public byte[] get(String key) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
 		String[] keys = key.split("@");
