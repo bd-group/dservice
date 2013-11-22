@@ -59,6 +59,7 @@ public class ServerConf {
 		this.period = period;
 		this.httpPort = httpPort;
 		
+		
 		// ok, get global config if they exist.
 		Jedis jedis = new RedisFactory(this).getDefaultInstance();
 		Pipeline p = jedis.pipelined();

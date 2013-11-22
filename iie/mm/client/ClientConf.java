@@ -8,12 +8,13 @@ public class ClientConf {
 	private int redisPort;
 	private String serverName;
 	private int serverPort;
+	private int dupNum;			//一个文件存储份数
 	public static enum MODE {
 		DEDUP, NODEDUP,
 	};
 	private MODE mode;
 	
-	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode) throws UnknownHostException {
+	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode,int dupNum) throws UnknownHostException {
 		if (serverName != null)
 			this.setServerName(serverName);
 		else
@@ -25,6 +26,13 @@ public class ClientConf {
 		this.redisHost = redisHost;
 		this.redisPort = redisPort;
 		this.mode = mode;
+		
+		this.dupNum = dupNum;
+	}
+	
+	public ClientConf() {
+		this.dupNum = 1;
+		this.mode = MODE.NODEDUP;
 	}
 
 	public String getRedisHost() {
@@ -67,4 +75,11 @@ public class ClientConf {
 		this.mode = mode;
 	}
 	
+	public int getDupNum(){
+		return this.dupNum;
+	}
+	
+	public void setDupNum(int dupNum){
+		this.dupNum = dupNum;
+	}
 }

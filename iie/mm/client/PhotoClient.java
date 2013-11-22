@@ -6,82 +6,54 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.Enumeration;
-import java.util.Hashtable;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
-import org.newsclub.net.unix.AFUNIXSocket;
-import org.newsclub.net.unix.AFUNIXSocketAddress;
+import java.util.HashMap;
+//import org.newsclub.net.unix.AFUNIXSocket;
+//import org.newsclub.net.unix.AFUNIXSocketAddress;
 
 import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
-	private Socket syncStoreSocket;			//用于同步写的socket
-	private Socket asyncStoreSocket;	//用于异步写
 	private ClientConf conf;
-	private int serverPort = 0;
-
-	
-	private DataInputStream storeis;
-	private DataOutputStream storeos;
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, Socket> socketHash;
-	//用于读请求的socket
-	private Socket searchSocket;
-	private Jedis jedis;
+	private Map<String, Socket> socketHash = new HashMap<String, Socket>();
+	private Jedis jedis = null;
 	
-	/**
-	 * 读取配置文件,进行必要初始化,并与redis服务器建立连接
-	 * It is not thread-safe!
-	 * @throws IOException 
-	 */
-	public PhotoClient(ClientConf conf) throws IOException {
-		this.conf = conf;
-		
-		//连接服务器
-		jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
-		socketHash = new ConcurrentHashMap<String, Socket>();
+	public PhotoClient(){
+		conf = new ClientConf();
+	}
 
-		if (conf.getServerPort() > 0)
-			serverPort = conf.getServerPort();
-		else {
-			// get the local MM service (port) from redis server
-			Set<String> active = jedis.smembers("mm.active");
-			if (active != null && active.size() > 0) {
-				for (String s : active) {
-					if (s.startsWith(conf.getServerName())) {
-						// ok, parse the port
-						String[] c = s.split("#");
-						if (c.length == 2) {
-							serverPort = Integer.parseInt(c[1]);
-							break;
-						}
-					}
-				}
-			}
-		}
-		if (serverPort == 0) {
-			System.out.println("[WARN] Invalid mm server port for host " + conf.getServerName() + "'s storage.");
-			throw new IOException("Invalid mm server port for host " + conf.getServerName() + "'s storage.");
-		} else {
-			System.out.println("[INFO] Resolve host " + conf.getServerName() + "'s port to " + serverPort);
-		}
+	public PhotoClient(ClientConf conf) {
+		this.conf = conf;
+		this.jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 	}
 	
-	private String __syncStorePhoto(String set, String md5, byte[] content) throws IOException {
-		//图片不存在, 只在第一次写的时候连接服务器
-		if (syncStoreSocket == null) {
-			assert(serverPort > 0);
-			syncStoreSocket = new Socket();
-			syncStoreSocket.setTcpNoDelay(true);
-			syncStoreSocket.connect(new InetSocketAddress(conf.getServerName(), serverPort));
-			
-			storeos = new DataOutputStream(syncStoreSocket.getOutputStream());
-			storeis = new DataInputStream(syncStoreSocket.getInputStream());
-		}
+	public ClientConf getConf() {
+		return conf;
+	}
+	public void setConf(ClientConf conf) {
+		this.conf = conf;
+	}
+	
+	public Map<String, Socket> getSocketHash() {
+		return socketHash;
+	}
+	public void setSocketHash(Map<String, Socket> socketHash) {
+		this.socketHash = socketHash;
+	}
+	
+	public Jedis getJedis() {
+		return jedis;
+	}
+	public void setJedis(Jedis jedis) {
+		this.jedis = jedis;
+	}
+	
+	private String __syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
+		
+		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
+		DataInputStream storeis = new DataInputStream(sock.getInputStream());
 		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
@@ -109,18 +81,10 @@ public class PhotoClient {
 		return s;
 	}
 	
-	private void __asyncStorePhoto(String set, String md5, byte[] content) throws IOException {
-		//图片不存在, 只在第一次写的时候连接服务器
-		if (asyncStoreSocket == null) {
-			assert(serverPort > 0);
-			asyncStoreSocket = new Socket();
-			asyncStoreSocket.setTcpNoDelay(true);
-			asyncStoreSocket.connect(new InetSocketAddress(conf.getServerName(), serverPort));
-			
-			storeos = new DataOutputStream(asyncStoreSocket.getOutputStream());
-			storeis = new DataInputStream(asyncStoreSocket.getInputStream());
-		}
-		
+	private void __asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
+		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
+		DataInputStream storeis = new DataInputStream(sock.getInputStream());
+	
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.ASYNCSTORE;
@@ -141,19 +105,21 @@ public class PhotoClient {
 	 * @param set
 	 * @param md5
 	 * @param content
+	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
-			return __syncStorePhoto(set, md5, content);
+			return __syncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = jedis.hget(set, md5);
 		
 			if (info == null) {
-				return __syncStorePhoto(set, md5, content);
+				return __syncStorePhoto(set, md5, content,sock);
 			} else {
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
+				// NOTE: the delete unit is SET, thus, do NOT need reference 
+				//System.out.println(set + "." + md5 + " exists in MM server");
+				//jedis.hincrBy(set, "r." + md5, 1);
 				
 				return info;
 			}
@@ -161,14 +127,14 @@ public class PhotoClient {
 		throw new IOException("Invalid Operation Mode.");
 	}
 	
-	public void asyncStorePhoto(String set, String md5, byte[] content)	throws IOException {
+	public void asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
-			__asyncStorePhoto(set, md5, content);
+			__asyncStorePhoto(set, md5, content,sock);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = jedis.hget(set, md5);
 
 			if (info == null) {
-				__asyncStorePhoto(set, md5, content);
+				__asyncStorePhoto(set, md5, content,sock);
 			} /* else { 
 				// FIXME: this should increase reference in Server.
 				System.out.println(set + "." + md5 + " exists in redis server");
@@ -181,10 +147,6 @@ public class PhotoClient {
 		}
 	}
 	
-	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return jedis.hgetAll(set);
-	}
-	
 	/**
 	 * 
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
@@ -195,7 +157,7 @@ public class PhotoClient {
 		String info = jedis.hget(set, md5);
 		
 		if(info == null) {
-			System.out.println(set + "." + md5 + " doesn't exist in redis server.");
+			System.out.println(set + "@" + md5 + " doesn't exist in redis server.");
 			
 			return new byte[0];
 		} else {
@@ -203,17 +165,37 @@ public class PhotoClient {
 		}
 	}
 	
-	public byte[] searchPhoto(String info) throws IOException {
-		String[] infos = info.split("#");
-		
+	/**
+	 * infos是拼接的元信息，各个元信息用#隔开
+	 */
+	public byte[] searchPhoto(String infos) {
+		byte[] r = null;
+		for (String info : infos.split("#")) {
+			try {
+				String[] si = info.split("@");
+				
+				r = searchByInfo(info, si);
+				if (r.length > 0)
+					break;
+			} catch(IOException e){
+				e.printStackTrace();
+				continue;
+			}
+		}
+		return r;
+	}
+	
+	/**
+	 * info是一个文件的元信息，没有拼接的
+	 */
+	public byte[] searchByInfo(String info, String[] infos) throws IOException {
 		if (infos.length != 8) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
-		
+		Socket searchSocket = null;
 		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
 			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
 		else {
-			// 读取图片时所用的socket
 			searchSocket = new Socket(); 
 			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
 			searchSocket.setTcpNoDelay(true);
@@ -237,7 +219,7 @@ public class PhotoClient {
 		if (count >= 0) {
 			return readBytes(count, searchis);
 		} else {
-			throw new IOException("Internal error in mm server.");
+			throw new IOException("Internal error in mm server:"+searchSocket.getRemoteSocketAddress());
 		}
 	}
 	
@@ -246,9 +228,7 @@ public class PhotoClient {
 	 * @param count
 	 * @return
 	 */
-	public byte[] readBytes(int count, InputStream istream) throws IOException
-	{
-
+	private byte[] readBytes(int count, InputStream istream) throws IOException {
 		byte[] buf = new byte[count];			
 		int n = 0;
 		
@@ -266,19 +246,16 @@ public class PhotoClient {
 	public void close() {
 		try {
 			jedis.quit();
-			if(storeos != null)
-				storeos.close();
-			if(storeis != null)
-				storeis.close();
-			if(syncStoreSocket != null)
-				syncStoreSocket.close();
-			if(asyncStoreSocket != null)
-				asyncStoreSocket.close();
-			for (Map.Entry<String, Socket> entry : socketHash.entrySet()) {
-				entry.getValue().close();
+			
+			for (Socket s : socketHash.values()){
+				s.close();
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+		
+	public Map<String, String> getNrFromSet(String set) throws IOException {
+		return jedis.hgetAll(set);
 	}
 }
