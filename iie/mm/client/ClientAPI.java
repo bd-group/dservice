@@ -123,6 +123,32 @@ public class ClientAPI {
 	}
 	
 	/**
+	 * 批量同步写,对外提供的接口
+	 * @param set
+	 * @param md5
+	 * @param content
+	 * @return		
+	 */
+	public String[] mput(String set, String[] md5s, byte[][] content) throws IOException, Exception{
+		String[] str = null;
+		if (set == null || md5s.length == 0 || content.length == 0){
+			throw new Exception("set or md5s or contents can not be null.");
+		}else if(md5s.length != content.length){
+			throw new Exception("md5s's length is not the same as content'slength.");
+		}else{
+			for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+				Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+				str = pc.mPut(set, md5s, content,sock);
+			}
+			index++;
+			if (index >= keyList.size()){
+				index = 0;
+			}
+		}
+		return str;
+	}
+	
+	/**
 	 * 异步写,对外提供的接口
 	 * @param set
 	 * @param md5
@@ -132,14 +158,13 @@ public class ClientAPI {
 	public void iPut(String key, byte[] content)  throws IOException, Exception{
 		if(key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
+		String[] keys = key.split("@");
 		if(keys.length != 2)
 			throw new Exception("wrong format of key:"+key);
-		String setName = keys[0];
-		String md5 = keys[1];
-		keyList.addAll(socketHash.keySet());
-		Socket sock = socketHash.get(keyList.get(index));
-		pc.asyncStorePhoto(setName, md5, content,sock);
+		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+			pc.asyncStorePhoto(keys[0], keys[1], content, sock);
+		}
 		index++;
 		if(index >= socketHash.size()){
 			index = 0;
@@ -166,22 +191,68 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * 异步读，对外提供的接口
+	 * 异步取，对外提供的接口
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public long iGet(String key) throws Exception {
 		if(key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("#");
+		String[] keys = key.split("#|@");
 		if(keys.length == 2)
 			return pc.iGetPhoto(keys[0],keys[1]);
-		else if(keys.length == 8)
-			return pc.iSearchPhoto(key);
+		else if(keys.length % 8 == 0)
+			return pc.iSearchByInfo(key);
 		else 
 			throw new Exception("wrong format of key:"+key);
 	}
-
+	
+	/**
+	 * 批量同步取，对外提供的接口
+	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
+	 */
+	public Map<String, byte[]> mGet(Set<String> keys) throws Exception {
+		Set<Long> s = new HashSet<Long>();
+		for(String key : keys){
+			long l = iGet(key);
+			s.add(l);
+		}
+		if(s.size() == keys.size()){
+			return wait(keys);
+		}
+		return null;
+	}
+	
+	/**
+	 * 批量异步取，对外提供的接口
+	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
+	 */
+	public Set<Long> imGet(Set<String> keys) throws Exception {
+		Set<Long> s = new HashSet<Long>();
+		for(String key : keys){
+			long l = iGet(key);
+			s.add(l);
+		}
+		return s;
+	}
+	
+	/**
+	 * 批量异步取，对外提供的接口
+	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
+	 */
+	public void imPut(String[] keys, byte[][] contents) throws Exception {
+		if(keys.length != contents.length){
+			throw new Exception("keys's length is not the same as contents'slength.");
+		}
+		for(int i = 0;i<keys.length;i++){
+			iPut(keys[i],contents[i]);
+		}
+	}
+	
+	
 	/**
 	 * 从输入流中读取count个字节
 	 * @param count
@@ -190,12 +261,15 @@ public class ClientAPI {
 	public Map<String, byte[]> wait(Set<String> keys) throws Exception {
 		Set<String> key = new HashSet<String>(); 
 		for(String k : keys){
-			String[] ks = k.split("#");
+			String[] ks = k.split("#|@");
 			if(ks.length == 2){
 				k = jedis.hget(ks[0], ks[1]);
 				key.add(k);
-			}else if (ks.length == 8){
-				key.add(k);
+			}else if (ks.length % 8 == 0){
+				String[] str = k.split("#");
+				for(String s : str){
+					key.add(s);
+				}
 			}else {
 				throw new Exception("wrong format of key:"+k);
 			}

@@ -19,7 +19,9 @@ public class PhotoClient {
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, Socket> socketHash = new HashMap<String, Socket>();
+	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	private Jedis jedis = null;
+	private long id;
 	public PhotoClient(){
 		conf = new ClientConf();
 	}
@@ -176,7 +178,7 @@ public class PhotoClient {
 		if(info == null) {
 			throw new IOException(set + "." + md5 + " doesn't exist in redis server.");
 		} else {
-			return iSearchPhoto(info);
+			return iSearchByInfo(info);
 		}
 	}
 	
@@ -238,34 +240,34 @@ public class PhotoClient {
 		}
 	}
 	
-	public long iSearchPhoto(String info) throws IOException {
-		String[] infos = info.split("#");
-		
-		if (infos.length != 8) {
-			throw new IOException("Invalid INFO string, info length is " + infos.length);
-		}
-		Socket searchSocket = null;
-		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
-			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
-		else {
-			// 读取图片时所用的socket
-			searchSocket = new Socket(); 
-			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
-			searchSocket.setTcpNoDelay(true);
-			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
-		}
-		//socketKeyHash.put(info, searchSocket);
-		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());
+	public long iSearchByInfo(String info) throws IOException {
+		String[] str = info.split("#");
+		for(String s : str){
+			String[] infos = s.split("@");
+			Socket searchSocket = null;
+			if (socketHash.containsKey(infos[2] + ":" + infos[3]))
+				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+			else {
+				// 读取图片时所用的socket
+				searchSocket = new Socket(); 
+				searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
+				searchSocket.setTcpNoDelay(true);
+				socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+			}
+			DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());
 
-		//action,info的length写过去
-		byte[] header = new byte[4];
-		header[0] = ActionType.SEARCH;
-		header[1] = (byte) info.getBytes().length;
-		searchos.write(header);
-		
-		//info的实际内容写过去
-		searchos.write(info.getBytes());
-		searchos.flush();
+			//action,info的length写过去
+			byte[] header = new byte[4];
+			header[0] = ActionType.SEARCH;
+			header[1] = (byte) info.getBytes().length;
+			searchos.write(header);
+			searchos.writeLong(id);
+			socketKeyHash.put(id, info);
+			//info的实际内容写过去
+			searchos.write(info.getBytes());
+			searchos.flush();
+		}
+		id++;
 		return 1;
 
 	}
@@ -277,21 +279,25 @@ public class PhotoClient {
 	 */
 	public Map<String, byte[]> wait(Set<String> keys) throws IOException {
 		Map<String, byte[]> medias = new HashMap<String, byte[]>();
-/*
 		for(String key : keys){
-			for(String k : socketKeyHash.keySet()){
-				if(key.equals(k)){
-					DataInputStream iSearchis = new DataInputStream(socketKeyHash.get(k).getInputStream());
-					int count = iSearchis.readInt();					
-					if (count >= 0) {
-						medias.put(k, readBytes(count, iSearchis));
-					} else {
-						throw new IOException("Internal error in mm server.");
-					}
+			String[] infos = key.split("@");
+			Socket searchSocket = null;
+			if (socketHash.containsKey(infos[2] + ":" + infos[3])){
+				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+				DataInputStream iSearchis = new DataInputStream(searchSocket.getInputStream());
+				Long id = iSearchis.readLong();
+				String info = socketKeyHash.get(id);
+				int count = iSearchis.readInt();					
+				if (count >= 0) {
+					medias.put(info, readBytes(count, iSearchis));
+				} else {
+					throw new IOException("Internal error in mm server.");
 				}
+			}else{
+				throw new IOException("");
 			}
 		}
-*/		return medias;
+		return medias;
 	}
 	
 	/**
@@ -329,4 +335,42 @@ public class PhotoClient {
 	public Map<String, String> getNrFromSet(String set) throws IOException {
 		return jedis.hgetAll(set);
 	}
+	
+	public String[] mPut(String set, String[] md5s, byte[][] contents, Socket sock) throws Exception {
+		//action,info的length写过去
+		byte[] header = new byte[4];
+		header[0] = ActionType.MPUT;
+		header[1] = (byte) set.getBytes().length;
+		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
+		DataInputStream storeis = new DataInputStream(sock.getInputStream());
+		storeos.write(header);
+		storeos.write(set.getBytes());
+		storeos.writeInt(md5s.length);
+		for(String md5 : md5s){
+			storeos.write(md5.getBytes().length);
+			storeos.write(md5.getBytes());
+		}
+		for(byte[] content : contents){
+			storeos.writeInt(content.length);
+		}
+		for(byte[] content : contents){
+			storeos.write(content);
+		}
+		storeos.flush();
+		//循环接收返回值String
+		String[] md5Back = null;
+		for(int i = 0;i<md5s.length;i++){
+			int count = storeis.readInt();					
+			if (count >= 0) {
+				String s = new String(readBytes(count, storeis));
+				md5Back[i] = s;
+			} else {
+				throw new IOException("Internal error in mm server.");
+			}
+			
+		}
+		return md5Back;
+		
+	}
+	
 }
