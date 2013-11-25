@@ -88,7 +88,7 @@ public class StorePhoto {
 	 * @param set	集合名
 	 * @param md5	文件的md5
 	 * @param content	文件内容
-	 * @return		type@set@node@port@block@offset@length@disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
+	 * @return		type@set@serverid@block@offset@length@disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
@@ -149,9 +149,7 @@ public class StorePhoto {
 				rVal.append("1@"); // type
 				rVal.append(set);
 				rVal.append("@");
-				rVal.append(localHostName); // node name
-				rVal.append("@");
-				rVal.append(serverport); // port #
+				rVal.append(ServerProfile.serverId);
 				rVal.append("@");
 				rVal.append(ssc.curBlock);
 				rVal.append("@");
@@ -186,17 +184,23 @@ public class StorePhoto {
 		t1.exec();
 		if (r1.get() == 1)
 			return returnVal;
-		else{
-			returnVal = r2.get()+"#"+returnVal;
-			jedis.hset(set,md5,returnVal);
+		else {
+			returnVal = r2.get() + "#" + returnVal;
+			jedis.hset(set, md5, returnVal);
 			return returnVal;
+			/*
+			 * Concurrent modify:
+			 * 
+			 * SETNX set@md5 aaa
+			 * WATCH set@md5
+			 * R = HGET set@md5
+			 * R += returnVal
+			 * MULTI
+			 * HSET set md5 R
+			 * DEL set@md5
+			 * EXEC
+			 */
 		}
-		
-//		String r = jedis.hget(set,md5);
-//		if(r != null)
-//			returnVal = r+"#"+returnVal;
-//		jedis.hset(set,md5,returnVal);
-//		return returnVal;
 	}
 	
 	/**
@@ -245,20 +249,20 @@ public class StorePhoto {
 	}
 	/**
 	 * 获得图片内容
-	 * @param info		对应storePhoto的type@set@node@port@block@offset@length@disk格式的返回值
+	 * @param info		对应storePhoto的type@set@serverid@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
 	public byte[] searchPhoto(String info) {
 		long start = System.currentTimeMillis();
 		String[] infos = info.split("@");
 		
-		if (infos.length != 8) {
+		if (infos.length != 7) {
 			System.out.println("Invalid INFO string: " + info);
 			return null;
 		}
-		String path = infos[7] + "/" + destRoot + infos[1] + "/b" + infos[4];
+		String path = infos[6] + "/" + destRoot + infos[1] + "/b" + infos[3];
 		RandomAccessFile readr = null;
-		byte[] content = new byte[Integer.parseInt(infos[6])];
+		byte[] content = new byte[Integer.parseInt(infos[5])];
 	
 		try {
 			//用哈希缓存打开的文件随机访问流
@@ -269,7 +273,7 @@ public class StorePhoto {
 				readr = new RandomAccessFile(path, "r");
 				readRafHash.put(path, readr);
 			}
-			readr.seek(Long.parseLong(infos[5]));
+			readr.seek(Long.parseLong(infos[4]));
 			readr.read(content);
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();

@@ -8,6 +8,8 @@ public class ServerProfile {
 	public static AtomicLong readDelay = new AtomicLong(0);				//总读取延迟，单位毫秒
 	public static AtomicLong readN = new AtomicLong(0);					//读取次数
 	
+	public static long serverId = -1;
+	
 	public static void addWrite(int n) {
 		writtenBytes.addAndGet(n);
 	}

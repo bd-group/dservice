@@ -8,16 +8,20 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Map;
 import java.util.HashMap;
-//import org.newsclub.net.unix.AFUNIXSocket;
-//import org.newsclub.net.unix.AFUNIXSocketAddress;
-
 import redis.clients.jedis.Jedis;
 
 public class PhotoClient {
 	private ClientConf conf;
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, Socket> socketHash = new HashMap<String, Socket>();
+	public static class SocketHashEntry {
+		Socket socket;
+		DataInputStream dis;
+		DataOutputStream dos;
+	};
+	
+	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
+	private Map<String, String> servers = new HashMap<String, String>();
 	private Jedis jedis = null;
 	
 	public PhotoClient(){
@@ -36,44 +40,65 @@ public class PhotoClient {
 		this.conf = conf;
 	}
 	
-	public Map<String, Socket> getSocketHash() {
+	public void addToServers(long id, String server) {
+		servers.put(Long.toString(id), server);
+	}
+	
+	public Map<String, SocketHashEntry> getSocketHash() {
 		return socketHash;
 	}
-	public void setSocketHash(Map<String, Socket> socketHash) {
+	public void setSocketHash(Map<String, SocketHashEntry> socketHash) {
 		this.socketHash = socketHash;
 	}
 	
 	public Jedis getJedis() {
 		return jedis;
 	}
+	
 	public void setJedis(Jedis jedis) {
 		this.jedis = jedis;
 	}
 	
-	private String __syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
+	private byte[] __handleInput(DataInputStream dis) throws IOException {
+		int count;
 		
-		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
-		DataInputStream storeis = new DataInputStream(sock.getInputStream());
+		synchronized (dis) {
+			count = dis.readInt();
+			switch (count) {
+			case -1:
+				return null;
+			default:
+				return readBytes(count, dis);
+			}
+		}
+	}
+	
+	private String __syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+		
+		DataOutputStream storeos = she.dos;
+		DataInputStream storeis = she.dis;
 		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.SYNCSTORE;
 		header[1] = (byte) set.length();
 		header[2] = (byte) md5.length();
-		storeos.write(header);
-		storeos.writeInt(content.length);
+		synchronized (storeos) {
+			storeos.write(header);
+			storeos.writeInt(content.length);
+			
+			//set,md5,content的实际内容写过去
+			storeos.write(set.getBytes());
+			storeos.write(md5.getBytes());
+			storeos.write(content);
+			storeos.flush();
+		}
 		
-		//set,md5,content的实际内容写过去
-		storeos.write(set.getBytes());
-		storeos.write(md5.getBytes());
-		storeos.write(content);
-		storeos.flush();
-		
-		int count = storeis.readInt();
-		if (count == -1)
+		byte[] r = __handleInput(storeis);
+		if (r == null)
 			return jedis.hget(set,md5);
 		
-		String s = new String(readBytes(count, storeis));
+		String s = new String(r, "US-ASCII");
 		
 		if (s.startsWith("#FAIL:")) {
 			throw new IOException("MM server failure: " + s);
@@ -81,23 +106,25 @@ public class PhotoClient {
 		return s;
 	}
 	
-	private void __asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
-		DataOutputStream storeos = new DataOutputStream(sock.getOutputStream());
-		DataInputStream storeis = new DataInputStream(sock.getInputStream());
-	
+	private void __asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+		DataOutputStream storeos = she.dos;
+		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.ASYNCSTORE;
 		header[1] = (byte) set.length();
 		header[2] = (byte) md5.length();
-		storeos.write(header);
-		storeos.writeInt(content.length);
 		
-		//set,md5,content的实际内容写过去
-		storeos.write(set.getBytes());
-		storeos.write(md5.getBytes());
-		storeos.write(content);
-		storeos.flush();
+		synchronized (storeos) {
+			storeos.write(header);
+			storeos.writeInt(content.length);
+			
+			//set,md5,content的实际内容写过去
+			storeos.write(set.getBytes());
+			storeos.write(md5.getBytes());
+			storeos.write(content);
+			storeos.flush();
+		}
 	}
 	
 	/**
@@ -108,14 +135,14 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
-			return __syncStorePhoto(set, md5, content,sock);
+			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = jedis.hget(set, md5);
 		
 			if (info == null) {
-				return __syncStorePhoto(set, md5, content,sock);
+				return __syncStorePhoto(set, md5, content, she);
 			} else {
 				// NOTE: the delete unit is SET, thus, do NOT need reference 
 				//System.out.println(set + "." + md5 + " exists in MM server");
@@ -127,14 +154,14 @@ public class PhotoClient {
 		throw new IOException("Invalid Operation Mode.");
 	}
 	
-	public void asyncStorePhoto(String set, String md5, byte[] content, Socket sock) throws IOException {
+	public void asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
-			__asyncStorePhoto(set, md5, content,sock);
+			__asyncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = jedis.hget(set, md5);
 
 			if (info == null) {
-				__asyncStorePhoto(set, md5, content,sock);
+				__asyncStorePhoto(set, md5, content, she);
 			} /* else { 
 				// FIXME: this should increase reference in Server.
 				System.out.println(set + "." + md5 + " exists in redis server");
@@ -168,59 +195,70 @@ public class PhotoClient {
 	/**
 	 * infos是拼接的元信息，各个元信息用#隔开
 	 */
-	public byte[] searchPhoto(String infos) {
+	public byte[] searchPhoto(String infos) throws IOException {
 		byte[] r = null;
 		for (String info : infos.split("#")) {
 			try {
 				String[] si = info.split("@");
 				
 				r = searchByInfo(info, si);
-				if (r.length > 0)
+				if (r.length >= 0)
 					break;
 			} catch(IOException e){
 				e.printStackTrace();
 				continue;
 			}
 		}
+		if (r == null)
+			throw new IOException("Failed to search MM object.");
 		return r;
 	}
 	
 	/**
 	 * info是一个文件的元信息，没有拼接的
 	 */
+	@SuppressWarnings("resource")
 	public byte[] searchByInfo(String info, String[] infos) throws IOException {
-		if (infos.length != 8) {
+		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
-		Socket searchSocket = null;
-		if (socketHash.containsKey(infos[2] + ":" + infos[3]))
-			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
-		else {
-			searchSocket = new Socket(); 
-			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
-			searchSocket.setTcpNoDelay(true);
-			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+		SocketHashEntry searchSocket = null;
+		String server = servers.get(infos[2]);
+		if (server == null)
+			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
+		if (socketHash.containsKey(server)) {
+			searchSocket = socketHash.get(server);
+		} else {
+			String[] s = server.split(":");
+			if (s.length == 2) {
+				Socket socket = new Socket(); 
+				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
+				socket.setTcpNoDelay(true);
+				searchSocket = new SocketHashEntry();
+				searchSocket.dis = new DataInputStream(socket.getInputStream());
+				searchSocket.dos = new DataOutputStream(socket.getOutputStream());
+				searchSocket.socket = socket;
+				socketHash.put(server, searchSocket);
+			} else 
+				throw new IOException("Invalid server name or port.");
 		}
-
-		DataInputStream searchis = new DataInputStream(searchSocket.getInputStream());
-		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());
 
 		//action,info的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.SEARCH;
 		header[1] = (byte) info.getBytes().length;
-		searchos.write(header);
+		searchSocket.dos.write(header);
 		
 		//info的实际内容写过去
-		searchos.write(info.getBytes());
-		searchos.flush();
+		searchSocket.dos.write(info.getBytes());
+		searchSocket.dos.flush();
 
-		int count = searchis.readInt();					
-		if (count >= 0) {
-			return readBytes(count, searchis);
-		} else {
-			throw new IOException("Internal error in mm server:"+searchSocket.getRemoteSocketAddress());
-		}
+		byte[] r = __handleInput(searchSocket.dis);
+		if (r == null)
+			throw new IOException("Internal error in mm server:" + 
+					searchSocket.socket.getRemoteSocketAddress());
+		else
+			return r;
 	}
 	
 	/**
@@ -247,8 +285,8 @@ public class PhotoClient {
 		try {
 			jedis.quit();
 			
-			for (Socket s : socketHash.values()){
-				s.close();
+			for (SocketHashEntry s : socketHash.values()){
+				s.socket.close();
 			}
 		} catch (IOException e) {
 			e.printStackTrace();

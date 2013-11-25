@@ -27,15 +27,28 @@ public class ProfileTimerTask extends TimerTask {
 		File dir = new File(profileDir);
 		if (!dir.exists())
 			dir.mkdirs();
+		
 		// 向redis的数据库1中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
 		Pipeline pi = jedis.pipelined();
 		pi.set(hbkey, "1");
 		pi.expire(hbkey, period + 5);
-		// 启动过的server
-		pi.sadd("mm.active", conf.getNodeName() + ":" + conf.getServerPort());
 		pi.sync();
+
+		// determine the ID of ourself, register ourself
+		String self = conf.getNodeName() + ":" + conf.getServerPort();
+		Long sid;
+		if (jedis.zrank("mm.active", self) == null) {
+			sid = jedis.incr("mm.next.serverid");
+			// FIXME: if two server start with the same port, fail!
+			jedis.zadd("mm.active", sid, self);
+		}
+		// reget the sid
+		sid = jedis.zrank("mm.active", self);
+		ServerProfile.serverId = sid;
+		System.out.println("Got ServerID " + sid + " for Server " + self);
+
 		this.period = period;
 	}
 
