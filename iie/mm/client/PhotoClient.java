@@ -1,6 +1,6 @@
 package iie.mm.client;
 
-import java.io.DataInputStream;
+import java.io.DataInputStream;	
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -208,9 +208,8 @@ public class PhotoClient {
 		String info = jedis.hget(set, md5);
 		
 		if(info == null) {
-			System.out.println(set + "@" + md5 + " doesn't exist in redis server.");
+			throw new IOException(set + "@" + md5 + " doesn't exist in redis server.");
 			
-			return new byte[0];
 		} else {
 			return searchPhoto(info);
 		}
@@ -227,12 +226,12 @@ public class PhotoClient {
 		if(info == null) {
 			throw new IOException(set + "." + md5 + " doesn't exist in redis server.");
 		} else {
-			System.out.println(info);
+//			System.out.println(info);
 			return iSearchByInfo(info);
 		}
 	}
 	
-        /**
+    /**
 	 * infos是拼接的元信息，各个元信息用#隔开
 	 */
 	public byte[] searchPhoto(String infos) {
@@ -332,13 +331,13 @@ public class PhotoClient {
 			String[] infos = key.split("@");
 			Socket searchSocket = null;
 			if (socketHash.containsKey(infos[2] + ":" + infos[3])){
-				System.out.println(infos[2] + ":" + infos[3]);
+//				System.out.println(infos[2] + ":" + infos[3]);
 				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
 				DataInputStream iSearchis = new DataInputStream(searchSocket.getInputStream());
 				Long id = iSearchis.readLong();
-				System.out.println(id);
+//				System.out.println(id);
 				String info = socketKeyHash.get(id);
-				System.out.println(info);
+//				System.out.println(info);
 				int count = iSearchis.readInt();					
 				if (count >= 0) {
 					medias.put(info, readBytes(count, iSearchis));
@@ -346,7 +345,7 @@ public class PhotoClient {
 					throw new IOException("Internal error in mm server.");
 				}
 			}else{
-				throw new IOException("");
+				throw new IOException("no socket is cached for node:"+infos[2] + ":" + infos[3]);
 			}
 		}
 		return medias;

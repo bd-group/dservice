@@ -51,7 +51,7 @@ public class HTTPHandler extends AbstractHandler {
 			baseRequest.setHandled(true);
 			response.getWriter().println("#FAIL: key can not be null");
 		} else {
-			String[] infos = key.split("@");
+			String[] infos = key.split("@|#");
 			
 			if (infos.length == 2) {
 				byte[] content = sp.getPhoto(infos[0], infos[1]);
@@ -60,8 +60,8 @@ public class HTTPHandler extends AbstractHandler {
 				} else {
 					okResponse(baseRequest, response, content);
 				}
-			} else if (infos.length == 8) {
-				byte[] content = sp.searchPhoto(key);
+			} else if (infos.length % 8 == 0) {
+				byte[] content = sp.searchByDupInfo(key);
 				if (content == null || content.length == 0) {
 					notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
 				} else {

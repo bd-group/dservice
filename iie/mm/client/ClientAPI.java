@@ -179,7 +179,7 @@ public class ClientAPI {
 	public byte[] get(String key) throws Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("@");
+		String[] keys = key.split("@|#");
 		if (keys.length == 2)
 			return pc.getPhoto(keys[0], keys[1]);
 		else if (keys.length == 8)
