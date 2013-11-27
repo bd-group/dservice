@@ -1,5 +1,6 @@
 package iie.mm.client;
 
+import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry.SEntry;
 
 import java.io.DataInputStream;
@@ -169,7 +170,8 @@ public class PhotoClient {
 
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
-		this.jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+		RedisInstance ri = conf.getRedisInstance();
+		this.jedis = RedisFactory.getNewInstance(ri.hostname, ri.port);
 	}
 	
 	public ClientConf getConf() {
@@ -200,8 +202,10 @@ public class PhotoClient {
 	
 	public void refreshJedis() {
 		synchronized (this) {
-			if (jedis == null)
-				jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+			if (jedis == null) {
+				RedisInstance ri = conf.getRedisInstance();
+				jedis = RedisFactory.getNewInstance(ri.hostname, ri.port);
+			}
 		}
 	}
 	

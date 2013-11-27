@@ -2,10 +2,21 @@ package iie.mm.client;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Random;
 
 public class ClientConf {
-	private String redisHost;
-	private int redisPort;
+	public static class RedisInstance {
+		public String hostname;
+		public int port;
+		
+		public RedisInstance(String hostname, int port) {
+			this.hostname = hostname;
+			this.port = port;
+		}
+	}
+	private List<RedisInstance> redisIns;
 	private String serverName;
 	private int serverPort;
 	private int dupNum;			//一个文件存储份数
@@ -24,8 +35,8 @@ public class ClientConf {
 		if (redisHost == null) {
 			throw new UnknownHostException("Invalid redis server host name.");
 		}
-		this.redisHost = redisHost;
-		this.redisPort = redisPort;
+		redisIns = new ArrayList<RedisInstance>();
+		redisIns.add(new RedisInstance(redisHost, redisPort));
 		this.mode = mode;
 		
 		this.dupNum = dupNum;
@@ -33,24 +44,23 @@ public class ClientConf {
 	}
 	
 	public ClientConf() {
+		redisIns = new ArrayList<RedisInstance>();
 		this.dupNum = 1;
 		this.mode = MODE.NODEDUP;
+		this.setSockPerServer(5);
 	}
 
-	public String getRedisHost() {
-		return redisHost;
+	public RedisInstance getRedisInstance() {
+		Random r = new Random();
+		return redisIns.get(r.nextInt(redisIns.size()));
 	}
-
-	public void setRedisHost(String redisHost) {
-		this.redisHost = redisHost;
+	
+	public void setRedisInstance(RedisInstance ri) {
+		redisIns.add(ri);
 	}
-
-	public int getRedisPort() {
-		return redisPort;
-	}
-
-	public void setRedisPort(int redisPort) {
-		this.redisPort = redisPort;
+	
+	public void clrRedisIns() {
+		redisIns.clear();
 	}
 
 	public String getServerName() {

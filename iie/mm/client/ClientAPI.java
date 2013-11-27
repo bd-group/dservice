@@ -1,5 +1,6 @@
 package iie.mm.client;
 
+import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry;
 
 import java.io.DataInputStream;
@@ -33,6 +34,10 @@ public class ClientAPI {
 		pc = new PhotoClient();
 	}
 	
+	/**
+	 * DO NOT USE this function unless if you know what are you doing.
+	 * @return PhotoClient
+	 */
 	public PhotoClient getPc() {
 		return pc;
 	}
@@ -44,27 +49,30 @@ public class ClientAPI {
 	 * @param url redis的主机名:端口
 	 * @return 
 	 */
-	public int init(String url) throws Exception {
+	public int init(String urls) throws Exception {
 		//与jedis建立连接
-		if (url == null) {
+		if (urls == null) {
 			throw new Exception("The url can not be null.");
 		}
-		String[] redishp = url.split(":"); 
-		if (redishp.length != 2)
-			throw new Exception("wrong format of url: " + url);
-		
+		String[] x = urls.split(";");
 		if (pc.getConf() == null) {
 			pc.setConf(new ClientConf());
 		}
-		if (pc.getJedis() == null) {
-			jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
-			pc.setJedis(jedis);
-		} else {
-			// Use the Redis Server in conf
-			jedis = pc.getJedis();
+		pc.getConf().clrRedisIns();
+		for (String url : x) {
+			String[] redishp = url.split(":"); 
+			if (redishp.length != 2)
+				throw new Exception("wrong format of url: " + url);
+			
+			if (pc.getJedis() == null) {
+				jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
+				pc.setJedis(jedis);
+			} else {
+				// Use the Redis Server in conf
+				jedis = pc.getJedis();
+			}
+			pc.getConf().setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
 		}
-		pc.getConf().setRedisHost(redishp[0]);
-		pc.getConf().setRedisPort(Integer.parseInt(redishp[1]));
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
