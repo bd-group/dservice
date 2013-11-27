@@ -7,15 +7,125 @@ import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 public class MMSClient {
 
 	public static class Option {
 	     String flag, opt;
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
+	}
+	
+	public static class LPutThread extends Thread {
+		private ClientAPI ca;
+		public long pnr = 0;
+		public long size = 0;
+		public String set = null;
+		public String type = "";
+		public long begin, end;
+		
+		public LPutThread(ClientAPI ca, String set, long pnr, long size, String type) {
+			this.ca = ca;
+			this.pnr = pnr;
+			this.size = size;
+			this.type = type;
+			this.set = set;
+		}
+		
+		public void run() {
+			begin = System.nanoTime();
+			try {
+				for (int i = 0; i < pnr; i++) {
+					byte[] content = new byte[(int) size];
+					Random r = new Random();
+					r.nextBytes(content);
+					MessageDigest md;
+					md = MessageDigest.getInstance("md5");
+					md.update(content);
+					byte[] mdbytes = md.digest();
+			
+					StringBuffer sb = new StringBuffer();
+					for (int j = 0; j < mdbytes.length; j++) {
+						sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+					}
+					try {
+						if (type.equalsIgnoreCase("sync"))
+							ca.put(set + "@" + sb.toString(), content);
+						else if (type.equalsIgnoreCase("async"))
+							ca.put(set + "@" + sb.toString(), content);
+						else {
+							if (type.equals(""))
+								System.out.println("Please provide lpt_type");
+							else
+								System.out.println("Wrong lpt_type, should be sync or async");
+							System.exit(0);
+						}
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+				end = System.nanoTime();
+				System.out.println(Thread.currentThread().getId() + " --> Put " + pnr + " objects in " +
+						((end - begin) / 1000.0) + " us, PPS is " + (pnr * 1000000000.0) / (end - begin));
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	public static class LGetThread extends Thread {
+		private ClientAPI ca;
+		public Set<String> gets;
+		public long gnr = 0;
+		public long size = 0;
+		public boolean doCheck;
+		
+		public long begin, end;
+		
+		public LGetThread(ClientAPI ca, Set<String> gets, boolean doCheck) {
+			this.ca = ca;
+			this.gets = gets;
+			this.doCheck = doCheck;
+		}
+		
+		public void run() {
+			begin = System.nanoTime();
+			for (String key : gets) {
+				byte[] r = null;
+				try {
+					r = ca.get(key);
+
+					if (doCheck) {
+						MessageDigest md;
+						md = MessageDigest.getInstance("md5");
+						md.update(r);
+						byte[] mdbytes = md.digest();
+						StringBuffer sb = new StringBuffer();
+						for (int j = 0; j < mdbytes.length; j++) {
+							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+						}
+						String[] x = key.split("@");
+						if (!sb.toString().equalsIgnoreCase(x[1])) {
+							System.out.println("Key " + key + " is corrupt.");
+						}
+					}
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+				if (r != null)
+					size += r.length;
+				gnr++;
+			}
+			end = System.nanoTime();
+			System.out.println(Thread.currentThread().getId() + " --> Get " + gnr + " objects in " + 
+					((end - begin) / 1000.0) + " us, GPS is " + (gnr * 1000000000.0) / (end - begin) + ", checked=" + doCheck);
+		}
 	}
 	
 	/**
@@ -62,8 +172,9 @@ public class MMSClient {
 		int serverPort = 0, redisPort = 0;
 		ClientConf.MODE mode = ClientConf.MODE.NODEDUP;
 		long lpt_nr = 1, lpt_size = 1;
-		int lgt_nr = -1;
+		int lgt_nr = -1, lgt_th = 1, lpt_th = 1;
 		String lpt_type = "", lgt_type = "";
+		boolean lgt_docheck = false;
 		int dupNum = 1;
 		
 		for (Option o : optsList) {
@@ -148,6 +259,15 @@ public class MMSClient {
 			if (o.flag.equals("-lgt_nr")) {
 				lgt_nr = Integer.parseInt(o.opt);
 			}
+			if (o.flag.equals("-lgt_th")) {
+				lgt_th = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lpt_th")) {
+				lpt_th = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lgt_docheck")) {
+				lgt_docheck = true;
+			}
 			if (o.flag.equals("-lgt_type")) {
 				// get or search
 				lgt_type = o.opt;
@@ -205,6 +325,29 @@ public class MMSClient {
 					e.printStackTrace();
 				}
 			}
+			if (o.flag.equals("-lpta")) {
+				// large scale put test with atomic interface
+				System.out.println("Provide the number of iterations, and mm object size.");
+				System.out.println("LPT args: nr " + lpt_nr + ", size " + lpt_size +", type " + lpt_type);
+				
+				List<LPutThread> lputs = new ArrayList<LPutThread>();
+				for (int i = 0; i < lpt_th; i++) {
+					lputs.add(new LPutThread(pcInfo, set, lpt_nr / lpt_th, lpt_size, lpt_type));
+				}
+				long begin = System.currentTimeMillis();
+				for (LPutThread t : lputs) {
+					t.start();
+				}
+				lpt_nr = 0;
+				for (LPutThread t : lputs) {
+					t.join();
+					lpt_nr += t.pnr;
+				}
+				long end = System.currentTimeMillis();
+				System.out.println("LPTA nr " + lpt_nr + " size " + lpt_size +
+						": BW " + lpt_size * lpt_nr * 1000.0 / 1024.0 / (end - begin) + " KBps," + 
+						" LAT " + (end - begin) / (double)lpt_nr + " ms");
+			}
 			if (o.flag.equals("-lpt")) {
 				// large scale put test
 				System.out.println("Provide the number of iterations, and mm object size.");
@@ -245,6 +388,69 @@ public class MMSClient {
 				} catch (NoSuchAlgorithmException e) {
 					e.printStackTrace();
 				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+			
+			if (o.flag.equals("-lgta")) {
+				// large scale get test with atomic interface
+				System.out.println("Provide the number of iterations.");
+				System.out.println("LGT args: nr " + lgt_nr);
+				if (lgt_nr == -1) {
+					System.out.println("please provide number of iterations using -lgt_nr");
+					System.exit(0);
+				}
+				try {
+					Map<String, String> stored = pcInfo.getPc().getNrFromSet(set);
+					if (stored.size() < lgt_nr) {
+						lgt_nr = stored.size();
+					}
+					int i = 0;
+					long size = 0;
+					ArrayList<Set<String>> gets = new ArrayList<Set<String>>();
+					List<LGetThread> lgets = new ArrayList<LGetThread>();
+					for (i = 0; i < lgt_th; i++) {
+						gets.add(new HashSet<String>());
+						lgets.add(new LGetThread(pcInfo, gets.get(i), lgt_docheck));
+					}
+					i = 0;
+					if (lgt_type.equalsIgnoreCase("get")) {
+						for (String key : stored.keySet()) {
+							gets.get(i % lgt_th).add(set + "@" + key);
+							i++;
+							if (i >= lgt_nr)
+								break;
+						}
+					} else if (lgt_type.equalsIgnoreCase("search")) {
+						for (String val : stored.values()) {
+							gets.get(i % lgt_th).add(val);
+							i++;
+							if (i >= lgt_nr)
+								break;
+						}
+					} else {
+						if (lgt_type.equals("")) 
+							System.out.println("Please provide lgt_type.");
+						else 
+							System.out.println("Wrong lgt_type, expect 'get' or 'search'");
+						System.exit(0);
+					}
+					long begin = System.currentTimeMillis();
+					for (LGetThread t : lgets) {
+						t.start();
+					}
+					lgt_nr = 0;
+					size = 0;
+					for (LGetThread t : lgets) {
+						t.join();
+						lgt_nr += t.gnr;
+						size += t.size;
+					}
+					long dur = System.currentTimeMillis() - begin;
+					System.out.println("LGTA nr " + lgt_nr + " size " + size + "B " + 
+							": BW " + (size * 1000 / 1024.0 / (dur)) + " KBps," + 
+							" AVG LAT " + ((double)dur / lgt_nr) + " ms");
+				} catch(IOException e){
 					e.printStackTrace();
 				}
 			}

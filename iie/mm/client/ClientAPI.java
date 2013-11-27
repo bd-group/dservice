@@ -77,15 +77,13 @@ public class ClientAPI {
 			for (String s : active) {
 				String[] c = s.split(":");
 				if (c.length == 2) {
-					@SuppressWarnings("resource")
 					Socket sock = new Socket();
-					SocketHashEntry she = new SocketHashEntry();
+					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
 					try {
 						sock.setTcpNoDelay(true);//不要延迟
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
-						she.dis = new DataInputStream(sock.getInputStream());
-						she.dos = new DataOutputStream(sock.getOutputStream());
-						she.socket = sock;
+						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+								new DataOutputStream(sock.getOutputStream()));
 						socketHash.put(s, she);
 					} catch (SocketException e) {
 						e.printStackTrace();
@@ -107,6 +105,7 @@ public class ClientAPI {
 	
 	/**
 	 * 同步写,对外提供的接口
+	 * It is thread-safe!
 	 * @param set
 	 * @param md5
 	 * @param content
@@ -131,7 +130,7 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * 
+	 * It is thread-safe
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */

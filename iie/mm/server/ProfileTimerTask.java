@@ -11,8 +11,10 @@ import java.util.TimerTask;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class ProfileTimerTask extends TimerTask {
+	private ServerConf conf;
 	public int period;
 	private double lastWn = 0;
 	private long lastDl = 0;
@@ -24,6 +26,7 @@ public class ProfileTimerTask extends TimerTask {
 	
 	public ProfileTimerTask(ServerConf conf, int period) {
 		super();
+		this.conf = conf;
 		File dir = new File(profileDir);
 		if (!dir.exists())
 			dir.mkdirs();
@@ -76,8 +79,17 @@ public class ProfileTimerTask extends TimerTask {
 		lastTs = cur;
 		
 		//server的心跳信息
-		jedis.expire(hbkey, period + 5);
-		
+		try {
+			if (jedis == null)
+				jedis = new RedisFactory(conf).getDefaultInstance();
+			Pipeline pi = jedis.pipelined();
+			pi.set(hbkey, "1");
+			pi.expire(hbkey, period + 5);
+			pi.sync();
+		} catch (Exception e) {
+			jedis = null;
+		}
+
 		//把统计信息写入文件,每一天的信息放在一个文件里
 		String profileName = s.substring(0, 10)+".long";
 		PrintWriter pw = null;

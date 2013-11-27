@@ -1,5 +1,7 @@
 package iie.mm.client;
 
+import iie.mm.client.PhotoClient.SocketHashEntry.SEntry;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -8,16 +10,153 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class PhotoClient {
 	private ClientConf conf;
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	public static class SocketHashEntry {
-		Socket socket;
-		DataInputStream dis;
-		DataOutputStream dos;
+		String hostname;
+		int port, cnr;
+		Map<Long, SEntry> map;
+		AtomicLong nextId = new AtomicLong(0);
+		
+		public static class SEntry {
+			public Socket sock;
+			public long id;
+			public boolean used;
+			public DataInputStream dis;
+			public DataOutputStream dos;
+			
+			public SEntry(Socket sock, long id, boolean used, DataInputStream dis, DataOutputStream dos) {
+				this.sock = sock;
+				this.id = id;
+				this.used = used;
+				this.dis = dis;
+				this.dos = dos;
+			}
+		}
+		
+		public SocketHashEntry(String hostname, int port, int cnr) {
+			this.hostname = hostname;
+			this.port = port;
+			this.cnr = cnr;
+			this.map = new ConcurrentHashMap<Long, SEntry>();
+		}
+		
+		public void setFreeSocket(long id) {
+			SEntry e = map.get(id);
+			if (e != null) {
+				e.used = false;
+			}
+			synchronized (this) {
+				this.notify();
+			}
+		}
+		
+		public long getFreeSocket() throws IOException {
+			boolean found = false;
+			long id = -1;
+
+			do {
+				synchronized (this) {
+					for (SEntry e : map.values()) {
+						if (!e.used) {
+							// ok, it is unused
+							found = true;
+							e.used = true;
+							id = e.id;
+							break;
+						}
+					}
+				}
+	
+				if (!found) {
+					if (map.size() < cnr) {
+						// do connect now
+						Socket socket = new Socket();
+						try {
+							socket.connect(new InetSocketAddress(this.hostname, this.port));
+							socket.setTcpNoDelay(true);
+							id = this.addToSocketsAsUsed(socket, new DataInputStream(socket.getInputStream()), 
+										new DataOutputStream(socket.getOutputStream()));
+							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
+						} catch (Exception e) {
+							System.out.println("Connect to " + hostname + ":" + port + " failed.");
+							try {
+								Thread.sleep(1000);
+							} catch (InterruptedException e1) {
+							}
+							throw new IOException(e.getMessage());
+						}
+					} else {
+						do {
+							try {
+								synchronized (this) {
+									System.out.println("wait ...");
+									this.wait();
+								}
+							} catch (InterruptedException e) {
+								e.printStackTrace();
+								continue;
+							}
+							break;
+						} while (true);
+					}
+				} else {
+					break;
+				}
+			} while (id == -1);
+			
+			return id;
+		}
+		
+		public long addToSocketsAsUsed(Socket sock, DataInputStream dis, DataOutputStream dos) {
+			SEntry e = new SEntry(sock, nextId.getAndIncrement(), true, dis, dos);
+			synchronized (this) {
+				map.put(e.id, e);
+			}
+			return e.id;
+		}
+		
+		public void addToSockets(Socket sock, DataInputStream dis, DataOutputStream dos) {
+			SEntry e = new SEntry(sock, nextId.getAndIncrement(), false, dis, dos);
+			synchronized (this) {
+				map.put(e.id, e);
+			}
+		}
+		
+		public void useSocket(long id) {
+			synchronized (this) {
+				SEntry e = map.get(id);
+				if (e != null) {
+					e.used = true;
+				}
+			}
+		}
+		
+		public void delFromSockets(long id) {
+			System.out.println("Del sock @ " + id + " for " + hostname + ":" + port);
+			SEntry e = null;
+			synchronized (this) {
+				e = map.get(id);
+				map.remove(id);
+			}
+			if (e != null) {
+				try {
+					e.dis.close();
+					e.dos.close();
+					e.sock.close();
+				} catch (IOException e1) {
+				}
+			}
+		}
 	};
 	
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
@@ -59,6 +198,13 @@ public class PhotoClient {
 		this.jedis = jedis;
 	}
 	
+	public void refreshJedis() {
+		synchronized (this) {
+			if (jedis == null)
+				jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+		}
+	}
+	
 	private byte[] __handleInput(DataInputStream dis) throws IOException {
 		int count;
 		
@@ -74,29 +220,58 @@ public class PhotoClient {
 	}
 	
 	private String __syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
-		
-		DataOutputStream storeos = she.dos;
-		DataInputStream storeis = she.dis;
+		long id = she.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
+		DataOutputStream storeos = she.map.get(id).dos;
+		DataInputStream storeis = she.map.get(id).dis;
 		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.SYNCSTORE;
 		header[1] = (byte) set.length();
 		header[2] = (byte) md5.length();
-		synchronized (storeos) {
-			storeos.write(header);
-			storeos.writeInt(content.length);
-			
-			//set,md5,content的实际内容写过去
-			storeos.write(set.getBytes());
-			storeos.write(md5.getBytes());
-			storeos.write(content);
-			storeos.flush();
+		
+		byte[] r = null;
+		
+		try {
+			synchronized (storeos) {
+				storeos.write(header);
+				storeos.writeInt(content.length);
+				
+				//set,md5,content的实际内容写过去
+				storeos.write(set.getBytes());
+				storeos.write(md5.getBytes());
+				storeos.write(content);
+				storeos.flush();
+			}
+			r = __handleInput(storeis);
+			she.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			she.delFromSockets(id);
 		}
 		
-		byte[] r = __handleInput(storeis);
-		if (r == null)
-			return jedis.hget(set,md5);
+		if (r == null) {
+			String rr = null;
+			try {
+				synchronized (jedis) {
+					rr = jedis.hget(set, md5);
+				}
+			} catch (JedisConnectionException e) {
+				System.out.println("Jedis connection broken, wait ...");
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e1) {
+				}
+			} catch (JedisException e) {
+				jedis = null;
+			}
+			if (rr == null)
+				throw new IOException("Metadata inconsistent or connection broken?");
+			return rr;
+		}
 		
 		String s = new String(r, "US-ASCII");
 		
@@ -107,23 +282,33 @@ public class PhotoClient {
 	}
 	
 	private void __asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
-		DataOutputStream storeos = she.dos;
+		long id = she.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not get free socket for server: " + she.hostname + ":" + she.port);
+		DataOutputStream storeos = she.map.get(id).dos;
 		
 		//action,set,md5,content的length写过去
 		byte[] header = new byte[4];
 		header[0] = ActionType.ASYNCSTORE;
 		header[1] = (byte) set.length();
 		header[2] = (byte) md5.length();
-		
-		synchronized (storeos) {
-			storeos.write(header);
-			storeos.writeInt(content.length);
-			
-			//set,md5,content的实际内容写过去
-			storeos.write(set.getBytes());
-			storeos.write(md5.getBytes());
-			storeos.write(content);
-			storeos.flush();
+
+		try {
+			synchronized (storeos) {
+				storeos.write(header);
+				storeos.writeInt(content.length);
+				
+				//set,md5,content的实际内容写过去
+				storeos.write(set.getBytes());
+				storeos.write(md5.getBytes());
+				storeos.write(content);
+				storeos.flush();
+			}
+			she.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			she.delFromSockets(id);
 		}
 	}
 	
@@ -136,10 +321,24 @@ public class PhotoClient {
 	 * @return		
 	 */
 	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+		refreshJedis();
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
-			String info = jedis.hget(set, md5);
+			String info = null;
+			try {
+				synchronized (jedis) {
+					info = jedis.hget(set, md5);
+				}
+			} catch (JedisConnectionException e) {
+				System.out.println("Jedis connection broken, wait ...");
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e1) {
+				}
+			} catch (JedisException e) {
+				jedis = null;
+			}
 		
 			if (info == null) {
 				return __syncStorePhoto(set, md5, content, she);
@@ -155,10 +354,24 @@ public class PhotoClient {
 	}
 	
 	public void asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+		refreshJedis();
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			__asyncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
-			String info = jedis.hget(set, md5);
+			String info = null;
+			try {
+				synchronized (jedis) {
+					info = jedis.hget(set, md5);
+				}
+			} catch (JedisConnectionException e) {
+				System.out.println("Jedis connection broken, wait ...");
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e1) {
+				}
+			} catch (JedisException e) {
+				jedis = null;
+			}
 
 			if (info == null) {
 				__asyncStorePhoto(set, md5, content, she);
@@ -181,10 +394,26 @@ public class PhotoClient {
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
 	public byte[] getPhoto(String set, String md5) throws IOException {
-		String info = jedis.hget(set, md5);
+		String info = null;
+		refreshJedis();
 		
-		if(info == null) {
-			System.out.println(set + "@" + md5 + " doesn't exist in redis server.");
+		try {
+			synchronized (jedis) {
+				info = jedis.hget(set, md5);
+			}
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken, wait in getObject ...");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			jedis = null;
+		} catch (JedisException e) {
+			jedis = null;
+		}
+		
+		if (info == null) {
+			System.out.println(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
 			
 			return new byte[0];
 		} else {
@@ -197,6 +426,8 @@ public class PhotoClient {
 	 */
 	public byte[] searchPhoto(String infos) throws IOException {
 		byte[] r = null;
+
+		refreshJedis();
 		for (String info : infos.split("#")) {
 			try {
 				String[] si = info.split("@");
@@ -217,11 +448,13 @@ public class PhotoClient {
 	/**
 	 * info是一个文件的元信息，没有拼接的
 	 */
-	@SuppressWarnings("resource")
 	public byte[] searchByInfo(String info, String[] infos) throws IOException {
+		refreshJedis();
+
 		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
+		
 		SocketHashEntry searchSocket = null;
 		String server = servers.get(infos[2]);
 		if (server == null)
@@ -234,10 +467,10 @@ public class PhotoClient {
 				Socket socket = new Socket(); 
 				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 				socket.setTcpNoDelay(true);
-				searchSocket = new SocketHashEntry();
-				searchSocket.dis = new DataInputStream(socket.getInputStream());
-				searchSocket.dos = new DataOutputStream(socket.getOutputStream());
-				searchSocket.socket = socket;
+				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				searchSocket.addToSocketsAsUsed(socket, 
+						new DataInputStream(socket.getInputStream()), 
+						new DataOutputStream(socket.getOutputStream()));
 				socketHash.put(server, searchSocket);
 			} else 
 				throw new IOException("Invalid server name or port.");
@@ -247,16 +480,27 @@ public class PhotoClient {
 		byte[] header = new byte[4];
 		header[0] = ActionType.SEARCH;
 		header[1] = (byte) info.getBytes().length;
-		searchSocket.dos.write(header);
-		
-		//info的实际内容写过去
-		searchSocket.dos.write(info.getBytes());
-		searchSocket.dos.flush();
+		long id = searchSocket.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not get free socket for server " + server);
 
-		byte[] r = __handleInput(searchSocket.dis);
+		byte[] r = null;
+		try {
+			searchSocket.map.get(id).dos.write(header);
+			
+			//info的实际内容写过去
+			searchSocket.map.get(id).dos.write(info.getBytes());
+			searchSocket.map.get(id).dos.flush();
+	
+			r = __handleInput(searchSocket.map.get(id).dis);
+			searchSocket.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			searchSocket.delFromSockets(id);
+		}
 		if (r == null)
-			throw new IOException("Internal error in mm server:" + 
-					searchSocket.socket.getRemoteSocketAddress());
+			throw new IOException("Internal error in mm server:" + server);
 		else
 			return r;
 	}
@@ -286,7 +530,9 @@ public class PhotoClient {
 			jedis.quit();
 			
 			for (SocketHashEntry s : socketHash.values()){
-				s.socket.close();
+				for (SEntry e : s.map.values()) {
+					e.sock.close();
+				}
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -294,6 +540,18 @@ public class PhotoClient {
 	}
 		
 	public Map<String, String> getNrFromSet(String set) throws IOException {
-		return jedis.hgetAll(set);
+		refreshJedis();
+		try {
+			return jedis.hgetAll(set);
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken, wait ...");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+		} catch (JedisException e) {
+			jedis = null;
+		}
+		throw new IOException("Jedis Connection broken.");
 	}
 }

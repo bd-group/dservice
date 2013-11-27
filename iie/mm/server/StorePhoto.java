@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.net.ConnectException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -15,6 +16,8 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.Response;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class StorePhoto {
 	private ServerConf conf;
@@ -81,6 +84,12 @@ public class StorePhoto {
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
 		
 	}
+	
+	public void reconnectJedis() {
+		if (jedis == null) {
+			jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+		}
+	}
 
 	/**
 	 * 把content代表的图片内容,存储起来,把小图片合并成一个块,块大小由配置文件中blocksize指定.
@@ -92,6 +101,7 @@ public class StorePhoto {
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
+		reconnectJedis();
 		StringBuffer rVal = new StringBuffer(128);
 		
 		//随机选一个磁盘
@@ -163,43 +173,62 @@ public class StorePhoto {
 				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
-			} catch (FileNotFoundException e) {
-				e.printStackTrace();
+			} catch (JedisConnectionException e) {
+				System.out.println("Jedis connection broken in storeObject.");
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e1) {
+				}
+				jedis = null;
 				return "#FAIL:" + e.getMessage();
-			} catch (IOException e) {
-				e.printStackTrace();
+			} catch (JedisException e) {
+				jedis = null;
+				return "#FAIL:" + e.getMessage();
+			} catch (Exception e) {
 				return "#FAIL:" + e.getMessage();
 			}
 		}
 		
-		String returnVal = rVal.toString();
-//		Pipeline pl = jedis.pipelined();
-//		pl.hsetnx(set,md5,returnVal);
-//		pl.hget(set,md5);
-//		List<Object> r = pl.syncAndReturnAll();
-//		if((Long)r.get(0) == 1)
-		Transaction t1 = jedis.multi();
-		Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
-		Response<String> r2 = t1.hget(set,md5);
-		t1.exec();
-		if (r1.get() == 1)
-			return returnVal;
-		else {
-			returnVal = r2.get() + "#" + returnVal;
-			jedis.hset(set, md5, returnVal);
-			return returnVal;
-			/*
-			 * Concurrent modify:
-			 * 
-			 * SETNX set@md5 aaa
-			 * WATCH set@md5
-			 * R = HGET set@md5
-			 * R += returnVal
-			 * MULTI
-			 * HSET set md5 R
-			 * DEL set@md5
-			 * EXEC
-			 */
+		try {
+			String returnVal = rVal.toString();
+			Transaction t1 = jedis.multi();
+			
+			Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+			Response<String> r2 = t1.hget(set,md5);
+			t1.exec();
+			if (r1.get() == 1)
+				return returnVal;
+			else {
+				returnVal = r2.get() + "#" + returnVal;
+				jedis.hset(set, md5, returnVal);
+				return returnVal;
+				/*
+				 * Concurrent modify:
+				 * 
+				 * SETNX set@md5 aaa
+				 * WATCH set@md5
+				 * R = HGET set@md5
+				 * R += returnVal
+				 * MULTI
+				 * HSET set md5 R
+				 * DEL set@md5
+				 * EXEC
+				 */
+			}
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken in storeObject.");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			jedis = null;
+			return "#FAIL:" + e.getMessage();
+		} catch (JedisException e) {
+			jedis = null;
+			return "#FAIL:" + e.getMessage();
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "#FAIL:" + e.getMessage();
 		}
 	}
 	
@@ -230,12 +259,25 @@ public class StorePhoto {
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
 	public byte[] getPhoto(String set, String md5) {
+		reconnectJedis();
 		String info = null;
 		
 		// Step 1: check the local lookup cache
 		info = (String) lookupCache.get(set + "." + md5);
 		if (info == null) {
-			info = jedis.hget(set, md5);
+			try {
+				info = jedis.hget(set, md5);
+			} catch (JedisConnectionException e) {
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e1) {
+				}
+				jedis = null;
+				return null;
+			} catch (JedisException e) {
+				jedis = null;
+				return null;
+			}
 			
 			if(info == null) {
 				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
@@ -322,11 +364,7 @@ public class StorePhoto {
 	public void close() {
 		try {
 			//该变量是静态的,因此这段代码会关闭所有的raf,导致其他线程在写入时异常
-			
-//			for (Map.Entry<String, StoreSetContext> entry : writeContextHash.entrySet()) {
-//				if (entry.getValue().raf != null)
-//					entry.getValue().raf.close();
-//			}
+
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}

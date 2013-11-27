@@ -9,6 +9,7 @@ public class ClientConf {
 	private String serverName;
 	private int serverPort;
 	private int dupNum;			//一个文件存储份数
+	private int sockPerServer;
 	public static enum MODE {
 		DEDUP, NODEDUP,
 	};
@@ -28,6 +29,7 @@ public class ClientConf {
 		this.mode = mode;
 		
 		this.dupNum = dupNum;
+		this.setSockPerServer(5);
 	}
 	
 	public ClientConf() {
@@ -81,5 +83,13 @@ public class ClientConf {
 	
 	public void setDupNum(int dupNum){
 		this.dupNum = dupNum;
+	}
+
+	public int getSockPerServer() {
+		return sockPerServer;
+	}
+
+	public void setSockPerServer(int sockPerServer) {
+		this.sockPerServer = sockPerServer;
 	}
 }

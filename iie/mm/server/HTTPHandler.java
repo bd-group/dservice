@@ -87,6 +87,7 @@ public class HTTPHandler extends AbstractHandler {
 		response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
 		response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
 		response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
+		response.getWriter().println(PhotoServer.getServerInfo(conf));
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
