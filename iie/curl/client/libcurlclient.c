@@ -19,11 +19,9 @@ char wr_buf[MAX_BUF+1];
 int  wr_index; 
 
 int init(char *url);
-char *put(char *key, void *content, size_t len);
 int libcurlget(char *server, char *key, void **buffer, size_t *len);
 
-
-
+static redisReply* reply;
       
 /************************************************************************/
 /* 功能: 初始化,此处的url为服务器的主机名和端口号，形式为主机名：端口号（例 localhost:8080），
@@ -59,31 +57,45 @@ int init(char *url)
     tv.tv_usec = timeout * 1000;  
     //以带有超时的方式链接Redis服务器，同时获取与Redis连接的上下文对象。  
     //该对象将用于其后所有与Redis操作的函数。
-
-    redisContext* c = redisConnect((char*)"ip", iport);  
+    redisContext* c = redisConnect(ip, iport);  
 	if (c->err) {  
 		redisFree(c);  
 		return;  
 	} 
-	//获得ip和port
-	redisReply* r = (redisReply*)redisCommand(c,"smembers mm.active");
-	if(r == NULL)
-	{
-		printf("read from r failed:%d",c->err);
-		freeReplyObject(r);
-		redisFree(c);
-		return -1;
-	}
-	for(i = 0;i	< r->elements;i++)
-	{
-		char *temp = strdup(r->element[i]->str);
-		//char *i = strtok(temp,":");
-		//int j = atoi(strtok(NULL,":"));
-		//直接保存temp，方便以后调用
-		
-		
-	}
-	freeReplyObject(r);
+	//从redis获得需要的内容
+	const char* command = "ZRANGE mm.active.http 0 -1"; 
+	reply = (redisReply*)redisCommand(c,command);
+	//需要注意的是，如果返回的对象是NULL，则表示客户端和服务器之间出现严重错误，必须重新链接。 
+	if (NULL == reply) {  
+          redisFree(c);  
+         return;  
+    }  
+    //不同的Redis命令返回的数据类型不同，在获取之前需要先判断它的实际类型。
+    //字符串类型的set命令的返回值的类型是REDIS_REPLY_STATUS，REDIS_REPLY_ARRAY命令返回一个数组对象。
+	/*
+	if (!(reply->type == REDIS_REPLY_STATUS && strcasecmp(reply->str,"OK") == 0)) {  
+         printf("Failed to execute command[%s].\n",command);  
+         freeReplyObject(reply);  
+         redisFree(c);  
+         return;  
+    }  
+    */
+    
+    if ( reply->type == REDIS_REPLY_ERROR )  
+        printf( "Error: %s\n", reply->str );  
+    else if ( reply->type != REDIS_REPLY_ARRAY )  
+        printf( "Unexpected type: %d\n", reply->type );  
+    else {  
+        for ( i=0; i<reply->elements; ++i ){  
+        	printf( "Result:%d: %s\n", i, reply->element[i]->str );  
+        }  
+    }  
+	printf( "Total Number of Results: %d\n", i ); //测试
+	printf( "Total Server of Results ( only one ): %s\n", reply->element[0]->str ); 
+    printf("Succeed to execute command[%s].\n",command); 
+
+	//由于后面重复使用该变量，所以需要提前释放，否则内存泄漏。  
+    //freeReplyObject(reply);  
 	
 	return 0;
 }  
@@ -157,7 +169,10 @@ int wait(long *ids, int nr, void **buffer, size_t *len)
 
 }
 
-
+/************************************************************************/
+/* 功能: 核心功能
+/* 参数: server key
+/************************************************************************/ 
     
 /* This can use to download images according it's url.   */
       
@@ -211,7 +226,7 @@ size_t write_data( void *buffer, size_t size, size_t nmemb, void *userp )
 	return segsize; 
 } 
 
-int libcurlget(char *server, char *key, void **buffer, size_t *len)
+int libcurlget(char *server,char *key, void **buffer, size_t *len)
 {
     CURL *curl;
     CURLcode res;
@@ -238,12 +253,6 @@ int libcurlget(char *server, char *key, void **buffer, size_t *len)
     {    
 		char url[4096];
 		char str[4096000];
-	
-		//char *server = "192.168.1.239";
-		//int port = 20202;
-		//char *set = "mput";
-		//char *md5 = "aaa";
-		//sprintf(url, "http://%s:%d/get?key=%s@%s", server, port, set, md5);	
 	
 		sprintf(url, "http://%s/get?key=%s", server, key);
     
@@ -273,7 +282,7 @@ int libcurlget(char *server, char *key, void **buffer, size_t *len)
     	//curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);//设置写数据的函数
     	//curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_buffer);//设置写数据的函数
     	
-    	curl_easy_setopt(curl, CURLOPT_WRITEDATA, str);//设置写数据的变量
+    	//curl_easy_setopt(curl, CURLOPT_WRITEDATA, str);//设置写数据的变量
     
     	/* 执行下载 */
 		res = curl_easy_perform(curl);
@@ -291,6 +300,14 @@ int libcurlget(char *server, char *key, void **buffer, size_t *len)
 
 int main(void)
 {
+	char url[] = "192.168.1.221:6379";
+	init(url);
 
+	void *buffer;
+	size_t len;
+	int i = 0;
+	char key[] = "default@206dd46198a06e912e34c9793afb9ce3	";
+	for( i=0; i< reply->elements;i++)
+		libcurlget(reply->element[i]->str,key,&buffer,&len);
 
 }
