@@ -1,6 +1,10 @@
 package iie.mm.client;
 
+import iie.mm.client.ClientConf.RedisInstance;
+import iie.mm.client.PhotoClient.SocketHashEntry;
+
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -24,7 +28,7 @@ public class ClientAPI {
 	private List<String> keyList = new ArrayList<String>();
 	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, Socket> socketHash;
+	private Map<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
 	
 	public ClientAPI(ClientConf conf) {
@@ -35,6 +39,10 @@ public class ClientAPI {
 		pc = new PhotoClient();
 	}
 	
+	/**
+	 * DO NOT USE this function unless if you know what are you doing.
+	 * @return PhotoClient
+	 */
 	public PhotoClient getPc() {
 		return pc;
 	}
@@ -46,40 +54,50 @@ public class ClientAPI {
 	 * @param url redis的主机名:端口
 	 * @return 
 	 */
-	public int init(String url) throws Exception {
+	public int init(String urls) throws Exception {
 		//与jedis建立连接
-		if (url == null) {
+		if (urls == null) {
 			throw new Exception("The url can not be null.");
 		}
-		String[] redishp = url.split(":"); 
-		if (redishp.length != 2)
-			throw new Exception("wrong format of url: " + url);
-		
+		String[] x = urls.split(";");
 		if (pc.getConf() == null) {
 			pc.setConf(new ClientConf());
 		}
-		if (pc.getJedis() == null) {
-			jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
-			pc.setJedis(jedis);
-		} else {
-			// Use the Redis Server in conf
-			jedis = pc.getJedis();
+		pc.getConf().clrRedisIns();
+		for (String url : x) {
+			String[] redishp = url.split(":"); 
+			if (redishp.length != 2)
+				throw new Exception("wrong format of url: " + url);
+			
+			if (pc.getJedis() == null) {
+				jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
+				pc.setJedis(jedis);
+			} else {
+				// Use the Redis Server in conf
+				jedis = pc.getJedis();
+			}
+			pc.getConf().setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
 		}
-		pc.getConf().setRedisHost(redishp[0]);
-		pc.getConf().setRedisPort(Integer.parseInt(redishp[1]));
 		
-		socketHash = new ConcurrentHashMap<String, Socket>();
+		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
-		Set<String> active = jedis.smembers("mm.active");
+		Set<String> active = jedis.zrange("mm.active", 0, -1);
 		if (active != null && active.size() > 0) {
+			String[] aa = active.toArray(new String[0]);
+			for (int i = 0; i < aa.length; i++) {
+				pc.addToServers(i, aa[i]);
+			}
 			for (String s : active) {
 				String[] c = s.split(":");
 				if (c.length == 2) {
 					Socket sock = new Socket();
+					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
 					try {
 						sock.setTcpNoDelay(true);//不要延迟
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
-						socketHash.put(s, sock);
+						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+								new DataOutputStream(sock.getOutputStream()));
+						socketHash.put(s, she);
 					} catch (SocketException e) {
 						e.printStackTrace();
 						continue;
@@ -100,12 +118,13 @@ public class ClientAPI {
 	
 	/**
 	 * 同步写,对外提供的接口
+	 * It is thread-safe!
 	 * @param set
 	 * @param md5
 	 * @param content
 	 * @return		
 	 */
-	public String put(String key, byte[] content) throws IOException, Exception{
+	public String put(String key, byte[] content) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
 		String[] keys = key.split("@");
@@ -113,11 +132,11 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:" + key);
 		String r = null;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-			r = pc.syncStorePhoto(keys[0], keys[1], content, sock);
+			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.syncStorePhoto(keys[0], keys[1], content, she);
 		}
 		index++;
-		if (index >= keyList.size()){
+		if (index >= keyList.size()) {
 			index = 0;
 		}
 		return r;
@@ -138,8 +157,8 @@ public class ClientAPI {
 			throw new  Exception("arguments length mismatch.");
 		String[] r = null;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-			r = pc.mPut(set, md5s, content, sock);
+			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
+			r = pc.mPut(set, md5s, content, she);
 		}
 		index++;
 		if (index >= keyList.size()){
@@ -155,6 +174,7 @@ public class ClientAPI {
 	 * @param content
 	 * @return		
 	 */
+	/*
 	public void iPut(String key, byte[] content)  throws IOException, Exception{
 		if(key == null)
 			throw new Exception("key can not be null.");
@@ -170,24 +190,25 @@ public class ClientAPI {
 			index = 0;
 		}
 	}
-	
+	*/
 	/**
 	 * 
+	 * It is thread-safe
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	public byte[] get(String key) throws Exception {
+	public byte[] get(String key) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
 		String[] keys = key.split("@|#");
 		if (keys.length == 2)
 			return pc.getPhoto(keys[0], keys[1]);
-		else if (keys.length == 8)
+		else if (keys.length == 7)
 			return pc.searchByInfo(key, keys);
-		else if (keys.length % 8 == 0)		//如果是拼接的元信息，分割后长度是8的倍数
+		else if (keys.length % 7 == 0)		//如果是拼接的元信息，分割后长度是7的倍数
 			return pc.searchPhoto(key);
 		else 
-			throw new Exception("wrong format of key:"+key);
+			throw new Exception("wrong format of key:" + key);
 	}
 	
 	/**
@@ -195,6 +216,7 @@ public class ClientAPI {
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
+	/*
 	public int iGet(String key) throws Exception {
 		if(key == null)
 			throw new Exception("key can not be null.");
@@ -212,36 +234,39 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:"+key);
 		
 	}
-	
+	*/
 	/**
 	 * 批量同步取，对外提供的接口
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
+	/*
 	public Map<String, byte[]> mGet(Set<String> keys) throws Exception {
 		for(String key : keys){
 			iGet(key);
 		}
 		return wait(keys);
 	}
-	
+	*/
 	/**
 	 * 批量异步取，对外提供的接口
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
+	/*
 	public int imGet(Set<String> keys) throws Exception {
 		for(String key : keys){
 			iGet(key);
 		}
 		return 1;
 	}
-	
+	*/
 	/**
 	 * 批量异步取，对外提供的接口
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
+	/*
 	public void imPut(String[] keys, byte[][] contents) throws Exception {
 		if(keys.length != contents.length){
 			throw new Exception("keys's length is not the same as contents'slength.");
@@ -250,13 +275,14 @@ public class ClientAPI {
 			iPut(keys[i],contents[i]);
 		}
 	}
-	
+	*/
 	
 	/**
 	 * 从输入流中读取count个字节
 	 * @param count
 	 * @return
 	 */
+	/*
 	public Map<String, byte[]> wait(Set<String> keys) throws Exception {
 		Set<String> key = new HashSet<String>(); 
 		for(String k : keys){
@@ -274,5 +300,5 @@ public class ClientAPI {
 			}
 		}
 		return pc.wait(key);
-	}
+	}*/
 }

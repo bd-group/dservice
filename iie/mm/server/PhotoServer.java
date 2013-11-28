@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Set;
 import java.util.Timer;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +15,8 @@ import org.newsclub.net.unix.AFUNIXServerSocket;
 import org.newsclub.net.unix.AFUNIXSocketAddress;
 
 import org.eclipse.jetty.server.Server;
+
+import redis.clients.jedis.Jedis;
 
 public class PhotoServer {
 	private ServerConf conf;
@@ -55,6 +58,27 @@ public class PhotoServer {
 				pool.shutdown();
 			}
 		}
+	}
+	
+	public static String getServerInfo(ServerConf conf) {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		String r = "";
+		
+		// find all servers
+		Set<String> servers = jedis.zrange("mm.active", 0, -1);
+		r += "\n Total  Servers:";
+		for (String s : servers) {
+			r += " " + s + ",";
+		}
+		// find heartbeated servers
+		servers = jedis.keys("mm.hb.*");
+		r += "\n Active Servers:";
+		for (String s : servers) {
+			r += " " + s.substring(6) + ",";
+		}
+		jedis.quit();
+		
+		return r;
 	}
 	
 	/**

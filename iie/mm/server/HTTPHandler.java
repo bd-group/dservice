@@ -60,7 +60,7 @@ public class HTTPHandler extends AbstractHandler {
 				} else {
 					okResponse(baseRequest, response, content);
 				}
-			} else if (infos.length % 8 == 0) {
+			} else if (infos.length % 7 == 0) {
 				byte[] content = sp.searchByDupInfo(key);
 				if (content == null || content.length == 0) {
 					notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
@@ -87,6 +87,7 @@ public class HTTPHandler extends AbstractHandler {
 		response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
 		response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
 		response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
+		response.getWriter().println(PhotoServer.getServerInfo(conf));
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

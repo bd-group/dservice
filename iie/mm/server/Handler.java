@@ -49,8 +49,9 @@ public class Handler implements Runnable{
 					String set = new String(setmd5content, 0, setlen);
 					String md5 = new String(setmd5content, setlen, md5len);
 					
-					String result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
-					System.out.println("in handler, result:"+result+",lenth:"+result.getBytes().length);
+					String result = null;
+					result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
+
 					if (result == null)
 						dos.writeInt(-1);
 					else {
@@ -119,24 +120,14 @@ public class Handler implements Runnable{
 
 					if (infolen > 0) {
 						String info = new String(readBytes(infolen, dis));		
-//						boolean succ = false;
-//						解析拼接的元信息，返回其中一个读取成功的内容
-//						for(String info : infos.split("#"))
-//						{
-							byte[] content = sp.searchPhoto(info);
-							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
-							if (content != null) {
-								dos.writeInt(content.length);
-								dos.write(content);
-//								succ = true;
-//								break;
-							} else {
-//								continue;
-								dos.writeInt(-1);
-							}
-//						}
-//						if(!succ)
-//							dos.writeInt(-1);
+						byte[] content = sp.searchPhoto(info);
+						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
+						if (content != null) {
+							dos.writeInt(content.length);
+							dos.write(content);
+						} else {
+							dos.writeInt(-1);
+						}
 					} else {
 						dos.writeInt(-1);
 					}
