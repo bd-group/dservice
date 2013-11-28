@@ -9,8 +9,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -61,6 +63,18 @@ public class PhotoClient {
 			}
 		}
 		
+		public boolean probSelected() {
+			if (map.size() > 0)
+				return true;
+			else {
+				// 1/100 prob selected
+				if (new Random().nextInt(100) == 0)
+					return true;
+				else 
+					return false;
+			}
+		}
+		
 		public long getFreeSocket() throws IOException {
 			boolean found = false;
 			long id = -1;
@@ -88,8 +102,15 @@ public class PhotoClient {
 							id = this.addToSocketsAsUsed(socket, new DataInputStream(socket.getInputStream()), 
 										new DataOutputStream(socket.getOutputStream()));
 							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
-						} catch (Exception e) {
+						} catch (SocketException e) {
 							System.out.println("Connect to " + hostname + ":" + port + " failed.");
+							try {
+								Thread.sleep(1000);
+							} catch (InterruptedException e1) {
+							}
+							throw e;
+						} catch (Exception e) {
+							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -161,7 +182,7 @@ public class PhotoClient {
 	};
 	
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
-	private Map<String, String> servers = new HashMap<String, String>();
+	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 	private Jedis jedis = null;
 	
 	public PhotoClient(){
@@ -182,7 +203,7 @@ public class PhotoClient {
 	}
 	
 	public void addToServers(long id, String server) {
-		servers.put(Long.toString(id), server);
+		servers.put(id, server);
 	}
 	
 	public Map<String, SocketHashEntry> getSocketHash() {
@@ -460,7 +481,7 @@ public class PhotoClient {
 		}
 		
 		SocketHashEntry searchSocket = null;
-		String server = servers.get(infos[2]);
+		String server = servers.get(Long.parseLong(infos[2]));
 		if (server == null)
 			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
 		if (socketHash.containsKey(server)) {

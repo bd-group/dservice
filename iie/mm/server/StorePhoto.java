@@ -35,6 +35,20 @@ public class StorePhoto {
 	private Jedis jedis;
 	
 	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
+	
+	public static class RedirectException extends Exception {
+		/**
+		 * serialVersionUID
+		 */
+		private static final long serialVersionUID = 3092261885247728350L;
+		public long serverId;
+		public String info;
+	
+		public RedirectException(long serverId, String info) {
+			this.serverId = serverId;
+			this.info = info;
+		}
+	}
 
 	public class StoreSetContext {
 		public String key;
@@ -159,7 +173,7 @@ public class StorePhoto {
 				rVal.append("1@"); // type
 				rVal.append(set);
 				rVal.append("@");
-				rVal.append(ServerProfile.serverId);
+				rVal.append(ServerConf.serverId);
 				rVal.append("@");
 				rVal.append(ssc.curBlock);
 				rVal.append("@");
@@ -258,7 +272,7 @@ public class StorePhoto {
 	 * @param md5		与storePhoto中的参数md5相对应
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
-	public byte[] getPhoto(String set, String md5) {
+	public byte[] getPhoto(String set, String md5) throws RedirectException {
 		reconnectJedis();
 		String info = null;
 		
@@ -294,13 +308,17 @@ public class StorePhoto {
 	 * @param info		对应storePhoto的type@set@serverid@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
-	public byte[] searchPhoto(String info) {
+	public byte[] searchPhoto(String info) throws RedirectException {
 		long start = System.currentTimeMillis();
 		String[] infos = info.split("@");
 		
 		if (infos.length != 7) {
 			System.out.println("Invalid INFO string: " + info);
 			return null;
+		}
+		if (Long.parseLong(infos[2]) != ServerConf.serverId) {
+			// this request should be send to another server
+			throw new RedirectException(Long.parseLong(infos[2]), info);
 		}
 		String path = infos[6] + "/" + destRoot + infos[1] + "/b" + infos[3];
 		RandomAccessFile readr = null;

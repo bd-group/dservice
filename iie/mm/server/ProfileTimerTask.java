@@ -7,10 +7,12 @@ import java.io.PrintWriter;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Set;
 import java.util.TimerTask;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisException;
 
 public class ProfileTimerTask extends TimerTask {
@@ -48,10 +50,22 @@ public class ProfileTimerTask extends TimerTask {
 			jedis.zadd("mm.active", sid, self);
 		}
 		// reget the sid
-		sid = jedis.zrank("mm.active", self);
-		ServerProfile.serverId = sid;
+		sid = jedis.zscore("mm.active", self).longValue();
+		ServerConf.serverId = sid;
 		System.out.println("Got ServerID " + sid + " for Server " + self);
-
+		
+		// use the same serverID to register in mm.active.http
+		self = conf.getNodeName() + ":" + conf.getHttpPort();
+		jedis.zadd("mm.active.http", sid, self);
+		System.out.println("Register HTTP server " + self + " done.");
+		
+		Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+		if (active != null && active.size() > 0) {
+			for (Tuple t : active) {
+				ServerConf.servers.put((long)t.getScore(), t.getElement());
+				System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+			}
+		}
 		this.period = period;
 	}
 
@@ -78,7 +92,7 @@ public class ProfileTimerTask extends TimerTask {
 		lastDl = dl;
 		lastTs = cur;
 		
-		//server的心跳信息
+		// 发送server的心跳信息
 		try {
 			if (jedis == null)
 				jedis = new RedisFactory(conf).getDefaultInstance();
@@ -86,6 +100,14 @@ public class ProfileTimerTask extends TimerTask {
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
 			pi.sync();
+			
+			// update server list
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					ServerConf.servers.put((long)t.getScore(), t.getElement());
+				}
+			}
 		} catch (Exception e) {
 			jedis = null;
 		}

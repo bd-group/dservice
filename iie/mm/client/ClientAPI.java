@@ -6,6 +6,7 @@ import iie.mm.client.PhotoClient.SocketHashEntry;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -16,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Tuple;
 
 public class ClientAPI {
 	private PhotoClient pc;
@@ -76,14 +78,13 @@ public class ClientAPI {
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
-		Set<String> active = jedis.zrange("mm.active", 0, -1);
+		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
 		if (active != null && active.size() > 0) {
-			String[] aa = active.toArray(new String[0]);
-			for (int i = 0; i < aa.length; i++) {
-				pc.addToServers(i, aa[i]);
+			for (Tuple t : active) {
+				pc.addToServers((long)t.getScore(), t.getElement());
 			}
-			for (String s : active) {
-				String[] c = s.split(":");
+			for (Tuple t : active) {
+				String[] c = t.getElement().split(":");
 				if (c.length == 2) {
 					Socket sock = new Socket();
 					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
@@ -92,7 +93,7 @@ public class ClientAPI {
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
 						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
 								new DataOutputStream(sock.getOutputStream()));
-						socketHash.put(s, she);
+						socketHash.put(t.getElement(), she);
 					} catch (SocketException e) {
 						e.printStackTrace();
 						continue;
@@ -128,7 +129,17 @@ public class ClientAPI {
 		String r = null;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
-			r = pc.syncStorePhoto(keys[0], keys[1], content, she);
+			if (she.probSelected())
+				try {
+					r = pc.syncStorePhoto(keys[0], keys[1], content, she);
+				} catch (SocketException e) {
+					i--;
+					index++;
+				}
+			else {
+				i--;
+				index++;
+			}
 		}
 		index++;
 		if (index >= keyList.size()) {

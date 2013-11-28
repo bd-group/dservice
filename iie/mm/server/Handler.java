@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import iie.mm.server.StorePhoto.RedirectException;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -94,7 +96,11 @@ public class Handler implements Runnable{
 //						解析拼接的元信息，返回其中一个读取成功的内容
 //						for(String info : infos.split("#"))
 //						{
-							byte[] content = sp.searchPhoto(infos);
+							byte[] content = null;
+							try {
+								content = sp.searchPhoto(infos);
+							} catch (RedirectException e) {
+							}
 							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
 							if (content != null) {
 								dos.writeInt(content.length);
