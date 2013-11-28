@@ -383,6 +383,7 @@ public class StorePhoto {
 	 * 获得图片内容
 	 * @param info		对应storePhoto的type@set@node@port@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
+	 * 加入判断是否是本机的图片，然后再想想处理。。。
 	 */
 	public byte[] searchPhoto(String info) {
 		long start = System.currentTimeMillis();

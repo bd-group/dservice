@@ -34,6 +34,8 @@ MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
 MM_CP = $(shell pwd)/lib/jedis-2.1.0.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar
 
+MM_JARS = $(shell pwd)/lib/jedis-2.1.0.jar $(shell pwd)/lib/junixsocket-1.3.jar $(shell pwd)/lib/sigar.jar $(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar $(shell pwd)/lib/servlet-api-2.5.jar
+
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
 IIE = iie
@@ -70,7 +72,7 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
 	@$(ECHO) -e " " JAR"\t" devmap.jar
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(MM_JARS)
 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@

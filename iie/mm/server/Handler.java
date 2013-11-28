@@ -50,11 +50,11 @@ public class Handler implements Runnable{
 					String md5 = new String(setmd5content, setlen, md5len);
 					
 					String result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
-
+					System.out.println("in handler, result:"+result+",lenth:"+result.getBytes().length);
 					if (result == null)
 						dos.writeInt(-1);
 					else {
-						dos.writeInt(result.length());
+						dos.writeInt(result.getBytes().length);
 						dos.write(result.getBytes());
 					}
 					dos.flush();
