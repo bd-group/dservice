@@ -345,9 +345,9 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she, boolean nodedup) throws IOException {
 		refreshJedis();
-		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
+		if (conf.getMode() == ClientConf.MODE.NODEDUP || nodedup) {
 			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;

@@ -127,11 +127,16 @@ public class ClientAPI {
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);
 		String r = null;
+		boolean nodedup = false;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			if (she.probSelected())
 				try {
-					r = pc.syncStorePhoto(keys[0], keys[1], content, she);
+					r = pc.syncStorePhoto(keys[0], keys[1], content, she, nodedup);
+					if (r.split("#").length < pc.getConf().getDupNum()) {
+						nodedup = true;
+					} else 
+						nodedup = false;
 				} catch (SocketException e) {
 					i--;
 					index++;
@@ -156,7 +161,7 @@ public class ClientAPI {
 	public byte[] get(String key) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
-		String[] keys = key.split("@");
+		String[] keys = key.split("@|#");
 		if (keys.length == 2)
 			return pc.getPhoto(keys[0], keys[1]);
 		else if (keys.length == 7)

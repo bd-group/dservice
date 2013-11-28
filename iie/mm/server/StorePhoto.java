@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.net.ConnectException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -13,7 +12,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.Random;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.Response;
 import redis.clients.jedis.exceptions.JedisConnectionException;
@@ -293,7 +291,7 @@ public class StorePhoto {
 				return null;
 			}
 			
-			if(info == null) {
+			if (info == null) {
 				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
 				return null;
 			} else {
@@ -301,16 +299,31 @@ public class StorePhoto {
 				lookupCache.put(set + "." + md5, info);
 			}
 		}
-		return searchPhoto(info);
+		// split if it is complex uri
+		String savedInfo = null;
+		Long savedId = -1L;
+		for (String i : info.split("#")) {
+			String[] is = i.split("@");
+			
+			if (Long.parseLong(is[2]) == ServerConf.serverId)
+				return searchPhoto(i, is);
+			else {
+				savedInfo = i;
+				savedId = Long.parseLong(is[2]);
+			}
+		}
+
+		throw new RedirectException(savedId, savedInfo);
 	}
 	/**
 	 * 获得图片内容
 	 * @param info		对应storePhoto的type@set@serverid@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
-	public byte[] searchPhoto(String info) throws RedirectException {
+	public byte[] searchPhoto(String info, String[] infos) throws RedirectException {
 		long start = System.currentTimeMillis();
-		String[] infos = info.split("@");
+		if (infos == null)
+			infos = info.split("@");
 		
 		if (infos.length != 7) {
 			System.out.println("Invalid INFO string: " + info);
