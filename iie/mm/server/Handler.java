@@ -86,19 +86,50 @@ public class Handler implements Runnable{
 						WriteThread wt = new WriteThread(conf,set, sq);
 						new Thread(wt).start();
 					}
+				} else if(header[0] == ActionType.MPUT){
+					int setlen = header[1];
+					int n = dis.readInt();		
+					String set = new String(readBytes(setlen, dis));
+					String[] md5s = new String[n];
+					int[] conlen = new int[n];
+					byte[][] content = new byte[n][];
+					for(int i = 0; i<n;i++)
+					{
+						md5s[i] = new String(readBytes(dis.readInt(), dis)); 
+					}
+					for(int i = 0;i<n;i++)
+						conlen[i] = dis.readInt();
+					for(int i = 0;i<n;i++)
+					{
+						content[i] = readBytes(conlen[i], dis);
+//						System.out.println("in handler"+content[i].length);
+					}
+					
+					String[] r = sp.mstorePhoto(set,md5s,content);
+					if(r == null)
+						dos.writeInt(-1);
+					else
+					{
+						for(int i = 0;i<n;i++)
+						{
+							dos.writeInt(r[i].getBytes().length);
+							dos.write(r[i].getBytes());
+						}
+					}
+					dos.flush();
 				} else if (header[0] == ActionType.SEARCH) {
 					//这样能把byte当成无符号的用，拼接的元信息长度最大可以255
 					int infolen = header[1]&0xff;		
 
 					if (infolen > 0) {
-						String infos = new String(readBytes(infolen, dis));		
+						String info = new String(readBytes(infolen, dis));		
 //						boolean succ = false;
 //						解析拼接的元信息，返回其中一个读取成功的内容
 //						for(String info : infos.split("#"))
 //						{
 							byte[] content = null;
 							try {
-								content = sp.searchPhoto(infos);
+								content = sp.searchPhoto(info);
 							} catch (RedirectException e) {
 							}
 							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
@@ -118,6 +149,28 @@ public class Handler implements Runnable{
 						dos.writeInt(-1);
 					}
 					dos.flush();
+				} else if(header[0] == ActionType.IGET){
+					int infolen = header[1]&0xff;
+					long id = dis.readLong();
+					if(infolen > 0)
+					{
+						String info = new String( readBytes(infolen, dis));
+						byte[] content = null;
+						try {
+							content = sp.searchPhoto(info);
+						} catch (RedirectException e) {
+						}
+						if (content != null) {
+							dos.writeLong(id);
+							dos.writeInt(content.length);
+							dos.write(content);
+						} else {
+							dos.writeInt(-1);
+						}
+					}
+					else {
+						dos.writeInt(-1);
+					}
 				} else if (header[0] == ActionType.DELSET) {
 					String set = new String(readBytes(header[1], dis));
 

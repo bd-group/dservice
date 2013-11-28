@@ -9,54 +9,29 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#define RHOST "127.0.0.1"		//这个参数应该怎么传进来呢。。。
-#define RPORT 6379
+//编译时要加上-l hiredis
 
-#define LPORT 11111
-#define LHOST "127.0.0.1"
 
 #define SYNCSTORE 1
 #define SEARCH 2
 #define ASYNCSTORE 4
 #define SERVERINFO 5
 
-
-
-int connectToRedis();
-char* mmsearchPhoto(char* info,int* length);
-char* mmgetPhoto(char* set,char* md5,int* length);
-
-void  inttochars(int num,char* chars);
 redisContext* rc = NULL;		//redis连接的上下文
-int syncStoreSock = -1;
-int asyncStoreSock = -1;
 
+int searchByinfo(char *info,void **buf,size_t* length);
+int getPhoto(char* set,char* md5,void **buf,size_t* length);
+int searchByInfo(char *info,void **buf,size_t* length);
 
-//在读取图片前要先连接redis
-int connectToRedis()
-{
-	
-	int timeout = 10000;
-	struct timeval tv;
-	tv.tv_sec = timeout / 1000;
-    tv.tv_usec = timeout * 1000;
-     //以带有超时的方式链接Redis服务器，同时获取与Redis连接的上下文对象。
-     //该对象将用于其后所有与Redis操作的函数。
-    rc = redisConnect(RHOST, RPORT);
-    if (rc->err) {
-         redisFree(rc);
-         printf("can't connect to redis at %s:%d\n",RHOST, RPORT);
-         return -1;
-    }
-    return 1;
-}
+void inttochars(int num,char* chars);
+int countChInStr(char* str,char c);
 
 //get photo by set and md5
 //return addr of the content, or NULL if any exception occurs.
 
 //(redisReply)When an error occurs, the return value is NULL and the err field in the context will be set (see section on Errors). 
 //Once an error is returned the context cannot be reused and you should set up a new connection.
-char* mmgetPhoto(char* set,char* md5,int* length)
+int getPhoto(char* set,char* md5,void **buf,size_t* length)
 {
 	redisReply* reply = redisCommand(rc,"hget %s %s",set,md5);
 	if(reply == NULL)
@@ -64,135 +39,129 @@ char* mmgetPhoto(char* set,char* md5,int* length)
 		printf("read from redis failed:%d",rc->err);
 		freeReplyObject(reply);
 		redisFree(rc);
-        return NULL;
+        return -1;
 	}
-	printf("info,%s\n",reply->str);
+	//printf("in getphoto info,%s\n",reply->str);
 	if(reply->type == REDIS_REPLY_NIL)
 	{
 		printf("%s.%s does not exist on redis server.",set,md5);
-		return NULL;
+		return -1;
 	}
 	else
-		return mmsearchPhoto(reply->str,length);
+		return searchPhoto(reply->str,buf,length);
 }
 
-char* mmsearchPhoto(char* info,int* length)
+
+int searchByInfo(char *info,void **buf,size_t* length)
 {
 	//解析info
 	char *temp = strdup(info);		//strtok函数分割字符串时会改变输入字符串的内容，所以要先复制一份
 	//printf("in mm\n");
-	char *token=strtok(temp,"#");
+	char *token=strtok(temp,"@");
 	int i = 1;
-	char *nodeName = (char*)malloc(20);
+	char *nodename ,*portp;
 	int port;
     while(token!=NULL){
+    //printf("in searchbyinfo: %s\n",token);
         if(i == 3)
-        	nodeName = token;
+        	nodename = token;
         if(i == 4)
-        	port = atoi(token);
-        token=strtok(NULL,"#");
+        	portp = token;
+        token=strtok(NULL,"@");
         if(token != NULL)
         	i++;
     }
-    //
     if(i != 8)
     {
-    	printf("Invalid INFO string, info length is %d\n",i);
-    	return NULL;
+    	printf("Invalid INFO string:%s.\n",info);
+    	return -1;
 	}
-	
-	//建立连接
-	int searchSock = socket(AF_INET,SOCK_STREAM,0);
-	if(searchSock == -1)
+	char *nodeport = (char*)malloc(strlen(nodename)+strlen(portp)+2);
+	strcpy(nodeport,nodename);
+	strcat(nodeport,":");
+	strcat(nodeport,portp);
+	int sock = hash_get(nodeport);
+	if(sock == -1)
 	{
-		printf("调用socket函数建立socket描述符出错！\n");
-		return NULL;
-	}
-	
-	struct hostent *hptr = gethostbyname(nodeName);		//把主机名转换一下，不能直接用主机名建立连接
-	if(hptr == NULL)
-	{
-		printf("resolve nodename:%s failed!\n",nodeName);
-		return NULL;
-	}
-	struct sockaddr_in dest_addr;
-	dest_addr.sin_family=AF_INET;/*hostbyteorder*/
-	dest_addr.sin_port=htons(port);/*short,network byte order*/
-	//dest_addr.sin_addr.s_addr=inet_addr(nodeName);			//zhaoyang-pc连不上
-	dest_addr.sin_addr.s_addr = ((struct in_addr *)(hptr->h_addr))->s_addr;
-	bzero(&(dest_addr.sin_zero),8);/*zero the rest of the struct*/
-	int cr = connect(searchSock,(struct sockaddr*)&dest_addr,sizeof(struct sockaddr));	
-	//printf("nodeName:%s,port:%d\n",nodeName,port);
-	if(cr == -1)	
-	{
-		printf("connect to server %s:%d failed\n",nodeName,port);
-		return NULL;
+		printf("no connection for established with server:%s\n",nodeport);
+		free(nodeport);
+		return -1;
 	}
 	
 	char header[4] = {(char)SEARCH,(char)strlen(info)};
 	//printf("strlen:%d,%s\n",strlen(info),info);
-	send_bytes(searchSock,header,4);
-	send_bytes(searchSock,info,strlen(info));
+	send_bytes(sock,header,4);
+	send_bytes(sock,info,strlen(info));
 	
-	int count = recv_int(searchSock);		
+	int count = recv_int(sock);		
 	if(count < 0)
 	{
-		return NULL;
+		return -1;
 	}
-	printf("count:%d\n",count);			
-	char* buf = (char*)malloc(count);
-	*length = count;
+	//printf("in searchbyinfo count:%d\n",count);			
+	*buf = (char*)malloc(count);
+	//printf("in searchbyinfo *buf :%ld\n",*buf);
+	*length = (size_t)count;
 	if (count >= 0) {
-		recv_bytes(searchSock,buf, count);
+		recv_bytes(sock,*buf, count);
 		
 	} else {
 		printf("Internal error in mm server.\n");
-		return NULL;
+		return -1;
 	}
 	
 	//strdup()会先用maolloc()配置与参数s 字符串相同的空间大小, 
 	//然后将参数s 字符串的内容复制到该内存地址, 然后把该地址返回. 该地址最后可以利用free()来释放.
 	free(temp);		
-	return buf;
+	free(nodeport);
+	return 1;
+}
+
+//传过来的info可能是包含副本信息的，这里的info必须是char[]类型的
+int searchPhoto(char* infos,void **buf,size_t* length)
+{
+	int n = countChInStr(infos,'#');
+	if(n == 0)
+		return searchByInfo(infos,buf,length);
+	else
+	{
+		//在searchbyinfo里面调用了strtok来分割字符串,这里不能再用，使用另一种方法分割字符串
+		char *p = rindex(infos,'#');
+		while(p != 0)
+		{
+			printf("in searchphoto: %s\n",p);
+			int r = searchByInfo(p+1,buf,length);
+			if(r == 1)
+			{
+				return 1;
+			}
+			else
+			{
+    			*p = '\0';
+				p = rindex(infos, '#');
+				continue;
+			}
+		}	
+	}
+	
+	return searchByInfo(infos,buf,length);
 }
 
 //param length is the length of content
-char* syncStorePhoto(char* set,char* md5,char* content,int length)
+char* syncStorePhoto(char* set,char* md5,void* content,size_t length,int sock)
 {
-	if(syncStoreSock == -1)
-	{
-		syncStoreSock = socket(AF_INET,SOCK_STREAM,0);
-		if(syncStoreSock == -1)
-		{
-			printf("调用socket函数建立socket描述符出错！\n");
-			return NULL;
-		}
-	}
-	
-	struct sockaddr_in dest_addr;
-	dest_addr.sin_family=AF_INET;/*hostbyteorder*/
-	dest_addr.sin_port=htons(LPORT);/*short,network byte order*/
-	dest_addr.sin_addr.s_addr=inet_addr(LHOST);			
-	bzero(&(dest_addr.sin_zero),8);/*zero the rest of the struct*/
-	int cr = connect(syncStoreSock,(struct sockaddr*)&dest_addr,sizeof(struct sockaddr));	
-	//printf("nodeName:%s,port:%d\n",nodeName,port);
-	if(cr == -1)	
-	{
-		printf("connect to server %s:%d failed\n",LHOST,LPORT);
-		return NULL;
-	}
 	
 	//action,set,md5,content的length写过去
 	char header[4] = {(char)SYNCSTORE,(char)strlen(set),(char)strlen(md5)};
-	send_bytes(syncStoreSock,header,4);
-	send_int(syncStoreSock,length);
+	send_bytes(sock,header,4);
+	send_int(sock,length);
 	//set,md5,content的实际内容写过去
-	send_bytes(syncStoreSock,set,strlen(set));
-	send_bytes(syncStoreSock,md5,strlen(md5));
-	send_bytes(syncStoreSock,content,length);
+	send_bytes(sock,set,strlen(set));
+	send_bytes(sock,md5,strlen(md5));
+	send_bytes(sock,content,length);
 	
 	//接收结果
-	int count = recv_int(syncStoreSock);
+	int count = recv_int(sock);
 	if(count == -1)
 	{
 		redisReply* reply = redisCommand(rc,"hget %s %s",set,md5);
@@ -205,8 +174,10 @@ char* syncStorePhoto(char* set,char* md5,char* content,int length)
 		}
 		return reply->str;
 	}
-	char* result = (char*)malloc(count);
-	if(recv_bytes(syncStoreSock,result,count) == 1)
+	printf("sync store:%d\n",count);
+	char* result = (char*)malloc(count+1);
+	*(result+count) = '\0';		//还得给字符串留个结尾
+	if(recv_bytes(sock,result,count) == 1)
 	{
 		if(result[0] == '#')
 		{
@@ -220,84 +191,31 @@ char* syncStorePhoto(char* set,char* md5,char* content,int length)
 
 }
 
-void asyncStorePhoto(char* set,char* md5,char* content,int length)
+void asyncStorePhoto(char* set,char* md5,char* content,int length,int sock)
 {
-	if(asyncStoreSock == -1)
-	{
-		asyncStoreSock = socket(AF_INET,SOCK_STREAM,0);
-		if(asyncStoreSock == -1)
-		{
-			printf("调用socket函数建立socket描述符出错！\n");
-			return ;
-		}
-	}
-	
-	struct sockaddr_in dest_addr;
-	dest_addr.sin_family=AF_INET;/*hostbyteorder*/
-	dest_addr.sin_port=htons(LPORT);/*short,network byte order*/
-	dest_addr.sin_addr.s_addr=inet_addr(LHOST);			
-	bzero(&(dest_addr.sin_zero),8);/*zero the rest of the struct*/
-	int cr = connect(asyncStoreSock,(struct sockaddr*)&dest_addr,sizeof(struct sockaddr));	
-	//printf("nodeName:%s,port:%d\n",nodeName,port);
-	if(cr == -1)	
-	{
-		printf("connect to server %s:%d failed\n",LHOST,LPORT);
-		return ;
-	}
 	
 	//action,set,md5,content的length写过去
 	char header[4] = {(char)SYNCSTORE,(char)strlen(set),(char)strlen(md5)};
-	send_bytes(asyncStoreSock,header,4);
-	send_int(asyncStoreSock,length);
+	send_bytes(sock,header,4);
+	send_int(sock,length);
 	//set,md5,content的实际内容写过去
-	send_bytes(asyncStoreSock,set,strlen(set));
-	send_bytes(asyncStoreSock,md5,strlen(md5));
-	send_bytes(asyncStoreSock,content,length);
+	send_bytes(sock,set,strlen(set));
+	send_bytes(sock,md5,strlen(md5));
+	send_bytes(sock,content,length);
 	
 }
 
-void stest()
+//计算字符串str中包含几个字符c
+int countChInStr(char* str,char c)
 {
-	FILE *fp = fopen("/home/zhaoyang/photo/psb2.gif","rb");
-	//curpos = ftell(stream); /* 得到当前的位置，即偏移量 *///取得当前文件指针位置,可能已经移动了文件指针
-   	fseek(fp, 0L, SEEK_END);     /* 从文件尾位置向前移动0L    *///移动到文件的结尾
-   	int length = ftell(fp);           //获得文件大小
-   	char* content = (char*)malloc(length);
-   	fseek(fp, 0, SEEK_SET); /* 回到curpos定位的位置                 */ 
-   	fread(content,1,length,fp);
-	printf("file length:%d,info returned:%s\n",length,syncStorePhoto("st","2",content,length));
-	//asyncStorePhoto("st","2",content,length);
-}
-
-void gtest()
-{
-	//int n = 1;
-	//char *p = (char*)malloc(n);
-	char info[] = "1#loc#zhaoyang-pc#11111#0#7150496#685257#.";
-	
-	char a[] = "st",b[] = "2";
-	
-	int count;
-	char* content = mmgetPhoto(a,b,&count);	
-	
-	//char* content = mmsearchPhoto(info,&count);
-	if(content == NULL) return ;
-	FILE *fp = fopen("abc","wb");
-	fwrite(content,1,count,fp);
-	fclose(fp);
-}
-
-int main()
-{
-	if(connectToRedis() == -1)
+	int n = 0;
+	for(;*str != '\0';str++)
 	{
-		return -1;
+		if(*str == c)
+			n++;
 	}
-	//stest();
-	gtest();
+	return n;
 }
-
-
 
 int recv_int(int sockfd) 
 {
