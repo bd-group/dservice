@@ -69,7 +69,7 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@CLASSPATH=$(CP) javac -d build $(IIE)/metastore/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
-	@$(ECHO) -e " " JAR"\t" devmap.jar
+	@$(ECHO) -e " " JAR"\t" iie.jar
 	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class
 
 $(MSCLI) : $(IIE)/metastore/*.java

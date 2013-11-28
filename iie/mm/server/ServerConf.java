@@ -1,13 +1,10 @@
 package iie.mm.server;
 
-import java.io.BufferedReader;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import redis.clients.jedis.Jedis;
@@ -41,6 +38,9 @@ public class ServerConf {
 	private int flush_interval = DEFAULT_FLUSH_INTERVAL;
 	private int reqnr_to_flush = DEFAULT_REQNR_TO_FLUSH;
 	
+	public static long serverId = -1l;
+	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
+		
 	private Set<String> storeArray = new HashSet<String>();
 
 	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, int blockSize, int period, int httpPort) throws Exception {
@@ -172,5 +172,5 @@ public class ServerConf {
 	public void setStoreArray(Set<String> storeArray) {
 		this.storeArray = storeArray;
 	}
-
+	
 }
