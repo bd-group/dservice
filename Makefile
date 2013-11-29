@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-10-18 14:34:59 macan>
+# Time-stamp: <2013-11-29 21:46:46 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -36,13 +36,24 @@ MM_CP = $(shell pwd)/lib/jedis-2.2.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
+MMCC = build/libmmcc.so
+
 IIE = iie
 MSCLI = mscli
 
 OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class
 
-all: $(OBJS) $(IIE) $(MSCLI)	
+all: $(OBJS) $(IIE) $(MSCLI)
 	@$(ECHO) -e "Build OK."
+
+mmcc : $(MMCC)
+
+$(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
+	@$(ECHO) -e " " CC"\t" $@
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/client.c -o build/client.o
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/clientapi.c -o build/clientapi.o
+	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
+	@$(GCC) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@

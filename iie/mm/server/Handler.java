@@ -143,6 +143,8 @@ public class Handler implements Runnable{
 				sp.close();
 		} catch (IOException e) {
 			e.printStackTrace();
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
 	}
 	

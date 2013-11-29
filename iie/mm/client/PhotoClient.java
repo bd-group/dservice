@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import redis.clients.jedis.Jedis;
@@ -27,6 +28,7 @@ public class PhotoClient {
 	public static class SocketHashEntry {
 		String hostname;
 		int port, cnr;
+		AtomicInteger xnr = new AtomicInteger(0);
 		Map<Long, SEntry> map;
 		AtomicLong nextId = new AtomicLong(0);
 		
@@ -93,9 +95,10 @@ public class PhotoClient {
 				}
 	
 				if (!found) {
-					if (map.size() < cnr) {
+					if (map.size() + xnr.get() < cnr) {
 						// do connect now
 						Socket socket = new Socket();
+						xnr.getAndIncrement();
 						try {
 							socket.connect(new InetSocketAddress(this.hostname, this.port));
 							socket.setTcpNoDelay(true);
@@ -103,6 +106,7 @@ public class PhotoClient {
 										new DataOutputStream(socket.getOutputStream()));
 							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
 						} catch (SocketException e) {
+							xnr.getAndDecrement();
 							System.out.println("Connect to " + hostname + ":" + port + " failed.");
 							try {
 								Thread.sleep(1000);
@@ -110,6 +114,7 @@ public class PhotoClient {
 							}
 							throw e;
 						} catch (Exception e) {
+							xnr.getAndDecrement();
 							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
@@ -117,6 +122,7 @@ public class PhotoClient {
 							}
 							throw new IOException(e.getMessage());
 						}
+						xnr.getAndDecrement();
 					} else {
 						do {
 							try {
