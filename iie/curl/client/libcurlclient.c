@@ -13,7 +13,7 @@
 #pragma comment ( lib, "winmm.lib" )
 #pragma comment ( lib, "wldap32.lib" )
 
- #define MAX_BUF 	 65536 
+#define MAX_BUF  6553600
 
 char wr_buf[MAX_BUF+1]; 
 int  wr_index; 
@@ -169,145 +169,226 @@ int wait(long *ids, int nr, void **buffer, size_t *len)
 
 }
 
+
 /************************************************************************/
 /* 功能: 核心功能
-/* 参数: server key
-/************************************************************************/ 
+/* 参数:
+/************************************************************************/
     
-/* This can use to download images according it's url.   */
-      
-size_t write_data_test(void *buffer, size_t size, size_t nmemb, FILE *stream) 
-{  
-    size_t written;  
-    written = fwrite(buffer, size, nmemb, stream);  
-    return written;  
+/* This can use to download images according it's url.  */
+
+size_t write_data_test(void *buffer, size_t size, size_t nmemb, FILE *stream)
+{
+    size_t written;
+    written = fwrite(buffer, size, nmemb, stream);
+    return written;
 }
 
+/* Write data callback function*/
 /*
-static void *myrealloc(void *ptr, size_t size)
-{
-	if(ptr)
-   	 	return realloc(ptr, size);
-	else
-    	return malloc(size);
-} 
-static size_t write_buffer(void *ptr, size_t size, size_t nmemb, void *data)
-{
-    size_t realsize = size * nmemb;
-  	mem->memory = (char *)myrealloc(mem->memory, mem->size + realsize + 1);
-  	if (mem->memory) 
-  	{
-    memcpy(&(mem->memory[mem->size]), ptr, realsize);
-    mem->size += realsize;
-    mem->memory[mem->size] = 0;
-  	}
-  	return realsize;
-}
+    CURLOPT_WRITEFUNCTION //设置回调函数
+    回调函数原型为: size_t function( void *buffer, size_t size, size_t nmemb, void *userp);
+    函数将在libcurl接收到数据后被调用。
+    void *buffer是下载回来的数据.void *userp是用户指针, 用户通过这个指针传输自己的数据.
+    CURLOPT_WRITEDATA 设置回调函数中的void *userp指针的来源。
 */
-
-/* Write data callback function*/ 
-
-size_t write_data( void *buffer, size_t size, size_t nmemb, void *userp ) 
-{ 
-	int segsize = size * nmemb; 
-	/* Check to see if this data exceeds the size of our buffer.*/ 
-	if ( wr_index + segsize > MAX_BUF ) 
-	{ 
-		*(int *)userp = 1; 
-		return 0; 
-	} 
-	/* Copy the data from the curl buffer into our buffer */ 
-	memcpy( (void *)&wr_buf[wr_index], buffer, (size_t)segsize ); 
-	/* Update the write index */ 
-	wr_index += segsize; 
-	/* Null terminate the buffer */ 
-	wr_buf[wr_index] = 0; 
-	/* Return the number of bytes received, indicating to curl that all is okay */ 
-	return segsize; 
-} 
+size_t write_data( void *buffer, size_t size, size_t nmemb, void *userp )
+{
+    int segsize = size * nmemb;
+    /* Check to see if this data exceeds the size of our buffer.*/
+    if ( wr_index + segsize > MAX_BUF )
+    {
+        *(int *)userp = 1;
+        return 0;
+    }
+    /* Copy the data from the curl buffer into our buffer */
+    memcpy( (void *)&wr_buf[wr_index], buffer, (size_t)segsize );
+    /* Update the write index */
+    wr_index += segsize;
+    /* Null terminate the buffer */
+    wr_buf[wr_index] = 0;
+    /* Return the number of bytes received, indicating to curl that all is okay */
+    return segsize;
+}
 
 int libcurlget(char *server,char *key, void **buffer, size_t *len)
 {
     CURL *curl;
     CURLcode res;
-    
-	int wr_error; 
-	wr_error = 0; 
-	wr_index = 0; 
-	
+    int wr_error;
+    wr_error = 0;
+    wr_index = 0;
+
     /* 初始化libcurl */
     CURLcode code;
     char *error = "error";
     curl = curl_easy_init();
-    if (!curl) 
-    { 
-    	printf("couldn't init curl\n"); 
-    	return 0; 
-	} 
+    if (!curl)
+    {
+        printf("couldn't init curl\n");
+        return 0;
+    }
     if (curl == NULL)
     {
         printf( "Failed to create curl connection\n");
         return -1;
-    }    
-    if(curl) 
-    {    
-		char url[4096];
-		char str[4096000];
-	
-		sprintf(url, "http://%s/get?key=%s", server, key);
-    
-    	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);  
-    	code = curl_easy_setopt(curl, CURLOPT_URL, url);
-   		if (code != CURLE_OK)
-    	{
-        	printf("Failed to set URL [%s]\n", error);
-        	return -1;
-   	    }
-    	code = curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-    	if (code != CURLE_OK)
-   		{
-        	printf( "Failed to set redirect option [%s]\n", error );
-        	return -1;
-    	}
+    }
+    if(curl)
+    {
+        char url[4096];
+        char str[4096000];
+        sprintf(url, "http://%s/get?key=%s", server, key);
+
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        code = curl_easy_setopt(curl, CURLOPT_URL, url);
+        if (code != CURLE_OK)
+        {
+            printf("Failed to set URL [%s]\n", error);
+            return -1;
+        }
+        code = curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
+        if (code != CURLE_OK)
+        {
+            printf( "Failed to set redirect option [%s]\n", error );
+            return -1;
+        }
     	
-    	/* 核心功能实现 */
-    	/* Tell curl the URL of the file we're going to retrieve */ 
-    	curl_easy_setopt(curl, CURLOPT_URL, url);
-		/* Tell curl that we'll receive data to the function write_data, and also provide it with a context pointer for our error return. */ 
-		curl_easy_setopt( curl, CURLOPT_WRITEDATA, (void *)&wr_error ); 
-		curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, write_data );  
+        /* 核心功能实现 */
+        /* Tell curl the URL of the file we're going to retrieve */
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        /* Tell curl that we'll receive data to the function write_data, and also provide it with a context pointer for our error return. */
+        curl_easy_setopt( curl, CURLOPT_WRITEDATA, (void *)&wr_error );
+        curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, write_data );
+
+        //CURLOPT_FOLLOWLOCATION 设置重定位URL，设置支持302重定向
+        //将CURLOPT_VERBOSE属性设置为1，libcurl会输出通信过程中的一些细节
+        curl_easy_setopt( curl, CURLOPT_VERBOSE , 1 ); 
+        //如果使用的是http协议，请求头/响应头也会被输出。将CURLOPT_HEADER设为1，这些头信息将出现在消息的内容中
+        curl_easy_setopt( curl, CURLOPT_HEADER , 1 ); 
 		        	
-		//curl_easy_setopt(curl, CURLOPT_URL, filename); //设置下载地址
-   	 	//curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3);//设置超时时间
-    	//curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);//设置写数据的函数
-    	//curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_buffer);//设置写数据的函数
+        //curl_easy_setopt(curl, CURLOPT_URL, filename); //设置下载地址
+        //curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3);//设置超时时间
+        //curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);//设置写数据的函数
+        //curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_buffer);//设置写数据的函数
     	
-    	//curl_easy_setopt(curl, CURLOPT_WRITEDATA, str);//设置写数据的变量
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, str);//设置写数据的变量
     
-    	/* 执行下载 */
-		res = curl_easy_perform(curl);
-		/* 输出 */
-		printf( "res = %d (write_error = %d)\n", res, wr_error ); 
-		if ( res == 0 ) printf( "%s\n", wr_buf ); 
-   		/* 清理内存，释放curl资源 */
-   		curl_easy_cleanup(curl);
+        /* 执行下载 */
+        res = curl_easy_perform(curl);
+        /* 输出 */
+        printf( "res = %d (write_error = %d)\n", res, wr_error );
+        if ( res == 0 ) printf( "%s\n", wr_buf );
+        *buffer = wr_buf;
+        /* 清理内存，释放curl资源 */
+        curl_easy_cleanup(curl);
    		
-    }	
-    
-    return 0;     
-    
+    }
+    return 0;
 }
+
+
+/************************************************************************/
+/* 功能: 核心功能
+/* 参数:
+/************************************************************************/
+
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+//添加一个全局变量
+struct MemoryStruct chunk;
+static void *myrealloc(void *ptr, size_t size)
+{
+/* There might be a realloc() out there that doesn't like reallocing
+     NULL pointers, so we take care of it here */
+    if(ptr)
+        return realloc(ptr, size);
+    else
+        return malloc(size);
+}
+static size_t
+WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data)
+{
+    size_t realsize = size * nmemb;
+    //我们给定了一个足够大的内存，不需要重新申请
+    struct MemoryStruct *mem = (struct MemoryStruct *)data;
+    mem->memory = (char *)myrealloc(mem->memory, mem->size + realsize + 1);
+    if (mem->memory) {
+        memcpy(&(mem->memory[mem->size]), ptr, realsize);
+        mem->size += realsize;
+        mem->memory[mem->size] = 0;
+    }
+    return realsize;
+}
+
+//int main(int argc, char **argv)
+int getFileInBuffer(char *server,char *key,char * buffer)
+{
+    CURL *curl_handle;
+    //取消原来的注释
+    //struct MemoryStruct chunk;
+    //根据传递的buffer进行初始化
+    chunk.memory=NULL; /* we expect realloc(NULL, size) to work */
+    chunk.size = 0;    /* no data at this point */
+    curl_global_init(CURL_GLOBAL_ALL);
+    /* init the curl session */
+    curl_handle = curl_easy_init();
+    /* specify URL to get */
+    char url[4096];
+    sprintf(url, "http://%s/get?key=%s", server, key);
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    /* send all data to this function */
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    /* we pass our 'chunk' struct to the callback function */
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+    /* some servers don't like requests that are made without a user-agent field, so we provide one */
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+    /* get it! */
+    curl_easy_perform(curl_handle);
+    /* cleanup curl stuff */
+    curl_easy_cleanup(curl_handle);
+    /*
+    * Now, our chunk.memory points to a memory block that is chunk.size
+    * bytes big and contains the remote file.
+    *
+    * Do something nice with it!
+    *
+    * You should be aware of the fact that at this point we might have an
+    * allocated data block, and nothing has yet deallocated that data. So when
+    * you're done with it, you should free() it as a nice application.
+    */
+    if(chunk.memory)
+        free(chunk.memory);
+        /* we're done with libcurl, so clean it up */
+        curl_global_cleanup();
+        return chunk.size;
+}
+
+
 
 int main(void)
 {
 	char url[] = "192.168.1.221:6379";
+	//char url[] = "192.168.1.239:6379";
 	init(url);
 
 	void *buffer;
 	size_t len;
 	int i = 0;
-	char key[] = "default@206dd46198a06e912e34c9793afb9ce3	";
-	for( i=0; i< reply->elements;i++)
-		libcurlget(reply->element[i]->str,key,&buffer,&len);
+	char key[] = "default@206dd46198a06e912e34c9793afb9ce3";
+	//char key[] = "ctest@test2";
+    for( i=0; i< reply->elements;i++)
+        libcurlget(reply->element[i]->str,key,&buffer,&len);
+	
+	//FILE *fp = fopen("test","wb");
+	//fseek(file,0,SEEK_SET);
+	//fwrite(buffer,1,len,fp);
+	//fclose(fp);
+
+    char buffertest[1024 * 10];
+
+    int size = getFileInBuffer(reply->element[0]->str,key,buffertest);
+    printf( "******************************************: %d\n", size);
 
 }
