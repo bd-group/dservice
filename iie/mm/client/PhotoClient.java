@@ -24,7 +24,6 @@ public class PhotoClient {
 	private ClientConf conf;
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	//private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	public static class SocketHashEntry {
 		String hostname;
 		int port, cnr;
@@ -163,6 +162,7 @@ public class PhotoClient {
 		}
 	};
 	
+	//private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
 	private Map<String, String> servers = new HashMap<String, String>();
 	private long index = 0;
@@ -197,13 +197,13 @@ public class PhotoClient {
 		this.socketHash = socketHash;
 	}
 	
-//	public Map<Long, String> getSocketKeyHash() {
-//		return socketKeyHash;
-//	}
-//
-//	public void setSocketKeyHash(Map<Long, String> socketKeyHash) {
-//		this.socketKeyHash = socketKeyHash;
-//	}
+	/*public Map<Long, String> getSocketKeyHash() {
+		return socketKeyHash;
+	}
+
+	public void setSocketKeyHash(Map<Long, String> socketKeyHash) {
+		this.socketKeyHash = socketKeyHash;
+	}*/
 
 	public Jedis getJedis() {
 		return jedis;
@@ -405,35 +405,50 @@ public class PhotoClient {
 	}
 	
 	//批量存储时没有判断重复
-	public String[] mPut(String set, String[] md5s, byte[][] content, Socket sock) throws IOException
+	public String[] mPut(String set, String[] md5s, byte[][] content, SocketHashEntry she) throws IOException
 	{
-		DataOutputStream dos = new DataOutputStream(sock.getOutputStream());
-		DataInputStream dis = new DataInputStream(sock.getInputStream());
+		long id = she.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
+		DataOutputStream dos = she.map.get(id).dos;
+		DataInputStream dis = she.map.get(id).dis;
 		
 		int n = md5s.length;
 		String[] r = new String[n];
 		byte[] header = new byte[4];
 		header[0] = ActionType.MPUT;
 		header[1] = (byte) set.length();
-		dos.write(header);
-		dos.writeInt(n);
-		dos.write(set.getBytes());
-		for(int i = 0;i<n;i++)
-		{
-			dos.writeInt(md5s[i].getBytes().length);
-			dos.write(md5s[i].getBytes());
+		try{
+			synchronized (dos) {
+				
+				dos.write(header);
+				dos.writeInt(n);
+				dos.write(set.getBytes());
+				for(int i = 0;i<n;i++)
+				{
+					dos.writeInt(md5s[i].getBytes().length);
+					dos.write(md5s[i].getBytes());
+				}
+				for(int i = 0; i<n;i++)
+					dos.writeInt(content[i].length);
+				for(int i = 0; i<n;i++)
+					dos.write(content[i]);
+			}
+			synchronized (dis){
+				
+				int count = dis.readInt();
+				if (count == -1)
+					throw new IOException("MM server failure." );
+				r[0] = new String(readBytes(count, dis));
+				for(int i = 1;i<n;i++)
+					r[i] = new String(readBytes(dis.readInt(), dis));
+			}
+			she.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			she.delFromSockets(id);
 		}
-		for(int i = 0; i<n;i++)
-			dos.writeInt(content[i].length);
-		for(int i = 0; i<n;i++)
-			dos.write(content[i]);
-		
-		int count = dis.readInt();
-		if (count == -1)
-			throw new IOException("MM server failure." );
-		r[0] = new String(readBytes(count, dis));
-		for(int i = 1;i<n;i++)
-			r[i] = new String(readBytes(dis.readInt(), dis));
 		return r;
 	}
 	
@@ -463,9 +478,7 @@ public class PhotoClient {
 		}
 		
 		if (info == null) {
-			System.out.println(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
-			
-			return new byte[0];
+			throw new IOException(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
 		} else {
 			return searchPhoto(info);
 		}
@@ -503,8 +516,17 @@ public class PhotoClient {
 		} else {
 			return iSearchPhoto(info);
 		}
-		
 	}
+
+	/*public int iGetPhoto(String set, String md5) throws IOException {
+		String info = jedis.hget(set, md5);//拿到所有的元信息
+		if(info == null) {
+			throw new IOException(set + "." + md5 + " doesn't exist in redis server.");
+		} else {
+			return iSearchByInfo(info);
+		}
+		
+	}*/
 	
     /**
 	 * infos是拼接的元信息，各个元信息用#隔开
@@ -535,20 +557,20 @@ public class PhotoClient {
 	 */
 	public long iSearchPhoto(String infos) throws IOException {
 		long r = 0L;
-		refreshJedis();
-		for (String info : infos.split("#")) {
-			try {
-				String[] si = info.split("@");
-				
-				r = iSearchByInfo(info, si);
-				if (r > 0)
-					break;
-			} catch(IOException e){
-				e.printStackTrace();
-				continue;
-			}
-		}
-		
+//		refreshJedis();
+//		for (String info : infos.split("#")) {
+//			try {
+//				String[] si = info.split("@");
+//				
+//			s	r = iSearchByInfo(info, si);
+//				if (r > 0)
+//					break;
+//			} catch(IOException e){
+//				e.printStackTrace();
+//				continue;
+//			}
+//		}
+//		
 		return r;
 	}
 	
@@ -612,6 +634,23 @@ public class PhotoClient {
 			return r;
 	}
 	
+	/*public int iSearchByInfo(String info) throws IOException {
+	String[] str = info.split("#");
+	for(String s : str){
+		String[] infos = s.split("@");
+		Socket searchSocket = null;
+		if (socketHash.containsKey(infos[2] + ":" + infos[3])){
+			searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+		}
+		else {
+			// 读取图片时所用的socket
+			searchSocket = new Socket(); 
+			searchSocket.connect(new InetSocketAddress(infos[2], Integer.parseInt(infos[3])));
+			searchSocket.setTcpNoDelay(true);
+			socketHash.put(infos[2] + ":" + infos[3], searchSocket);
+		}
+		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());*/
+	
 	public long iSearchByInfo(String info, String[] infos) throws IOException {
 		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
@@ -663,6 +702,7 @@ public class PhotoClient {
 		}
 			return index-1;
 	}
+		
 	public Map<Long, byte[]> getData(Set<Long> ids) throws Exception {
 		Map<Long, byte[]> datas = new HashMap<Long, byte[]>();
 		for(Long id : ids){
@@ -686,10 +726,32 @@ public class PhotoClient {
 	 * @return
 	 */
 	public Map<Long, byte[]> wait(Set<Long> indexs) throws Exception {
-		return getData(indexs);
+		return null;// getData(indexs);
 	}
 	
-
+	/*public Map<String, byte[]> wait(Set<String> keys) throws IOException {
+		Map<String, byte[]> medias = new HashMap<String, byte[]>();
+		for(String key : keys){
+			String[] infos = key.split("@");
+			Socket searchSocket = null;
+			if (socketHash.containsKey(infos[2] + ":" + infos[3])){
+				searchSocket = socketHash.get(infos[2] + ":" + infos[3]);
+				DataInputStream iSearchis = new DataInputStream(searchSocket.getInputStream());
+				Long id = iSearchis.readLong();
+				String info = socketKeyHash.get(id);
+				int count = iSearchis.readInt();					
+				if (count >= 0) {
+					medias.put(info, readBytes(count, iSearchis));
+				} else {
+					throw new IOException("Internal error in mm server.");
+				}
+			}else{
+				throw new IOException("no socket is cached for node:"+infos[2] + ":" + infos[3]);
+			}
+		}
+		return medias;
+	}*/
+	
 	/**
 	 * 从输入流中读取count个字节
 	 * @param count

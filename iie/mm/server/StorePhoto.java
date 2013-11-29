@@ -313,9 +313,7 @@ public class StorePhoto {
 					rVal.append("1@"); // type
 					rVal.append(set);
 					rVal.append("@");
-					rVal.append(localHostName); // node name
-					rVal.append("@");
-					rVal.append(serverport); // port #
+					rVal.append(ServerProfile.serverId); 
 					rVal.append("@");
 					rVal.append(ssc.curBlock);
 					rVal.append("@");
@@ -399,7 +397,31 @@ public class StorePhoto {
 				lookupCache.put(set + "." + md5, info);
 			}
 		}
-		return searchPhoto(info);
+		return searchByDupInfo(info);
+	}
+	
+	/**
+	 * storephoto中需要能够处理带有备份的元信息
+	 * 之前有多个备份时是在客户端分割，处理的，可是通过http接口访问文件的话，就需要服务端来处理
+	 */
+	public byte[] searchByDupInfo(String info)
+	{
+		byte[] r = null;
+		for(String s : info.split("#"))
+		{
+			String[] si = s.split("@");
+			if(si[2].equals(String.valueOf(ServerProfile.serverId)))		//在这里判断是不是本地的
+			{
+				r = searchPhoto(s);
+				if(r != null && r.length != 0)
+					break;
+			}
+			else
+			{
+				continue;
+			}
+		}
+		return r;
 	}
 	/**
 	 * 获得图片内容

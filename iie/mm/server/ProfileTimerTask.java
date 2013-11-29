@@ -31,7 +31,7 @@ public class ProfileTimerTask extends TimerTask {
 		if (!dir.exists())
 			dir.mkdirs();
 		
-		// 向redis的数据库1中插入心跳信息
+		// 向redis中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
 		Pipeline pi = jedis.pipelined();
