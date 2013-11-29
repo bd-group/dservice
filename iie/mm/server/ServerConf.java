@@ -74,7 +74,7 @@ public class ServerConf {
 			this.period = Integer.parseInt(results.get(2).toString());
 			System.out.println("Get period from redis server: " + this.period);
 		}
-		
+		jedis.disconnect();
 	}
 
 

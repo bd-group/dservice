@@ -11,8 +11,10 @@ import java.util.TimerTask;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class ProfileTimerTask extends TimerTask {
+	private ServerConf conf;
 	public int period;
 	private double lastWn = 0;
 	private long lastDl = 0;
@@ -24,18 +26,32 @@ public class ProfileTimerTask extends TimerTask {
 	
 	public ProfileTimerTask(ServerConf conf, int period) {
 		super();
+		this.conf = conf;
 		File dir = new File(profileDir);
 		if (!dir.exists())
 			dir.mkdirs();
+		
 		// 向redis的数据库1中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
 		Pipeline pi = jedis.pipelined();
 		pi.set(hbkey, "1");
 		pi.expire(hbkey, period + 5);
-		// 启动过的server
-		pi.sadd("mm.active", conf.getNodeName() + ":" + conf.getServerPort());
 		pi.sync();
+
+		// determine the ID of ourself, register ourself
+		String self = conf.getNodeName() + ":" + conf.getServerPort();
+		Long sid;
+		if (jedis.zrank("mm.active", self) == null) {
+			sid = jedis.incr("mm.next.serverid");
+			// FIXME: if two server start with the same port, fail!
+			jedis.zadd("mm.active", sid, self);
+		}
+		// reget the sid
+		sid = jedis.zrank("mm.active", self);
+		ServerProfile.serverId = sid;
+		System.out.println("Got ServerID " + sid + " for Server " + self);
+
 		this.period = period;
 	}
 
@@ -63,8 +79,17 @@ public class ProfileTimerTask extends TimerTask {
 		lastTs = cur;
 		
 		//server的心跳信息
-		jedis.expire(hbkey, period + 5);
-		
+		try {
+			if (jedis == null)
+				jedis = new RedisFactory(conf).getDefaultInstance();
+			Pipeline pi = jedis.pipelined();
+			pi.set(hbkey, "1");
+			pi.expire(hbkey, period + 5);
+			pi.sync();
+		} catch (Exception e) {
+			jedis = null;
+		}
+
 		//把统计信息写入文件,每一天的信息放在一个文件里
 		String profileName = s.substring(0, 10)+".long";
 		PrintWriter pw = null;

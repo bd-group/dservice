@@ -49,7 +49,9 @@ public class Handler implements Runnable{
 					String set = new String(setmd5content, 0, setlen);
 					String md5 = new String(setmd5content, setlen, md5len);
 					
-					String result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
+					
+					String result = null;
+					result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
 
 					if (result == null)
 						dos.writeInt(-1);
