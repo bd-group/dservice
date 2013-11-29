@@ -81,17 +81,10 @@ public class StorePhoto {
 			storeArray.add(".");
 		}
 		diskArray = storeArray.toArray(new String[0]);
-		jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
 		
-	}
-	
-	public void reconnectJedis() {
-		if (jedis == null) {
-			jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
-		}
 	}
 
 	/**
@@ -104,7 +97,8 @@ public class StorePhoto {
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
-		reconnectJedis();
+		jedis = RedisFactory.getResource();
+		
 		StringBuffer rVal = new StringBuffer(128);
 		
 		//随机选一个磁盘
@@ -176,63 +170,66 @@ public class StorePhoto {
 				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
+				
+				String returnVal = rVal.toString();
+				Transaction t1 = jedis.multi();
+				
+				Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+				Response<String> r2 = t1.hget(set,md5);
+				t1.exec();
+				if (r1.get() == 1)
+					return returnVal;
+				else {
+					returnVal = r2.get() + "#" + returnVal;
+					jedis.hset(set, md5, returnVal);
+					return returnVal;
+					/*
+					 * Concurrent modify:
+					 * 
+					 * SETNX set@md5 aaa
+					 * WATCH set@md5
+					 * R = HGET set@md5
+					 * R += returnVal
+					 * MULTI
+					 * HSET set md5 R
+					 * DEL set@md5
+					 * EXEC
+					 */
+				}
+				
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken in storeObject.");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = null;
 				return "#FAIL:" + e.getMessage();
 			} catch (JedisException e) {
-				jedis = null;
 				return "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
 				return "#FAIL:" + e.getMessage();
+			}finally{
+				RedisFactory.returnResource(jedis);
 			}
 		}
 		
-		try {
-			String returnVal = rVal.toString();
-			Transaction t1 = jedis.multi();
-			
-			Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
-			Response<String> r2 = t1.hget(set,md5);
-			t1.exec();
-			if (r1.get() == 1)
-				return returnVal;
-			else {
-				returnVal = r2.get() + "#" + returnVal;
-				jedis.hset(set, md5, returnVal);
-				return returnVal;
-				/*
-				 * Concurrent modify:
-				 * 
-				 * SETNX set@md5 aaa
-				 * WATCH set@md5
-				 * R = HGET set@md5
-				 * R += returnVal
-				 * MULTI
-				 * HSET set md5 R
-				 * DEL set@md5
-				 * EXEC
-				 */
-			}
-		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken in storeObject.");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			jedis = null;
-			return "#FAIL:" + e.getMessage();
-		} catch (JedisException e) {
-			jedis = null;
-			return "#FAIL:" + e.getMessage();
-		} catch (Exception e) {
-			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
-		}
+//		try {
+//			
+//		} catch (JedisConnectionException e) {
+//			System.out.println("Jedis connection broken in storeObject.");
+//			try {
+//				Thread.sleep(1000);
+//			} catch (InterruptedException e1) {
+//			}
+//			jedis = null;
+//			return "#FAIL:" + e.getMessage();
+//		} catch (JedisException e) {
+//			jedis = null;
+//			return "#FAIL:" + e.getMessage();
+//		} catch (Exception e) {
+//			e.printStackTrace();
+//			return "#FAIL:" + e.getMessage();
+//		}
 	}
 	
 	/**
@@ -243,6 +240,8 @@ public class StorePhoto {
 	 * @return	出现任何错误返回null，出现错误的话不知道哪些存储成功，哪些不成功
 	 */
 	public String[] mstorePhoto(String set, String[] md5, byte[][] content) {
+		jedis = RedisFactory.getResource();
+		
 		if(!(md5.length == content.length && md5.length == content.length)) {
 			System.out.println("Array lengths in arguments mismatch.");
 			return null;
@@ -328,25 +327,32 @@ public class StorePhoto {
 					baos.write(content[i]);	
 					returnVal[i] = rVal.toString();
 					ssc.offset += content[i].length;
-				} catch (FileNotFoundException e) {
-					e.printStackTrace();
-//					returnVal[i] = "#FAIL:" + e.getMessage();
+					
+					Transaction t1 = jedis.multi();
+					Response<Long> r1 = t1.hsetnx(set, md5[i], returnVal[i]);
+					Response<String> r2 = t1.hget(set,md5[i]);
+					t1.exec();
+					if (r1.get() == 0)
+					{
+						returnVal[i] = r2.get()+"#"+returnVal[i];
+						mcs.put(md5[i], returnVal[i]);
+					}	
+				} catch (JedisConnectionException e) {
+					System.out.println("Jedis connection broken in storeObject.");
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e1) {
+					}
 					return null;
-				} catch (IOException e) {
-					e.printStackTrace();
-//					returnVal[i] = "#FAIL:" + e.getMessage();
+				} catch (JedisException e) {
 					return null;
+				} catch (Exception e) {
+					return null;
+				}finally{
+					RedisFactory.returnResource(jedis);
 				}
 				
-				Transaction t1 = jedis.multi();
-				Response<Long> r1 = t1.hsetnx(set, md5[i], returnVal[i]);
-				Response<String> r2 = t1.hget(set,md5[i]);
-				t1.exec();
-				if (r1.get() == 0)
-				{
-					returnVal[i] = r2.get()+"#"+returnVal[i];
-					mcs.put(md5[i], returnVal[i]);
-				}	
+				
 			}
 			try{
 				ssc.raf.write(baos.toByteArray());
@@ -369,7 +375,7 @@ public class StorePhoto {
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
 	public byte[] getPhoto(String set, String md5) {
-		reconnectJedis();
+		jedis = RedisFactory.getResource();
 		String info = null;
 		
 		// Step 1: check the local lookup cache
@@ -382,11 +388,12 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = null;
 				return null;
 			} catch (JedisException e) {
 				jedis = null;
 				return null;
+			}finally{
+				RedisFactory.returnResource(jedis);
 			}
 			
 			if(info == null) {
@@ -502,7 +509,6 @@ public class StorePhoto {
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
-			jedis.quit();
 		} catch(IOException e){
 			e.printStackTrace();
 		}

@@ -12,6 +12,7 @@ import java.util.TimerTask;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.exceptions.JedisException;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class ProfileTimerTask extends TimerTask {
 	private ServerConf conf;
@@ -21,7 +22,7 @@ public class ProfileTimerTask extends TimerTask {
 	private long lastDnr = 0;
 	private long lastTs = System.currentTimeMillis();
 	private String profileDir = "log/";
-	private Jedis jedis;
+//	private Jedis jedis;
 	private String hbkey;
 	
 	public ProfileTimerTask(ServerConf conf, int period) {
@@ -32,27 +33,33 @@ public class ProfileTimerTask extends TimerTask {
 			dir.mkdirs();
 		
 		// 向redis中插入心跳信息
-		jedis = new RedisFactory(conf).getDefaultInstance();
+		Jedis jedis = RedisFactory.getResource();
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
-		Pipeline pi = jedis.pipelined();
-		pi.set(hbkey, "1");
-		pi.expire(hbkey, period + 5);
-		pi.sync();
+		try{
+			Pipeline pi = jedis.pipelined();
+			pi.set(hbkey, "1");
+			pi.expire(hbkey, period + 5);
+			pi.sync();
 
-		// determine the ID of ourself, register ourself
-		String self = conf.getNodeName() + ":" + conf.getServerPort();
-		Long sid;
-		if (jedis.zrank("mm.active", self) == null) {
-			sid = jedis.incr("mm.next.serverid");
-			// FIXME: if two server start with the same port, fail!
-			jedis.zadd("mm.active", sid, self);
+			// determine the ID of ourself, register ourself
+			String self = conf.getNodeName() + ":" + conf.getServerPort();
+			Long sid;
+			if (jedis.zrank("mm.active", self) == null) {
+				sid = jedis.incr("mm.next.serverid");
+				// FIXME: if two server start with the same port, fail!
+				jedis.zadd("mm.active", sid, self);
+			}
+			// reget the sid
+			sid = jedis.zrank("mm.active", self);
+			ServerProfile.serverId = sid;
+			System.out.println("Got ServerID " + sid + " for Server " + self);
+
+			this.period = period;
+		}catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken in storeObject.");
+		}finally{
+			RedisFactory.returnResource(jedis);
 		}
-		// reget the sid
-		sid = jedis.zrank("mm.active", self);
-		ServerProfile.serverId = sid;
-		System.out.println("Got ServerID " + sid + " for Server " + self);
-
-		this.period = period;
 	}
 
 	@Override
@@ -79,15 +86,16 @@ public class ProfileTimerTask extends TimerTask {
 		lastTs = cur;
 		
 		//server的心跳信息
+		Jedis jedis = RedisFactory.getResource();
 		try {
-			if (jedis == null)
-				jedis = new RedisFactory(conf).getDefaultInstance();
 			Pipeline pi = jedis.pipelined();
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
 			pi.sync();
-		} catch (Exception e) {
-			jedis = null;
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken when doing profiling task.");
+		}finally{
+			RedisFactory.returnResource(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里

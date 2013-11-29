@@ -2,6 +2,7 @@ package iie.mm.client;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
@@ -568,6 +569,9 @@ public class MMSClient {
 				
 				try {
 					byte[] content = pcInfo.get(set + "@" + md5);
+					FileOutputStream fos = new FileOutputStream(md5);
+					fos.write(content);
+					fos.close();
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();
@@ -581,6 +585,9 @@ public class MMSClient {
 				try{
 					
 					byte[] content = pcInfo.get(info);
+					FileOutputStream fos = new FileOutputStream("getbi");
+					fos.write(content);
+					fos.close();
 					System.out.println("get content length:"+content.length);
 				}catch(IOException e){
 					e.printStackTrace();
