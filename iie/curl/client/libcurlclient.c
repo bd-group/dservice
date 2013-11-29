@@ -323,7 +323,8 @@ WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data)
 }
 
 //int main(int argc, char **argv)
-int getFileInBuffer(char *server,char *key,char * buffer)
+//int getFileInBuffer(char *server,char *key,char * buffer)
+int getFileInBuffer(char *server, char *key, void **buffer, size_t *len)
 {
     CURL *curl_handle;
     //取消原来的注释
@@ -358,26 +359,31 @@ int getFileInBuffer(char *server,char *key,char * buffer)
     * allocated data block, and nothing has yet deallocated that data. So when
     * you're done with it, you should free() it as a nice application.
     */
-    if(chunk.memory)
-        free(chunk.memory);
+    *buffer = chunk.memory;
+    *len = chunk.size;
+    //if(chunk.memory)
+        //free(chunk.memory);
         /* we're done with libcurl, so clean it up */
-        curl_global_cleanup();
-        return chunk.size;
+        //curl_global_cleanup();
+      //  return chunk.size;
+
+    return 0;
 }
 
 
 
 int main(void)
 {
-	char url[] = "192.168.1.221:6379";
-	//char url[] = "192.168.1.239:6379";
+    //char url[] = "192.168.1.221:6379";
+    char url[] = "192.168.1.36:6379";
+    //char url[] = "127.0.0.1:6379";
 	init(url);
 
 	void *buffer;
 	size_t len;
 	int i = 0;
-	char key[] = "default@206dd46198a06e912e34c9793afb9ce3";
-	//char key[] = "ctest@test2";
+    //char key[] = "default@206dd46198a06e912e34c9793afb9ce3";
+    char key[] = "test@066533b75bc3b82ba4445d1f1f580da7";
     for( i=0; i< reply->elements;i++)
         libcurlget(reply->element[i]->str,key,&buffer,&len);
 	
@@ -386,9 +392,10 @@ int main(void)
 	//fwrite(buffer,1,len,fp);
 	//fclose(fp);
 
-    char buffertest[1024 * 10];
+    //char buffertest[1024 * 10];
+    void*buf;
 
-    int size = getFileInBuffer(reply->element[0]->str,key,buffertest);
+    int size = getFileInBuffer(reply->element[0]->str,key,&buf,&len);
     printf( "******************************************: %d\n", size);
 
 }
