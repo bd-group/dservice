@@ -723,7 +723,7 @@ public class PhotoClient {
 			// remove this socket do reconnect?
 			searchSocket.delFromSockets(id);
 		}
-			return index-1;
+			return index;
 	}
 		
 	public void getAllData() throws Exception {
