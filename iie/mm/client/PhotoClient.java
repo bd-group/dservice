@@ -165,9 +165,7 @@ public class PhotoClient {
 	//private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
 	private Map<String, String> servers = new HashMap<String, String>();
-	private long index = 0;
-	private HashMap<Long, SEntry> ls= new HashMap<Long, SEntry>();
-	private HashMap<Long,SocketHashEntry> shl= new HashMap<Long,SocketHashEntry>();
+	private HashMap<Long, byte[]> ls= new HashMap<Long, byte[]>();
 	private Jedis jedis = null;
 	public PhotoClient(){
 		conf = new ClientConf();
@@ -490,7 +488,7 @@ public class PhotoClient {
 	 * @param md5	
 	 * @return		成功则返回一个int类型的数
 	 */
-	public long iGetPhoto(String set, String md5) throws IOException {
+	public long iGetPhoto(String set, String md5, long id) throws IOException {
 		String info = null;
 		refreshJedis();
 		
@@ -514,7 +512,7 @@ public class PhotoClient {
 			
 			return -1L;
 		} else {
-			return iSearchPhoto(info);
+			return iSearchPhoto(info, id);
 		}
 	}
 
@@ -555,22 +553,22 @@ public class PhotoClient {
 	/**
 	 * infos是拼接的元信息，各个元信息用#隔开
 	 */
-	public long iSearchPhoto(String infos) throws IOException {
-		long r = 0L;
-//		refreshJedis();
-//		for (String info : infos.split("#")) {
-//			try {
-//				String[] si = info.split("@");
-//				
-//			s	r = iSearchByInfo(info, si);
-//				if (r > 0)
-//					break;
-//			} catch(IOException e){
-//				e.printStackTrace();
-//				continue;
-//			}
-//		}
-//		
+	public long iSearchPhoto(String infos,long id) throws IOException {
+		long r = -1L;
+		refreshJedis();
+		for (String info : infos.split("#")) {
+			try {
+				String[] si = info.split("@");
+				r = iSearchByInfo(info, si, id);
+				if(r >= 0){
+					break;
+				}
+			} catch(IOException e){
+				e.printStackTrace();
+				continue;
+			}
+		}
+		
 		return r;
 	}
 	
@@ -651,7 +649,7 @@ public class PhotoClient {
 		}
 		DataOutputStream searchos = new DataOutputStream(searchSocket.getOutputStream());*/
 	
-	public long iSearchByInfo(String info, String[] infos) throws IOException {
+	public long iSearchByInfo(String info, String[] infos, long index) throws IOException {
 		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
@@ -692,9 +690,7 @@ public class PhotoClient {
 			searchSocket.map.get(id).dos.write(info.getBytes());
 			searchSocket.map.get(id).dos.flush();
 			//searchSocket.setFreeSocket(id);
-			ls.put(index, searchSocket.map.get(id));
-			shl.put(id,searchSocket);
-			index++;
+			ls.put(index, null);
 		} catch (Exception e) {
 			e.printStackTrace();
 			// remove this socket do reconnect?
@@ -703,21 +699,32 @@ public class PhotoClient {
 			return index-1;
 	}
 		
-	public Map<Long, byte[]> getData(Set<Long> ids) throws Exception {
-		Map<Long, byte[]> datas = new HashMap<Long, byte[]>();
-		for(Long id : ids){
-			SEntry s = ls.get(id);
-			if(s == null){
-				throw new Exception("id : " + id + "has no socket.");
+	public void getAllData() throws Exception {
+		for(String str : socketHash.keySet()){
+			for(Long l : socketHash.get(str).map.keySet()){
+				if(false == socketHash.get(str).map.get(l).used){
+					Long lo = socketHash.get(str).map.get(l).dis.readLong();
+					byte[] r;
+					r = __handleInput(socketHash.get(str).map.get(l).dis);
+					ls.put(lo, r);
+					//socketHash.get(str).setFreeSocket(socketHash.get(str).map.get(l).id);
+				}
 			}
-			Long lo = s.dis.readLong();
-			byte[] r;
-			r = __handleInput(s.dis);
-			datas.put(lo, r);
-			SocketHashEntry shey = shl.get(s.id);
-			shey.setFreeSocket(s.id);
 		}
-		return datas;
+//		Map<Long, byte[]> datas = new HashMap<Long, byte[]>();
+//		for(Long id : ids){
+//			SEntry s = ls.get(id);
+//			if(s == null){
+//				throw new Exception("id : " + id + "has no socket.");
+//			}
+//			Long lo = s.dis.readLong();
+//			byte[] r;
+//			r = __handleInput(s.dis);
+//			datas.put(lo, r);
+//			SocketHashEntry shey = shl.get(s.id);
+//			shey.setFreeSocket(s.id);
+//		}
+//		return datas;
 	}
 	
 	/**
@@ -726,7 +733,18 @@ public class PhotoClient {
 	 * @return
 	 */
 	public Map<Long, byte[]> wait(Set<Long> indexs) throws Exception {
-		return null;// getData(indexs);
+		Map<Long, byte[]> medias = new HashMap<Long, byte[]>();
+		getAllData();
+		for(Long ind : indexs){
+			if(!ls.keySet().contains(ind)){
+				throw new Exception("Id" + ind + "is not available id.");
+			}
+		}
+		for(Long index : indexs){
+			byte[] data = ls.get(index);
+			medias.put(index,data);
+		}
+		return medias;
 	}
 	
 	/*public Map<String, byte[]> wait(Set<String> keys) throws IOException {

@@ -24,9 +24,8 @@ import redis.clients.jedis.Jedis;
 public class ClientAPI {
 	private PhotoClient pc;
 	private int index;				
-	private long id;
+	private long id = 0;
 	private List<String> keyList = new ArrayList<String>();
-	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
@@ -237,13 +236,19 @@ public class ClientAPI {
 		if(key == null)
 			throw new Exception("key can not be null.");
 		String[] keys = key.split("@");
-		if (keys.length == 2)
-			return pc.iGetPhoto(keys[0], keys[1]);
-		else if (keys.length == 7)
-			return pc.iSearchByInfo(key, keys);
-		else if (keys.length % 7 == 0)		//如果是拼接的元信息，分割后长度是7的倍数
-			return pc.iSearchPhoto(key);
-		else 
+		if (keys.length == 2){
+			long l = pc.iGetPhoto(keys[0], keys[1], id);
+			id++;
+			return l;
+		} else if (keys.length == 7){
+			long l = pc.iSearchByInfo(key, keys, id);
+			id++;
+			return l;
+		} else if (keys.length % 7 == 0){		//如果是拼接的元信息，分割后长度是7的倍数
+			long l = pc.iSearchPhoto(key, id);
+			id++;
+			return l;
+		} else 
 			throw new Exception("wrong format of key:" + key);
 	}
 
