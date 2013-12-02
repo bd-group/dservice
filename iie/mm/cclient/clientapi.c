@@ -141,7 +141,7 @@ int get(char *key, void **buffer, size_t *len)
 int get_old(char *key, void **buffer, size_t *len)
 {
 	int n = countChInStr(key,'@') + countChInStr(key,'#');
-    char *p = strdup(key), *np;
+    char *p = strdup(key), *np = NULL;
     int err;
 
 	if(n == 1) {
