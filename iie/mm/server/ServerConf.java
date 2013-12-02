@@ -9,6 +9,7 @@ import java.util.Set;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.exceptions.JedisException;
 
 /**
  * 代表节点的配置
@@ -42,26 +43,34 @@ public class ServerConf {
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 		
 	private Set<String> storeArray = new HashSet<String>();
+	
+	public enum RedisMode {
+		SENTINEL, STANDALONE,
+	}
+	
+	private RedisMode redisMode;
+	private Set<String> sentinels;
 
-	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, int blockSize, int period, int httpPort) throws Exception {
+	public ServerConf(String nodeName, int serverPort, Set<String> sentinels, 
+			int blockSize, int period, int httpPort) throws Exception {
 		if (nodeName == null)
 			this.nodeName = InetAddress.getLocalHost().getHostName();
 		else
 			this.nodeName = nodeName;
 		if (serverPort > 0)
 			this.serverPort = serverPort;
-		if (redisHost == null)
-			this.redisHost = this.nodeName;
-		else
-			this.redisHost = redisHost;
-		this.redisPort = redisPort;
+
 		this.blockSize = blockSize;
 		this.period = period;
 		this.httpPort = httpPort;
-		
+		this.sentinels = sentinels;
+		setRedisMode(RedisMode.SENTINEL);
 		
 		// ok, get global config if they exist.
 		Jedis jedis = new RedisFactory(this).getDefaultInstance();
+		if (jedis == null)
+			throw new JedisException("Get default jedis instance failed.");
+		
 		Pipeline p = jedis.pipelined();
 		p.get("mm.conf.blocksize");
 		p.get("mm.conf.period");
@@ -76,7 +85,44 @@ public class ServerConf {
 		}
 		jedis.disconnect();
 	}
-
+	
+	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, 
+			int blockSize, int period, int httpPort) throws Exception {
+		if (nodeName == null)
+			this.nodeName = InetAddress.getLocalHost().getHostName();
+		else
+			this.nodeName = nodeName;
+		if (serverPort > 0)
+			this.serverPort = serverPort;
+		if (redisHost == null)
+			this.redisHost = this.nodeName;
+		else
+			this.redisHost = redisHost;
+		this.redisPort = redisPort;
+		this.blockSize = blockSize;
+		this.period = period;
+		this.httpPort = httpPort;
+		setRedisMode(RedisMode.STANDALONE);
+		
+		// ok, get global config if they exist.
+		Jedis jedis = new RedisFactory(this).getDefaultInstance();
+		if (jedis == null)
+			throw new JedisException("Get default jedis instance failed.");
+		
+		Pipeline p = jedis.pipelined();
+		p.get("mm.conf.blocksize");
+		p.get("mm.conf.period");
+		List<Object> results = p.syncAndReturnAll();
+		if (results.get(0) != null) {
+			this.blockSize = Integer.parseInt(results.get(1).toString());
+			System.out.println("Get blockSize from redis server: " + this.blockSize);
+		}
+		if (results.get(1) != null) {
+			this.period = Integer.parseInt(results.get(2).toString());
+			System.out.println("Get period from redis server: " + this.period);
+		}
+		jedis.disconnect();
+	}
 
 	public String getNodeName() {
 		return nodeName;
@@ -171,6 +217,26 @@ public class ServerConf {
 
 	public void setStoreArray(Set<String> storeArray) {
 		this.storeArray = storeArray;
+	}
+
+
+	public RedisMode getRedisMode() {
+		return redisMode;
+	}
+
+
+	public void setRedisMode(RedisMode redisMode) {
+		this.redisMode = redisMode;
+	}
+
+
+	public Set<String> getSentinels() {
+		return sentinels;
+	}
+
+
+	public void setSentinels(Set<String> sentinels) {
+		this.sentinels = sentinels;
 	}
 	
 }

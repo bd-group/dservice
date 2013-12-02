@@ -1,24 +1,55 @@
 package iie.mm.server;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisSentinelPool;
 
 public class RedisFactory {
-
-	private String remoteRedisHost;
-	private int remoteRedisPort;
+	private static ServerConf conf;
+	private static JedisSentinelPool jsp = null;
 
 	public RedisFactory(ServerConf conf) {
-		remoteRedisHost = conf.getRedisHost();
-		remoteRedisPort = conf.getRedisPort();
+		RedisFactory.conf = conf;
 	}
 
 	// 从配置文件中读取redis的地址和端口,以此创建jedis对象
 	public Jedis getDefaultInstance() {
-		return new Jedis(remoteRedisHost, remoteRedisPort);
+		switch (conf.getRedisMode()) {
+		case STANDALONE:
+			return new Jedis(conf.getRedisHost(), conf.getRedisPort());
+		case SENTINEL:
+		{
+			if (jsp != null)
+				return jsp.getResource();
+			else {
+				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
+				return jsp.getResource();
+			}
+		}
+		}
+		return null;
 	}
-
-	public static Jedis getNewInstance(String host, int port) {
-		Jedis jedis = new Jedis(host, port);
-		return jedis;
+	
+	public static Jedis putInstance(Jedis j) {
+		if (j == null)
+			return null;
+		switch (conf.getRedisMode()) {
+		case STANDALONE:
+			break;
+		case SENTINEL:
+			jsp.returnResource(j);
+		}
+		return null;
+	}
+	
+	public static Jedis putBrokenInstance(Jedis j) {
+		if (j == null)
+			return null;
+		switch (conf.getRedisMode()) {
+		case STANDALONE:
+			break;
+		case SENTINEL:
+			jsp.returnBrokenResource(j);
+		}
+		return null;
 	}
 }

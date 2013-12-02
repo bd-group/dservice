@@ -90,16 +90,15 @@ public class StorePhoto {
 			storeArray.add(".");
 		}
 		diskArray = storeArray.toArray(new String[0]);
-		jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+		jedis = new RedisFactory(conf).getDefaultInstance();
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
-		
 	}
 	
 	public void reconnectJedis() {
 		if (jedis == null) {
-			jedis = RedisFactory.getNewInstance(conf.getRedisHost(), conf.getRedisPort());
+			jedis = new RedisFactory(conf).getDefaultInstance();
 		}
 	}
 
@@ -191,10 +190,10 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = null;
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return "#FAIL:" + e.getMessage();
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
 				return "#FAIL:" + e.getMessage();
@@ -233,10 +232,10 @@ public class StorePhoto {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = null;
+			jedis = RedisFactory.putBrokenInstance(jedis);
 			return "#FAIL:" + e.getMessage();
 		} catch (JedisException e) {
-			jedis = null;
+			jedis = RedisFactory.putBrokenInstance(jedis);
 			return "#FAIL:" + e.getMessage();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -284,10 +283,10 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = null;
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return null;
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return null;
 			}
 			
@@ -399,7 +398,7 @@ public class StorePhoto {
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
-			jedis.quit();
+			RedisFactory.putInstance(jedis);
 		} catch(IOException e){
 			e.printStackTrace();
 		}

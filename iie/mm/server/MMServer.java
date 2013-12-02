@@ -57,6 +57,7 @@ public class MMServer {
 				period = ServerConf.DEFAULT_PERIOD,
 				httpPort = ServerConf.DEFAULT_HTTP_PORT;
 		Set<String> sa = new HashSet<String>();
+		Set<String> sentinels = new HashSet<String>();
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -70,6 +71,7 @@ public class MMServer {
 				System.out.println("-blk  : block size.");
 				System.out.println("-prd  : logging period.");
 				System.out.println("-sa   : storage array.");
+				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				
 				System.exit(0);
 			}
@@ -136,11 +138,25 @@ public class MMServer {
 					sa.add(paths[i]);
 				}
 			}
+			if (o.flag.equals("-stl")) {
+				// parse sentinels
+				if (o.opt == null) {
+					System.out.println("-stl host:port;host:port");
+					System.exit(0);
+				}
+				String[] stls = o.opt.split(";");
+				for (int i = 0; i < stls.length; i++) {
+					sentinels.add(stls[i]);
+				}
+			}
 		}
 		
 		// set the serverConf
 		try {
-			conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
+			if (sentinels.size() > 0)
+				conf = new ServerConf(serverName, serverPort, sentinels, blockSize, period, httpPort);
+			else
+				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
 		} catch (Exception e) {
 			e.printStackTrace();
