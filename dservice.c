@@ -1504,13 +1504,13 @@ static void *__del_thread_main(void *args)
                         pos->status = DEL_STATE_DONE;
                 }
             } else if (WIFSIGNALED(status)) {
-                hvfs_info(lib, "CMD killed by signal %d\n", WTERMSIG(status));
+                hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
                 pos->status = DEL_STATE_ERROR;
             } else if (WIFSTOPPED(status)) {
-                hvfs_err(lib, "CMD stopped by signal %d\n", WSTOPSIG(status));
+                hvfs_err(lib, "CMD(%s) stopped by signal %d\n", cmd, WSTOPSIG(status));
                 pos->status = DEL_STATE_ERROR;
             } else if (WIFCONTINUED(status)) {
-                hvfs_err(lib, "CMD continued\n");
+                hvfs_err(lib, "CMD(%s) continued\n", cmd);
                 pos->status = DEL_STATE_ERROR;
             }
 
@@ -1674,13 +1674,13 @@ static void *__rep_thread_main(void *args)
                         pos->status = REP_STATE_DONE;
                 }
             } else if (WIFSIGNALED(status)) {
-                hvfs_info(lib, "CMD killed by signal %d\n", WTERMSIG(status));
+                hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
                 pos->status = REP_STATE_ERROR;
             } else if (WIFSTOPPED(status)) {
-                hvfs_err(lib, "CMD stopped by signal %d\n", WSTOPSIG(status));
+                hvfs_err(lib, "CMD(%s) stopped by signal %d\n", cmd, WSTOPSIG(status));
                 pos->status = REP_STATE_ERROR;
             } else if (WIFCONTINUED(status)) {
-                hvfs_err(lib, "CMD continued\n");
+                hvfs_err(lib, "CMD(%s) continued\n", cmd);
                 pos->status = REP_STATE_ERROR;
             }
 

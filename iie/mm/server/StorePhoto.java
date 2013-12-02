@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.Random;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.Response;
 import redis.clients.jedis.exceptions.JedisDataException;
@@ -38,6 +37,20 @@ public class StorePhoto {
 	private Jedis jedis;
 	
 	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
+	
+	public static class RedirectException extends Exception {
+		/**
+		 * serialVersionUID
+		 */
+		private static final long serialVersionUID = 3092261885247728350L;
+		public long serverId;
+		public String info;
+	
+		public RedirectException(long serverId, String info) {
+			this.serverId = serverId;
+			this.info = info;
+		}
+	}
 
 	public class StoreSetContext {
 		public String key;
@@ -156,7 +169,7 @@ public class StorePhoto {
 				rVal.append("1@"); // type
 				rVal.append(set);
 				rVal.append("@");
-				rVal.append(ServerProfile.serverId);
+				rVal.append(ServerConf.serverId);
 				rVal.append("@");
 				rVal.append(ssc.curBlock);
 				rVal.append("@");
@@ -312,7 +325,7 @@ public class StorePhoto {
 					rVal.append("1@"); // type
 					rVal.append(set);
 					rVal.append("@");
-					rVal.append(ServerProfile.serverId); 
+					rVal.append(ServerConf.serverId); 
 					rVal.append("@");
 					rVal.append(ssc.curBlock);
 					rVal.append("@");
@@ -374,7 +387,7 @@ public class StorePhoto {
 	 * @param md5		与storePhoto中的参数md5相对应
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
-	public byte[] getPhoto(String set, String md5) {
+	public byte[] getPhoto(String set, String md5) throws RedirectException{
 		jedis = RedisFactory.getResource();
 		String info = null;
 		
@@ -396,7 +409,7 @@ public class StorePhoto {
 				RedisFactory.returnResource(jedis);
 			}
 			
-			if(info == null) {
+			if (info == null) {
 				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
 				return null;
 			} else {
@@ -404,44 +417,39 @@ public class StorePhoto {
 				lookupCache.put(set + "." + md5, info);
 			}
 		}
-		return searchByDupInfo(info);
-	}
-	
-	/**
-	 * storephoto中需要能够处理带有备份的元信息
-	 * 之前有多个备份时是在客户端分割，处理的，可是通过http接口访问文件的话，就需要服务端来处理
-	 */
-	public byte[] searchByDupInfo(String info)
-	{
-		byte[] r = null;
-		for(String s : info.split("#"))
-		{
-			String[] si = s.split("@");
-			if(si[2].equals(String.valueOf(ServerProfile.serverId)))		//在这里判断是不是本地的
-			{
-				r = searchPhoto(s);
-				if(r != null && r.length != 0)
-					break;
-			}
-			else
-			{
-				continue;
+		// split if it is complex uri
+		String savedInfo = null;
+		Long savedId = -1L;
+		for (String i : info.split("#")) {
+			String[] is = i.split("@");
+			
+			if (Long.parseLong(is[2]) == ServerConf.serverId)
+				return searchPhoto(i, is);
+			else {
+				savedInfo = i;
+				savedId = Long.parseLong(is[2]);
 			}
 		}
-		return r;
+
+		throw new RedirectException(savedId, savedInfo);
 	}
 	/**
 	 * 获得图片内容
 	 * @param info		对应storePhoto的type@set@serverid@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
-	public byte[] searchPhoto(String info) {
+	public byte[] searchPhoto(String info, String[] infos) throws RedirectException {
 		long start = System.currentTimeMillis();
-		String[] infos = info.split("@");
+		if (infos == null)
+			infos = info.split("@");
 		
 		if (infos.length != 7) {
 			System.out.println("Invalid INFO string: " + info);
 			return null;
+		}
+		if (Long.parseLong(infos[2]) != ServerConf.serverId) {
+			// this request should be send to another server
+			throw new RedirectException(Long.parseLong(infos[2]), info);
 		}
 		String path = infos[6] + "/" + destRoot + infos[1] + "/b" + infos[3];
 		RandomAccessFile readr = null;

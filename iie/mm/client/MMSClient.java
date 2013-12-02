@@ -24,6 +24,7 @@ public class MMSClient {
 	public static class LPutThread extends Thread {
 		private ClientAPI ca;
 		public long pnr = 0;
+		public long apnr = 0;
 		public long size = 0;
 		public String set = null;
 		public String type = "";
@@ -65,12 +66,13 @@ public class MMSClient {
 								System.out.println("Wrong lpt_type, should be sync or async");
 							System.exit(0);
 						}
+						apnr++;
 					} catch (Exception e) {
 						e.printStackTrace();
 					}
 				}
 				end = System.nanoTime();
-				System.out.println(Thread.currentThread().getId() + " --> Put " + pnr + " objects in " +
+				System.out.println(Thread.currentThread().getId() + " --> Put " + apnr + " objects in " +
 						((end - begin) / 1000.0) + " us, PPS is " + (pnr * 1000000000.0) / (end - begin));
 			} catch (NoSuchAlgorithmException e) {
 				e.printStackTrace();

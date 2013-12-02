@@ -7,10 +7,12 @@ import java.io.PrintWriter;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Set;
 import java.util.TimerTask;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
@@ -48,12 +50,27 @@ public class ProfileTimerTask extends TimerTask {
 				sid = jedis.incr("mm.next.serverid");
 				// FIXME: if two server start with the same port, fail!
 				jedis.zadd("mm.active", sid, self);
+				System.out.println("sid"+sid);
 			}
 			// reget the sid
-			sid = jedis.zrank("mm.active", self);
-			ServerProfile.serverId = sid;
+			sid = jedis.zscore("mm.active", self).longValue();
+			ServerConf.serverId = sid;
 			System.out.println("Got ServerID " + sid + " for Server " + self);
 
+
+			// use the same serverID to register in mm.active.http
+			self = conf.getNodeName() + ":" + conf.getHttpPort();
+			jedis.zadd("mm.active.http", sid, self);
+			System.out.println("Register HTTP server " + self + " done.");
+			
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					ServerConf.servers.put((long)t.getScore(), t.getElement());
+					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+				}
+			}
+			
 			this.period = period;
 		}catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
@@ -92,8 +109,19 @@ public class ProfileTimerTask extends TimerTask {
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
 			pi.sync();
-		} catch (JedisConnectionException e) {
+			
+			// update server list
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					ServerConf.servers.put((long)t.getScore(), t.getElement());
+				}
+			}
+		
+		}catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken when doing profiling task.");
+		}catch (Exception e) {
+			e.printStackTrace();
 		}finally{
 			RedisFactory.returnResource(jedis);
 		}
