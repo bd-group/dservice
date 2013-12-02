@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import iie.mm.server.StorePhoto.RedirectException;
+
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.ServletException;
@@ -23,6 +25,7 @@ public class HTTPHandler extends AbstractHandler {
 		response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 		baseRequest.setHandled(true);
 		response.getWriter().println(message);
+		response.getWriter().flush();
 	}
 	
 	private void notFoundResponse(Request baseRequest, HttpServletResponse response, String message) throws IOException {
@@ -30,6 +33,7 @@ public class HTTPHandler extends AbstractHandler {
 		response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 		baseRequest.setHandled(true);
 		response.getWriter().println(message);
+		response.getWriter().flush();
 	}
 	
 	private void okResponse(Request baseRequest, HttpServletResponse response, byte[] content) throws IOException {
@@ -39,6 +43,22 @@ public class HTTPHandler extends AbstractHandler {
 		baseRequest.setHandled(true);
 		response.getOutputStream().write(content);
 		response.getOutputStream().flush();
+	}
+	
+	private void redirectResponse(Request baseRequest, HttpServletResponse response, RedirectException e) throws IOException {
+		String serverUrl = ServerConf.servers.get(e.serverId);
+		response.setContentType("text/plain;charset=utf-8");
+		baseRequest.setHandled(true);
+		if (serverUrl == null) {
+			response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+			response.getWriter().println("#FAIL: Redirect to serverId " + e.serverId + " failed.");
+		} else {
+			response.setStatus(HttpServletResponse.SC_MOVED_TEMPORARILY);
+			//response.getWriter().println(serverUrl);
+			//response.getWriter().println(e.info);
+			response.sendRedirect("http://" + serverUrl + "/get?key=" + e.info);
+		}
+		response.getWriter().flush();
 	}
 	
 	private void doGet(String target, Request baseRequest, HttpServletRequest request, 
@@ -54,19 +74,29 @@ public class HTTPHandler extends AbstractHandler {
 			String[] infos = key.split("@|#");
 			
 			if (infos.length == 2) {
-				byte[] content = sp.getPhoto(infos[0], infos[1]);
-				if (content == null || content.length == 0) {
-					notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
-				} else {
-					okResponse(baseRequest, response, content);
+				byte[] content = null;
+				try {
+					content = sp.getPhoto(infos[0], infos[1]);
+					if (content == null || content.length == 0) {
+						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
+					} else {
+						okResponse(baseRequest, response, content);
+					}
+				} catch (RedirectException e) {
+					redirectResponse(baseRequest, response, e);
 				}
-			} else if (infos.length % 7 == 0) {
-				byte[] content = sp.searchByDupInfo(key);
-				if (content == null || content.length == 0) {
-					notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
-				} else {
-					okResponse(baseRequest, response, content);
-				} 
+			} else if (infos.length == 7) {
+				byte[] content = null;
+				try {
+					content = sp.searchPhoto(key, null);
+					if (content == null || content.length == 0) {
+						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
+					} else {
+						okResponse(baseRequest, response, content);
+					} 
+				} catch (RedirectException e) {
+					redirectResponse(baseRequest, response, e);
+				}
 			} else {
 				badResponse(baseRequest, response, "#FAIL: invalid key format {" + key + "}");
 			}
@@ -88,6 +118,7 @@ public class HTTPHandler extends AbstractHandler {
 		response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
 		response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
 		response.getWriter().println(PhotoServer.getServerInfo(conf));
+		response.getWriter().flush();
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

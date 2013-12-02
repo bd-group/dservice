@@ -10,10 +10,13 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.HashSet;
+import java.net.SocketException;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import redis.clients.jedis.Jedis;
@@ -27,6 +30,7 @@ public class PhotoClient {
 	public static class SocketHashEntry {
 		String hostname;
 		int port, cnr;
+		AtomicInteger xnr = new AtomicInteger(0);
 		Map<Long, SEntry> map;
 		AtomicLong nextId = new AtomicLong(0);
 		
@@ -63,6 +67,18 @@ public class PhotoClient {
 			}
 		}
 		
+		public boolean probSelected() {
+			if (map.size() > 0)
+				return true;
+			else {
+				// 1/100 prob selected
+				if (new Random().nextInt(100) == 0)
+					return true;
+				else 
+					return false;
+			}
+		}
+		
 		public long getFreeSocket() throws IOException {
 			boolean found = false;
 			long id = -1;
@@ -81,23 +97,34 @@ public class PhotoClient {
 				}
 	
 				if (!found) {
-					if (map.size() < cnr) {
+					if (map.size() + xnr.get() < cnr) {
 						// do connect now
 						Socket socket = new Socket();
+						xnr.getAndIncrement();
 						try {
 							socket.connect(new InetSocketAddress(this.hostname, this.port));
 							socket.setTcpNoDelay(true);
 							id = this.addToSocketsAsUsed(socket, new DataInputStream(socket.getInputStream()), 
 										new DataOutputStream(socket.getOutputStream()));
 							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
-						} catch (Exception e) {
+						} catch (SocketException e) {
+							xnr.getAndDecrement();
 							System.out.println("Connect to " + hostname + ":" + port + " failed.");
+							try {
+								Thread.sleep(1000);
+							} catch (InterruptedException e1) {
+							}
+							throw e;
+						} catch (Exception e) {
+							xnr.getAndDecrement();
+							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
 							}
 							throw new IOException(e.getMessage());
 						}
+						xnr.getAndDecrement();
 					} else {
 						do {
 							try {
@@ -164,8 +191,8 @@ public class PhotoClient {
 	
 	//private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
-	private Map<String, String> servers = new HashMap<String, String>();
 	private HashMap<Long, byte[]> ls= new HashMap<Long, byte[]>();
+	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 	private Jedis jedis = null;
 	public PhotoClient(){
 		conf = new ClientConf();
@@ -185,7 +212,7 @@ public class PhotoClient {
 	}
 	
 	public void addToServers(long id, String server) {
-		servers.put(Long.toString(id), server);
+		servers.put(id, server);
 	}
 	
 	public Map<String, SocketHashEntry> getSocketHash() {
@@ -335,9 +362,9 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she, boolean nodedup) throws IOException {
 		refreshJedis();
-		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
+		if (conf.getMode() == ClientConf.MODE.NODEDUP || nodedup) {
 			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;
@@ -583,7 +610,7 @@ public class PhotoClient {
 		}
 		
 		SocketHashEntry searchSocket = null;
-		String server = servers.get(infos[2]);
+		String server = servers.get(Long.parseLong(infos[2]));
 		if (server == null)
 			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
 		if (socketHash.containsKey(server)) {

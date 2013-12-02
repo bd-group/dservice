@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import iie.mm.server.StorePhoto.RedirectException;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -119,15 +121,19 @@ public class Handler implements Runnable{
 					int infolen = header[1]&0xff;		
 
 					if (infolen > 0) {
-						String info = new String(readBytes(infolen, dis));		
-						byte[] content = sp.searchPhoto(info);
-						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
-						if (content != null) {
-							dos.writeInt(content.length);
-							dos.write(content);
-						} else {
-							dos.writeInt(-1);
-						}
+						String infos = new String(readBytes(infolen, dis));		
+							byte[] content = null;
+							try {
+								content = sp.searchPhoto(infos, null);
+							} catch (RedirectException e) {
+							}
+							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
+							if (content != null) {
+								dos.writeInt(content.length);
+								dos.write(content);
+							} else {
+								dos.writeInt(-1);
+							}
 					} else {
 						dos.writeInt(-1);
 					}
@@ -138,7 +144,7 @@ public class Handler implements Runnable{
 					if(infolen > 0)
 					{
 						String info = new String( readBytes(infolen, dis));
-						byte[] content = sp.searchPhoto(info);
+						byte[] content = sp.searchPhoto(info,null);
 						if (content != null) {
 							dos.writeLong(id);
 							dos.writeInt(content.length);
@@ -184,6 +190,8 @@ public class Handler implements Runnable{
 			if(sp != null)
 				sp.close();
 		} catch (IOException e) {
+			e.printStackTrace();
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
