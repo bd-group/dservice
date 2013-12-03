@@ -1483,7 +1483,7 @@ public class MetaStoreClient {
                                     for (SFile f : files) {
                                         String result = "";
                                         for (SFileLocation loc : file.getLocations()) {
-                                            result = runRemoteCmdWithResult(String.format(command,loc.getHostAddress,"lutools.jar",loc.getDevid(),loc.getLocation()));
+                                            result = runRemoteCmdWithResult(String.format(command,loc.getHostAddress,"../../lib/lutools.jar",loc.getDevid(),loc.getLocation()));
                                             if(!"".equals(result)){
                                                 String[] dres = result.split(",");
                                                 int drecord = Integer.parseInt(dres[0]);
