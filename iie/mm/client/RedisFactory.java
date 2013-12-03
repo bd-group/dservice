@@ -5,15 +5,15 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
 
 public class RedisFactory {
-	//专门用来操作redis中数据库0,它里面存储的是md5与存储时的返回值的映射
-	private static ClientConf conf;
-	private static JedisSentinelPool jsp = null;
+	// for each ClientAPI, there should be one redisfactory
+	private ClientConf conf;
+	private JedisSentinelPool jsp = null;
 
-	public static void init(ClientConf conf) {
-		RedisFactory.conf = conf;
+	public RedisFactory(ClientConf conf) {
+		this.conf = conf;
 	}
 	
-	public static void quit() {
+	public void quit() {
 		if (jsp != null)
 			jsp.destroy();
 	}
@@ -23,7 +23,7 @@ public class RedisFactory {
 		return jedis;
 	}
 	
-	public static Jedis getNewInstance(RedisInstance ri) {
+	public Jedis getNewInstance(RedisInstance ri) {
 		switch (conf.getRedisMode()) {
 		case STANDALONE:
 			return new Jedis(ri.hostname, ri.port);
@@ -40,7 +40,7 @@ public class RedisFactory {
 		return null;
 	}
 	
-	public static Jedis putInstance(Jedis j) {
+	public Jedis putInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {
@@ -52,7 +52,7 @@ public class RedisFactory {
 		return null;
 	}
 
-	public static Jedis putBrokenInstance(Jedis j) {
+	public Jedis putBrokenInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {

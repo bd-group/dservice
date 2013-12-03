@@ -575,7 +575,7 @@ public class MMSClient {
 			}
 		}
 		if (sentinels.size() > 0)
-			RedisFactory.quit();
+			pcInfo.getPc().getRf().quit();
 	}
 
 }

@@ -6,7 +6,6 @@ import iie.mm.client.PhotoClient.SocketHashEntry;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -62,7 +61,7 @@ public class ClientAPI {
 			}
 			conf.setSentinels(sens);
 		}
-		jedis = RedisFactory.getNewInstance(null);
+		jedis = pc.getRf().getNewInstance(null);
 		
 		return 0;
 	}
@@ -75,7 +74,7 @@ public class ClientAPI {
 				throw new Exception("wrong format of url: " + url);
 			
 			if (pc.getJedis() == null) {
-				jedis = RedisFactory.getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
+				jedis = pc.getRf().getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
 				pc.setJedis(jedis);
 			} else {
 				// Use the Redis Server in conf
@@ -210,7 +209,9 @@ public class ClientAPI {
 	}
 
 	public void quit() {
-		RedisFactory.putInstance(jedis);
-		RedisFactory.quit();
+		if (pc.getRf() != null) {
+			pc.getRf().putInstance(jedis);
+			pc.getRf().quit();
+		}
 	}
 }
