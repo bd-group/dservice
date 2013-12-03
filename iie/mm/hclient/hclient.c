@@ -35,7 +35,8 @@ int init(char *url)
 	int i = 1;
 	char *ip,*port;
 	int iport;
-    while(token!=NULL){
+
+    while (token!=NULL) {
 		if(i == 1)
 			ip = token;
        	if(i == 2)
@@ -43,7 +44,7 @@ int init(char *url)
         token=strtok(NULL,":");
         if(token != NULL)
         	i++;
-      }
+    }
 	iport = atoi(port);
 	//根据得到的ip和port，连接redis
 
@@ -87,9 +88,18 @@ int init(char *url)
     printf("Succeed to execute command[%s].\n",command); 
 
 	//由于后面重复使用该变量，所以需要提前释放，否则内存泄漏。  
-    //freeReplyObject(reply);  
-	
-	return 0;
+    //freeReplyObject(reply);
+
+    CURLcode code = curl_global_init(CURL_GLOBAL_ALL);
+
+    if (code != CURLE_OK) {
+        printf("CURL global init failed w/ %d\n", code);
+        err = CURLE_OK;
+        goto out;
+    }
+
+out:
+	return err;
 }  
   
 /************************************************************************/
@@ -131,6 +141,7 @@ char *mput(char **key, void **content, size_t len, int keynr)
 /************************************************************************/  
 int get(char *key, void **buffer, size_t *len)
 {
+    struct MemoryStruct chunk;
     int err = -1;
     
     if (reply) {
@@ -175,7 +186,7 @@ int wait(long *ids, int nr, void **buffer, size_t *len)
 
 
 /************************************************************************/
-/* 功能: 核心功能
+/* 功能: 核心功能测试版
    参数:
 */
 /************************************************************************/
@@ -231,7 +242,7 @@ int libcurlget(char *server,char *key, void **buffer, size_t *len)
     if (!curl)
     {
         printf("couldn't init curl\n");
-        return 0;
+        return -1;
     }
     if (curl == NULL)
     {
@@ -330,7 +341,7 @@ WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data)
 
 //int main(int argc, char **argv)
 //int getFileInBuffer(char *server,char *key,char * buffer)
-int getFileInBuffer(char *server, char *key, void **buffer, size_t *len)
+int getFileInBuffer(char *key, void **buffer, size_t *len)
 {
     CURL *curl_handle;
     //取消原来的注释
@@ -338,42 +349,69 @@ int getFileInBuffer(char *server, char *key, void **buffer, size_t *len)
     //根据传递的buffer进行初始化
     chunk.memory=NULL; /* we expect realloc(NULL, size) to work */
     chunk.size = 0;    /* no data at this point */
-    curl_global_init(CURL_GLOBAL_ALL);
+
+    CURLcode code;
+    char *error = "error";
+
+    curl_handle = curl_easy_init();
+    if (!curl_handle)
+    {
+        printf("couldn't init curl_handle\n");
+        return -1;
+    }
+    if (curl_handle == NULL)
+    {
+        printf( "Failed to create curl_handle connection\n");
+        return -1;
+    }
+
     /* init the curl session */
     curl_handle = curl_easy_init();
     /* specify URL to get */
     char url[4096];
-    sprintf(url, "http://%s/get?key=%s", server, key);
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-    /* send all data to this function */
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-    /* we pass our 'chunk' struct to the callback function */
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-    /* some servers don't like requests that are made without a user-agent field, so we provide one */
-    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-    /* get it! */
-    curl_easy_perform(curl_handle);
-    /* cleanup curl stuff */
-    curl_easy_cleanup(curl_handle);
-    /*
-    * Now, our chunk.memory points to a memory block that is chunk.size
-    * bytes big and contains the remote file.
-    *
-    * Do something nice with it!
-    *
-    * You should be aware of the fact that at this point we might have an
-    * allocated data block, and nothing has yet deallocated that data. So when
-    * you're done with it, you should free() it as a nice application.
-    */
-    *buffer = chunk.memory;
-    *len = chunk.size;
-    //if(chunk.memory)
-        //free(chunk.memory);
-        /* we're done with libcurl, so clean it up */
-        //curl_global_cleanup();
-      //  return chunk.size;
+    int i = 0;
+    for( i=0; i< reply->elements;i++)
+    {
+        sprintf(url, "http://%s/get?key=%s", reply->element[i]->str, key);
+        printf( "url%d: %s\n", i,url);
 
-    return 0;
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10);//设置超时时间，单位s
+        /* send all data to this function */
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        /* we pass our 'chunk' struct to the callback function */
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+        /* some servers don't like requests that are made without a user-agent field, so we provide one */
+        curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+        /* 将CURLOPT_VERBOSE属性设置为1，libcurl会输出通信过程中的一些细节 */
+        curl_easy_setopt( curl_handle, CURLOPT_VERBOSE , 1 ); 
+        /* 如果使用的是http协议，请求头/响应头也会被输出。将CURLOPT_HEADER设为1，这些头信息将出现在消息的内容中 */
+        curl_easy_setopt( curl_handle, CURLOPT_HEADER , 1 ); 
+        /* get it! */
+        code = curl_easy_perform(curl_handle);
+        /* 判断是否成功 */
+        if(CURLE_OK != code) return -1;
+        /* cleanup curl stuff */
+        curl_easy_cleanup(curl_handle);
+        /*
+        * Now, our chunk.memory points to a memory block that is chunk.size
+        * bytes big and contains the remote file.
+        * Do something nice with it!
+        * You should be aware of the fact that at this point we might have an
+        * allocated data block, and nothing has yet deallocated that data. So when
+        * you're done with it, you should free() it as a nice application.
+        */
+        *buffer = chunk.memory;
+        *len = chunk.size;
+    
+    	//if(chunk.memory)
+        	//free(chunk.memory);
+        	/* we're done with libcurl, so clean it up */
+        	//curl_global_cleanup();
+      		//return chunk.size;
+
+        return 0;
+    }
 }
 
 
@@ -381,17 +419,19 @@ int getFileInBuffer(char *server, char *key, void **buffer, size_t *len)
 int main(void)
 {
     //char url[] = "192.168.1.221:6379";
-    char url[] = "192.168.1.36:6379";
+    char url[] = "192.168.1.37:6379";
     //char url[] = "127.0.0.1:6379";
 	init(url);
 
 	void *buffer;
 	size_t len;
 	int i = 0;
-    //char key[] = "default@206dd46198a06e912e34c9793afb9ce3";
-    char key[] = "test@066533b75bc3b82ba4445d1f1f580da7";
-    for( i=0; i< reply->elements;i++)
-        libcurlget(reply->element[i]->str,key,&buffer,&len);
+    //char key[] = "1@test@1@0@299071@44233@/mnt/data1/#1@test@1@0@0@44233@.";
+    //char key[] = "test@ba3acbe8e6a52943d75bfdbd63c3ea42";//37image
+    //char key[] = "1@test2@1@0@0@47941@.#1@test2@2@0@44233@47941@.";//37,38
+    char key[] = "1@test2@2@0@44233@47941@.";//38image
+    //for( i=0; i< reply->elements;i++)
+        //libcurlget(reply->element[i]->str,key,&buffer,&len);
 	
 	//FILE *fp = fopen("test","wb");
 	//fseek(file,0,SEEK_SET);
@@ -401,7 +441,8 @@ int main(void)
     //char buffertest[1024 * 10];
     void*buf;
 
-    int size = getFileInBuffer(reply->element[0]->str,key,&buf,&len);
+    int size = getFileInBuffer(key,&buf,&len);
     printf( "******************************************: %d\n", size);
+    
 
 }

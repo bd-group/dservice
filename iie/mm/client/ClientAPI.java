@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +44,48 @@ public class ClientAPI {
 	public PhotoClient getPc() {
 		return pc;
 	}
+	
+	private int init_by_sentinel(ClientConf conf, String urls) throws Exception {
+		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
+			return -1;
+		}
+		// iterate the sentinel set, get master IP:port, save to RedisFactory
+		if (conf.getSentinels() == null) {
+			if (urls == null) {
+				throw new Exception("Invalid URL or sentinels.");
+			}
+			HashSet<String> sens = new HashSet<String>();
+			String[] s = urls.split(";");
+			
+			for (int i = 0; i < s.length; i++) {
+				sens.add(s[i]);
+			}
+			conf.setSentinels(sens);
+		}
+		jedis = RedisFactory.getNewInstance(null);
+		
+		return 0;
+	}
+	
+	private int init_by_standalone(ClientConf conf, String urls) throws Exception {
+		String[] x = urls.split(";");
+		for (String url : x) {
+			String[] redishp = url.split(":"); 
+			if (redishp.length != 2)
+				throw new Exception("wrong format of url: " + url);
+			
+			if (pc.getJedis() == null) {
+				jedis = RedisFactory.getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
+				pc.setJedis(jedis);
+			} else {
+				// Use the Redis Server in conf
+				jedis = pc.getJedis();
+			}
+			conf.setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
+		}
+		
+		return 0;
+	}
 
 	/**
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
@@ -56,24 +99,18 @@ public class ClientAPI {
 		if (urls == null) {
 			throw new Exception("The url can not be null.");
 		}
-		String[] x = urls.split(";");
+		
 		if (pc.getConf() == null) {
 			pc.setConf(new ClientConf());
 		}
 		pc.getConf().clrRedisIns();
-		for (String url : x) {
-			String[] redishp = url.split(":"); 
-			if (redishp.length != 2)
-				throw new Exception("wrong format of url: " + url);
-			
-			if (pc.getJedis() == null) {
-				jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
-				pc.setJedis(jedis);
-			} else {
-				// Use the Redis Server in conf
-				jedis = pc.getJedis();
-			}
-			pc.getConf().setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
+		switch (pc.getConf().getRedisMode()) {
+		case SENTINEL:
+			init_by_sentinel(pc.getConf(), urls);
+			break;
+		case STANDALONE:
+			init_by_standalone(pc.getConf(), urls);
+			break;
 		}
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
@@ -172,4 +209,8 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:" + key);
 	}
 
+	public void quit() {
+		RedisFactory.putInstance(jedis);
+		RedisFactory.quit();
+	}
 }

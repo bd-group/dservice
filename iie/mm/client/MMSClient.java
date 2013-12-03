@@ -178,6 +178,7 @@ public class MMSClient {
 		String lpt_type = "", lgt_type = "";
 		boolean lgt_docheck = false;
 		int dupNum = 1;
+		Set<String> sentinels = new HashSet<String>();
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -198,7 +199,9 @@ public class MMSClient {
 				
 				System.out.println("-lpt  : large scacle put test.");
 				System.out.println("-lgt  : large scacle get test.");
-				System.out.println("-getserverinfo  :  get info from all servers online" ); 
+				System.out.println("-getserverinfo  :  get info from all servers online" );
+				
+				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				
 				System.exit(0);
 			}
@@ -274,11 +277,25 @@ public class MMSClient {
 				// get or search
 				lgt_type = o.opt;
 			}
+			if (o.flag.equals("-stl")) {
+				// parse sentinels
+				if (o.opt == null) {
+					System.out.println("-stl host:port;host:port");
+					System.exit(0);
+				}
+				String[] stls = o.opt.split(";");
+				for (int i = 0; i < stls.length; i++) {
+					sentinels.add(stls[i]);
+				}
+			}
 		}
 		
 		ClientConf conf = null;
 		try {
-			conf = new ClientConf(serverName, serverPort, redisHost, redisPort, mode, dupNum);
+			if (sentinels.size() > 0)
+				conf = new ClientConf(sentinels, mode, dupNum);
+			else
+				conf = new ClientConf(serverName, serverPort, redisHost, redisPort, mode, dupNum);
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 			System.exit(0);
@@ -540,13 +557,13 @@ public class MMSClient {
 				String sname = o.opt;
 				System.out.println("Provide the set name to be deleted.");
 				System.out.println("get args: set name  " + sname);
-				DeleteSet ds = new DeleteSet(redisHost,redisPort);
+				DeleteSet ds = new DeleteSet(redisHost, redisPort);
 				ds.delSet(sname);
 				ds.closeJedis();
 			}
 			if (o.flag.equals("-getserverinfo")) {
 				System.out.println("get server info.");
-				DeleteSet ds = new DeleteSet(redisHost,redisPort);
+				DeleteSet ds = new DeleteSet(redisHost, redisPort);
 				List<String> ls = ds.getAllServerInfo();
 				if(ls == null) {
 					System.out.println("出现错误");
@@ -557,6 +574,8 @@ public class MMSClient {
 				}
 			}
 		}
+		if (sentinels.size() > 0)
+			RedisFactory.quit();
 	}
 
 }
