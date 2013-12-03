@@ -50,7 +50,6 @@ public class ProfileTimerTask extends TimerTask {
 				sid = jedis.incr("mm.next.serverid");
 				// FIXME: if two server start with the same port, fail!
 				jedis.zadd("mm.active", sid, self);
-				System.out.println("sid"+sid);
 			}
 			// reget the sid
 			sid = jedis.zscore("mm.active", self).longValue();

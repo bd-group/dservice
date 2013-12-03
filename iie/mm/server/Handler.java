@@ -122,18 +122,18 @@ public class Handler implements Runnable{
 
 					if (infolen > 0) {
 						String infos = new String(readBytes(infolen, dis));		
-							byte[] content = null;
-							try {
-								content = sp.searchPhoto(infos, null);
-							} catch (RedirectException e) {
-							}
-							// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
-							if (content != null) {
-								dos.writeInt(content.length);
-								dos.write(content);
-							} else {
-								dos.writeInt(-1);
-							}
+						byte[] content = null;
+						try {
+							content = sp.searchPhoto(infos, null);
+						} catch (RedirectException e) {
+						}
+						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
+						if (content != null) {
+							dos.writeInt(content.length);
+							dos.write(content);
+						} else {
+							dos.writeInt(-1);
+						}
 					} else {
 						dos.writeInt(-1);
 					}
@@ -144,17 +144,21 @@ public class Handler implements Runnable{
 					if(infolen > 0)
 					{
 						String info = new String( readBytes(infolen, dis));
-						byte[] content = sp.searchPhoto(info,null);
+						byte[] content = null;
+						try {
+							content = sp.searchPhoto(info, null);
+						} catch (RedirectException e) {
+						}
 						if (content != null) {
 							dos.writeLong(id);
 							dos.writeInt(content.length);
 							dos.write(content);
 						} else {
-							dos.writeInt(-1);
+							dos.writeLong(-1);
 						}
 					}
 					else {
-						dos.writeInt(-1);
+						dos.writeLong(-1);
 					}
 				} else if (header[0] == ActionType.DELSET) {
 					String set = new String(readBytes(header[1], dis));
