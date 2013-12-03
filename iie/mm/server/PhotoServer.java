@@ -65,6 +65,9 @@ public class PhotoServer {
 		Jedis jedis = RedisFactory.getResource();
 		String r = "";
 		
+		if (jedis == null) 
+			return "#FAIL: Get default jedis instance failed.";
+		
 		// find all servers
 		try{
 			Set<String> servers = jedis.zrange("mm.active", 0, -1);

@@ -126,8 +126,8 @@ public class ClientAPI {
 	 * @return		
 	 */
 	public String put(String key, byte[] content) throws IOException, Exception {
-		if (key == null)
-			throw new Exception("key can not be null.");
+		if (key == null || keyList.size() ==0)
+			throw new Exception("key can not be null or MetaError.");
 		String[] keys = key.split("@");
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);

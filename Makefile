@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-11-29 21:46:46 macan>
+# Time-stamp: <2013-12-02 11:28:37 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -33,12 +33,18 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
 MM_CP = $(shell pwd)/lib/jedis-2.2.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool-1.6.jar
+<<<<<<< HEAD
 
 MM_JARS = $(shell pwd)/lib/jedis-2.2.1.jar $(shell pwd)/lib/junixsocket-1.3.jar $(shell pwd)/lib/sigar.jar $(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar $(shell pwd)/lib/servlet-api-2.5.jar $(shell pwd)/lib/commons-pool-1.6.jar
+=======
+>>>>>>> origin/master
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
 MMCC = build/libmmcc.so
+MMHC = build/libmmhc.so
+
+DEMO = build/demo
 
 IIE = iie
 MSCLI = mscli
@@ -50,11 +56,22 @@ all: $(OBJS) $(IIE) $(MSCLI)
 
 mmcc : $(MMCC)
 
+mmhc : $(MMHC)
+
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
 	@$(ECHO) -e " " CC"\t" $@
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/client.c -o build/client.o
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/clientapi.c -o build/clientapi.o
 	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
+
+$(MMHC) : iie/mm/hclient/hclient.c
+	@$(ECHO) -e " " CC"\t" $@
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/hclient -c iie/mm/hclient/hclient.c -o build/hclient.o
+	@$(GCC) -Llib build/hclient.o -shared -o $(MMHC) -Wl,-soname,libmmhc.so -lhiredis -lrt
+
+demo : $(DEMO)
+
+$(DEMO) : iie/mm/cclient/demo.c
 	@$(GCC) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)

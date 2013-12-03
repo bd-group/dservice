@@ -27,15 +27,23 @@ public class ProfileTimerTask extends TimerTask {
 //	private Jedis jedis;
 	private String hbkey;
 	
-	public ProfileTimerTask(ServerConf conf, int period) {
+	public ProfileTimerTask(ServerConf conf, int period) throws JedisException {
 		super();
 		this.conf = conf;
 		File dir = new File(profileDir);
 		if (!dir.exists())
 			dir.mkdirs();
 		
+<<<<<<< HEAD
 		// 向redis中插入心跳信息
 		Jedis jedis = RedisFactory.getResource();
+=======
+		// 向redis的数据库1中插入心跳信息
+		jedis = new RedisFactory(conf).getDefaultInstance();
+		if (jedis == null)
+			throw new JedisException("Get default jedis instance failed.");
+		
+>>>>>>> origin/master
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
 		try{
 			Pipeline pi = jedis.pipelined();
@@ -104,6 +112,13 @@ public class ProfileTimerTask extends TimerTask {
 		//server的心跳信息
 		Jedis jedis = RedisFactory.getResource();
 		try {
+<<<<<<< HEAD
+=======
+			if (jedis == null)
+				jedis = new RedisFactory(conf).getDefaultInstance();
+			if (jedis == null)
+				info += ", redis down?";
+>>>>>>> origin/master
 			Pipeline pi = jedis.pipelined();
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
@@ -126,7 +141,7 @@ public class ProfileTimerTask extends TimerTask {
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里
-		String profileName = s.substring(0, 10)+".long";
+		String profileName = s.substring(0, 10)+".log";
 		PrintWriter pw = null;
 		try {
 			//追加到文件尾

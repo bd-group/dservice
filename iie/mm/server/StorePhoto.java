@@ -94,10 +94,16 @@ public class StorePhoto {
 			storeArray.add(".");
 		}
 		diskArray = storeArray.toArray(new String[0]);
+		jedis = new RedisFactory(conf).getDefaultInstance();
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
-		
+	}
+	
+	public void reconnectJedis() {
+		if (jedis == null) {
+			jedis = new RedisFactory(conf).getDefaultInstance();
+		}
 	}
 
 	/**
@@ -210,39 +216,24 @@ public class StorePhoto {
 					 */
 				}
 				
+				RedisFactory.returnResource(jedis);
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken in storeObject.");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return "#FAIL:" + e.getMessage();
 			} catch (JedisException e) {
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
-				return "#FAIL:" + e.getMessage();
-			}finally{
 				RedisFactory.returnResource(jedis);
+				return "#FAIL:" + e.getMessage();
 			}
 		}
 		
-//		try {
-//			
-//		} catch (JedisConnectionException e) {
-//			System.out.println("Jedis connection broken in storeObject.");
-//			try {
-//				Thread.sleep(1000);
-//			} catch (InterruptedException e1) {
-//			}
-//			jedis = null;
-//			return "#FAIL:" + e.getMessage();
-//		} catch (JedisException e) {
-//			jedis = null;
-//			return "#FAIL:" + e.getMessage();
-//		} catch (Exception e) {
-//			e.printStackTrace();
-//			return "#FAIL:" + e.getMessage();
-//		}
 	}
 	
 	/**
@@ -401,9 +392,13 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+<<<<<<< HEAD
+=======
+				jedis = RedisFactory.putBrokenInstance(jedis);
+>>>>>>> origin/master
 				return null;
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = RedisFactory.putBrokenInstance(jedis);
 				return null;
 			}finally{
 				RedisFactory.returnResource(jedis);
@@ -517,6 +512,10 @@ public class StorePhoto {
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
+<<<<<<< HEAD
+=======
+			RedisFactory.putInstance(jedis);
+>>>>>>> origin/master
 		} catch(IOException e){
 			e.printStackTrace();
 		}

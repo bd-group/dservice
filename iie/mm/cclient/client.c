@@ -841,7 +841,7 @@ int send_int(int sockfd, int num)
 int search_by_info(char *info, void **buf, size_t *length)
 {
     /* split the info by @ */
-    char *p = strdup(info), *n;
+    char *p = strdup(info), *n = NULL;
     char *x = p;
     long sid = -1;
     struct MMSConnection *c;
@@ -937,7 +937,7 @@ out_disconn:
 
 int search_mm_object(char *infos, void **buf, size_t *length)
 {
-    char *p = infos, *n;
+    char *p = infos, *n = NULL;
     int err = 0, found = 0;
 #ifdef DEBUG_LATENCY
     struct timeval tv;

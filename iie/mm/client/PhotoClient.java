@@ -129,7 +129,7 @@ public class PhotoClient {
 						do {
 							try {
 								synchronized (this) {
-									System.out.println("wait ...");
+									//System.out.println("wait ...");
 									this.wait();
 								}
 							} catch (InterruptedException e) {
