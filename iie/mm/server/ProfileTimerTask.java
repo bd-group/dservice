@@ -101,11 +101,12 @@ public class ProfileTimerTask extends TimerTask {
 				jedis = new RedisFactory(conf).getDefaultInstance();
 			if (jedis == null)
 				info += ", redis down?";
-			Pipeline pi = jedis.pipelined();
-			pi.set(hbkey, "1");
-			pi.expire(hbkey, period + 5);
-			pi.sync();
-			
+			else {
+				Pipeline pi = jedis.pipelined();
+				pi.set(hbkey, "1");
+				pi.expire(hbkey, period + 5);
+				pi.sync();
+			}
 			// update server list
 			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
 			if (active != null && active.size() > 0) {
@@ -114,7 +115,7 @@ public class ProfileTimerTask extends TimerTask {
 				}
 			}
 		} catch (Exception e) {
-			jedis = null;
+			jedis = RedisFactory.putBrokenInstance(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里
