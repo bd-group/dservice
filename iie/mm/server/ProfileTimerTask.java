@@ -69,6 +69,7 @@ public class ProfileTimerTask extends TimerTask {
 				System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
 			}
 		}
+		jedis = RedisFactory.putInstance(jedis);
 		this.period = period;
 	}
 
@@ -116,6 +117,8 @@ public class ProfileTimerTask extends TimerTask {
 			}
 		} catch (Exception e) {
 			jedis = RedisFactory.putBrokenInstance(jedis);
+		} finally {
+			RedisFactory.putInstance(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里

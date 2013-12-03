@@ -10,6 +10,7 @@
 
 GCC = gcc
 ECHO = /bin/echo
+MAKE = make
 # TODO: Make sure REMOVE self_test flag when release code
 CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST_
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
@@ -49,14 +50,26 @@ OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class
 all: $(OBJS) $(IIE) $(MSCLI)
 	@$(ECHO) -e "Build OK."
 
-mmcc : $(MMCC)
+mmcc : DEPEND $(MMCC) 
 
-mmhc : $(MMHC)
+mmhc : DEPEND $(MMHC)
+
+DEPEND : 
+	@$(ECHO) -e " " MK Depends
+	@$(MAKE) --no-print-directory -C redis-2.8.1
+	@rm -rf bin/*
+	@cp -rf redis-2.8.1/src/redis-server bin/
+	@cp -rf redis-2.8.1/src/redis-cli bin/
+	@cp -rf redis-2.8.1/src/redis-sentinel bin/
+	@$(MAKE) --no-print-directory -C hiredis
+	@rm -rf lib/libhiredis*
+	@cp -rf hiredis/libhiredis.so lib/
+	@cd lib; ln -s libhiredis.so libhiredis.so.0.10
 
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
 	@$(ECHO) -e " " CC"\t" $@
-	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/client.c -o build/client.o
-	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -c iie/mm/cclient/clientapi.c -o build/clientapi.o
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/client.c -o build/client.o
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/clientapi.c -o build/clientapi.o
 	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
 
 $(MMHC) : iie/mm/hclient/hclient.c
@@ -95,8 +108,7 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
 	@$(ECHO) -e " " JAR"\t" iie.jar
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class
-
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
 	@CLASSPATH=$(CP):$(MSCLI_RUNTIME) javac -d build $(IIE)/metastore/*.java
@@ -113,5 +125,11 @@ runcli : $(MSCLI)
 	@$(ECHO) -e "Run MetaStoreClient ..."
 	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
 
-clean:
+depend_clean:
+	@$(MAKE) --no-print-directory -C redis-2.8.1 clean
+	@$(MAKE) --no-print-directory -C hiredis clean
+
+clean: depend_clean
 	-@rm -rf $(OBJS) *.o devmap_*.h *.class gmon.out *.jar build/*
+	-@rm -rf bin/*
+	-@rm -rf lib/libhiredis*

@@ -79,7 +79,7 @@ public class PhotoServer {
 		for (String s : servers) {
 			r += " " + s.substring(6) + ",";
 		}
-		jedis.quit();
+		RedisFactory.putInstance(jedis);
 		
 		return r;
 	}
