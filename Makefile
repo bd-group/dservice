@@ -56,11 +56,11 @@ mmhc : DEPEND $(MMHC)
 
 DEPEND : 
 	@$(ECHO) -e " " MK Depends
-	@$(MAKE) --no-print-directory -C redis-2.8.1
+	@$(MAKE) --no-print-directory -C redis-2.8.2
 	@rm -rf bin/*
-	@cp -rf redis-2.8.1/src/redis-server bin/
-	@cp -rf redis-2.8.1/src/redis-cli bin/
-	@cp -rf redis-2.8.1/src/redis-sentinel bin/
+	@cp -rf redis-2.8.2/src/redis-server bin/
+	@cp -rf redis-2.8.2/src/redis-cli bin/
+	@cp -rf redis-2.8.2/src/redis-sentinel bin/
 	@$(MAKE) --no-print-directory -C hiredis
 	@rm -rf lib/libhiredis*
 	@cp -rf hiredis/libhiredis.so lib/
@@ -126,7 +126,7 @@ runcli : $(MSCLI)
 	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
 
 depend_clean:
-	@$(MAKE) --no-print-directory -C redis-2.8.1 clean
+	@$(MAKE) --no-print-directory -C redis-2.8.2 clean
 	@$(MAKE) --no-print-directory -C hiredis clean
 
 clean: depend_clean
