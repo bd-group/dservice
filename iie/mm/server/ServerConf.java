@@ -9,12 +9,7 @@ import java.util.Set;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
-<<<<<<< HEAD
-import redis.clients.jedis.JedisSentinelPool;
-import redis.clients.jedis.exceptions.JedisConnectionException;
-=======
 import redis.clients.jedis.exceptions.JedisException;
->>>>>>> origin/master
 
 /**
  * 代表节点的配置
@@ -24,6 +19,7 @@ import redis.clients.jedis.exceptions.JedisException;
  */
 public class ServerConf {
 	public static int DEFAULT_SERVER_PORT = 30303;
+	public static int DEFAULT_REDIS_PORT = 30308;
 	public static int DEFAULT_BLOCK_SIZE = 64 * 1024 * 1024;
 	public static int DEFAULT_PERIOD = 10;
 	public static int DEFAULT_FLUSH_INTERVAL = 10;
@@ -34,6 +30,8 @@ public class ServerConf {
 	
 	private String nodeName; // 节点名
 	private int serverPort = DEFAULT_SERVER_PORT;
+	private String redisHost;
+    private int redisPort = DEFAULT_REDIS_PORT;
 	private int blockSize = DEFAULT_BLOCK_SIZE;
 	private int httpPort = DEFAULT_HTTP_PORT;
 	private int period = DEFAULT_PERIOD; // 每隔period秒统计一次读写速率
@@ -41,15 +39,10 @@ public class ServerConf {
 	private int flush_interval = DEFAULT_FLUSH_INTERVAL;
 	private int reqnr_to_flush = DEFAULT_REQNR_TO_FLUSH;
 	
-	private String redisMasterName;
 	public static long serverId = -1l;
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 		
 	private Set<String> storeArray = new HashSet<String>();
-<<<<<<< HEAD
-	private Set<String> stn = new HashSet<String>();
-	public ServerConf(String nodeName, int serverPort, int blockSize, int period, int httpPort, String redisMasterName, Set<String> sa,Set<String> stn) throws Exception {
-=======
 	
 	public enum RedisMode {
 		SENTINEL, STANDALONE,
@@ -95,25 +88,20 @@ public class ServerConf {
 	
 	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, 
 			int blockSize, int period, int httpPort) throws Exception {
->>>>>>> origin/master
 		if (nodeName == null)
 			this.nodeName = InetAddress.getLocalHost().getHostName();
 		else
 			this.nodeName = nodeName;
 		if (serverPort > 0)
 			this.serverPort = serverPort;
+		if (redisHost == null)
+            this.redisHost = this.nodeName;
+		else
+            this.redisHost = redisHost;
+		this.redisPort = redisPort;
 		this.blockSize = blockSize;
 		this.period = period;
 		this.httpPort = httpPort;
-<<<<<<< HEAD
-		this.redisMasterName = redisMasterName;
-		this.storeArray = sa;
-		this.stn = stn;
-		
-		// ok, get global config if they exist.
-		JedisSentinelPool jsp = new JedisSentinelPool(redisMasterName,stn);
-		Jedis jedis = jsp.getResource();
-=======
 		setRedisMode(RedisMode.STANDALONE);
 		
 		// ok, get global config if they exist.
@@ -121,7 +109,6 @@ public class ServerConf {
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
 		
->>>>>>> origin/master
 		Pipeline p = jedis.pipelined();
 		p.get("mm.conf.blocksize");
 		p.get("mm.conf.period");
@@ -134,8 +121,7 @@ public class ServerConf {
 			this.period = Integer.parseInt(results.get(2).toString());
 			System.out.println("Get period from redis server: " + this.period);
 		}
-		jsp.returnResource(jedis);
-		jsp.destroy();
+		jedis = RedisFactory.putInstance(jedis);
 	}
 
 	public String getNodeName() {
@@ -154,14 +140,22 @@ public class ServerConf {
 		this.serverPort = serverPort;
 	}
 
-	public String getRedisMasterName() {
-		return this.redisMasterName;
+	public String getRedisHost() {
+        return redisHost;
 	}
-
-	public void setRedisHost(String redisMasterName) {
-		this.redisMasterName = redisMasterName;
+	
+	public void setRedisHost(String redisHost) {
+	        this.redisHost = redisHost;
 	}
-
+	
+	public int getRedisPort() {
+	        return redisPort;
+	}
+	
+	public void setRedisPort(int redisPort) {
+	        this.redisPort = redisPort;
+	}
+	
 
 	public int getHttpPort(){
 		return httpPort;
@@ -226,16 +220,6 @@ public class ServerConf {
 		this.storeArray = storeArray;
 	}
 
-<<<<<<< HEAD
-	public Set<String> getStn() {
-		return this.stn;
-	}
-
-
-	public void setStn(Set<String> stn) {
-		this.stn = stn;
-	}
-=======
 
 	public RedisMode getRedisMode() {
 		return redisMode;
@@ -256,5 +240,4 @@ public class ServerConf {
 		this.sentinels = sentinels;
 	}
 	
->>>>>>> origin/master
 }

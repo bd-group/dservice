@@ -24,7 +24,7 @@ public class ProfileTimerTask extends TimerTask {
 	private long lastDnr = 0;
 	private long lastTs = System.currentTimeMillis();
 	private String profileDir = "log/";
-//	private Jedis jedis;
+	private Jedis jedis;
 	private String hbkey;
 	
 	public ProfileTimerTask(ServerConf conf, int period) throws JedisException {
@@ -34,18 +34,12 @@ public class ProfileTimerTask extends TimerTask {
 		if (!dir.exists())
 			dir.mkdirs();
 		
-<<<<<<< HEAD
-		// 向redis中插入心跳信息
-		Jedis jedis = RedisFactory.getResource();
-=======
 		// 向redis的数据库1中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
 		
->>>>>>> origin/master
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
-		try{
 			Pipeline pi = jedis.pipelined();
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
@@ -79,11 +73,7 @@ public class ProfileTimerTask extends TimerTask {
 			}
 			
 			this.period = period;
-		}catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken in storeObject.");
-		}finally{
-			RedisFactory.returnResource(jedis);
-		}
+		
 	}
 
 	@Override
@@ -110,15 +100,14 @@ public class ProfileTimerTask extends TimerTask {
 		lastTs = cur;
 		
 		//server的心跳信息
-		Jedis jedis = RedisFactory.getResource();
 		try {
-<<<<<<< HEAD
-=======
 			if (jedis == null)
 				jedis = new RedisFactory(conf).getDefaultInstance();
 			if (jedis == null)
+			{
 				info += ", redis down?";
->>>>>>> origin/master
+				throw new JedisConnectionException("failed to connect to redis");
+			}
 			Pipeline pi = jedis.pipelined();
 			pi.set(hbkey, "1");
 			pi.expire(hbkey, period + 5);
@@ -131,13 +120,15 @@ public class ProfileTimerTask extends TimerTask {
 					ServerConf.servers.put((long)t.getScore(), t.getElement());
 				}
 			}
-		
+			//每次用完jedis要放回去
+			jedis = RedisFactory.putInstance(jedis);
+			
 		}catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken when doing profiling task.");
+			jedis = RedisFactory.putBrokenInstance(jedis);
 		}catch (Exception e) {
+			jedis = RedisFactory.putInstance(jedis);
 			e.printStackTrace();
-		}finally{
-			RedisFactory.returnResource(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里

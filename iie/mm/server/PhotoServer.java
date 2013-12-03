@@ -62,38 +62,27 @@ public class PhotoServer {
 	}
 	
 	public static String getServerInfo(ServerConf conf) {
-		Jedis jedis = RedisFactory.getResource();
-		String r = "";
-		
-		if (jedis == null) 
-			return "#FAIL: Get default jedis instance failed.";
-		
-		// find all servers
-		try{
-			Set<String> servers = jedis.zrange("mm.active", 0, -1);
-			r += "\n Total  Servers:";
-			for (String s : servers) {
-				r += " " + s + ",";
-			}
-			// find heartbeated servers
-			servers = jedis.keys("mm.hb.*");
-			r += "\n Active Servers:";
-			for (String s : servers) {
-				r += " " + s.substring(6) + ",";
-			}
-			jedis.quit();
-		
-		}catch(JedisConnectionException e){
-			System.out.println("Jedis connection broken in storeObject.");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-		}finally{
-			RedisFactory.returnResource(jedis);
-		}
-		
-		return r;
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+        String r = "";
+        
+        if (jedis == null)
+                return "#FAIL: Get default jedis instance failed.";
+        
+        // find all servers
+        Set<String> servers = jedis.zrange("mm.active", 0, -1);
+        r += "\n Total Servers:";
+        for (String s : servers) {
+                r += " " + s + ",";
+        }
+        // find heartbeated servers
+        servers = jedis.keys("mm.hb.*");
+        r += "\n Active Servers:";
+        for (String s : servers) {
+                r += " " + s.substring(6) + ",";
+        }
+        jedis.quit();
+        
+        return r;
 	}
 	
 	/**

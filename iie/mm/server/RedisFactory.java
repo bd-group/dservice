@@ -2,14 +2,6 @@ package iie.mm.server;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
-<<<<<<< HEAD
-public class RedisFactory {
-
-//	private static ServerConf conf;
-	private static JedisSentinelPool jsp = null;
-	public RedisFactory() {
-		
-=======
 
 public class RedisFactory {
 	private static ServerConf conf;
@@ -17,20 +9,9 @@ public class RedisFactory {
 
 	public RedisFactory(ServerConf conf) {
 		RedisFactory.conf = conf;
->>>>>>> origin/master
-	}
-	public static void init(ServerConf conf){
-		jsp = new JedisSentinelPool(conf.getRedisMasterName(),conf.getStn());
 	}
 	
 	// 从配置文件中读取redis的地址和端口,以此创建jedis对象
-<<<<<<< HEAD
-	public static synchronized Jedis getResource() {
-		return jsp.getResource();
-	}
-	public static synchronized void returnResource(Jedis jedis){
-		jsp.returnResource(jedis);
-=======
 	public Jedis getDefaultInstance() {
 		switch (conf.getRedisMode()) {
 		case STANDALONE:
@@ -70,7 +51,6 @@ public class RedisFactory {
 			jsp.returnBrokenResource(j);
 		}
 		return null;
->>>>>>> origin/master
 	}
 //	public static ServerConf getServerConf(){
 //		return this.conf;

@@ -116,7 +116,7 @@ public class StorePhoto {
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
-		jedis = RedisFactory.getResource();
+		reconnectJedis();
 		
 		StringBuffer rVal = new StringBuffer(128);
 		
@@ -196,6 +196,7 @@ public class StorePhoto {
 				Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
 				Response<String> r2 = t1.hget(set,md5);
 				t1.exec();
+				
 				if (r1.get() == 1)
 					return returnVal;
 				else {
@@ -216,7 +217,7 @@ public class StorePhoto {
 					 */
 				}
 				
-				RedisFactory.returnResource(jedis);
+				
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken in storeObject.");
 				try {
@@ -229,8 +230,11 @@ public class StorePhoto {
 				jedis = RedisFactory.putBrokenInstance(jedis);
 				return "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
-				RedisFactory.returnResource(jedis);
+				jedis = RedisFactory.putInstance(jedis);
 				return "#FAIL:" + e.getMessage();
+			} finally{
+				if(jedis != null)
+					jedis = RedisFactory.putInstance(jedis);
 			}
 		}
 		
@@ -244,7 +248,7 @@ public class StorePhoto {
 	 * @return	出现任何错误返回null，出现错误的话不知道哪些存储成功，哪些不成功
 	 */
 	public String[] mstorePhoto(String set, String[] md5, byte[][] content) {
-		jedis = RedisFactory.getResource();
+		reconnectJedis();
 		
 		if(!(md5.length == content.length && md5.length == content.length)) {
 			System.out.println("Array lengths in arguments mismatch.");
@@ -341,19 +345,21 @@ public class StorePhoto {
 						returnVal[i] = r2.get()+"#"+returnVal[i];
 						mcs.put(md5[i], returnVal[i]);
 					}	
+					
 				} catch (JedisConnectionException e) {
 					System.out.println("Jedis connection broken in storeObject.");
 					try {
 						Thread.sleep(1000);
 					} catch (InterruptedException e1) {
 					}
+					jedis = RedisFactory.putBrokenInstance(jedis);
 					return null;
 				} catch (JedisException e) {
+					jedis = RedisFactory.putBrokenInstance(jedis);
 					return null;
 				} catch (Exception e) {
+					jedis = RedisFactory.putInstance(jedis);
 					return null;
-				}finally{
-					RedisFactory.returnResource(jedis);
 				}
 				
 				
@@ -361,12 +367,14 @@ public class StorePhoto {
 			try{
 				ssc.raf.write(baos.toByteArray());
 				//结果一次存入redis
-				if(mcs.size()>0)
+				if(mcs.size()>0 && jedis != null)
 					jedis.hmset(set,mcs);
 			}
 			catch(IOException e){
 				e.printStackTrace();
 				return null;
+			}finally{
+				jedis = RedisFactory.putInstance(jedis);
 			}
 			
 		}
@@ -379,7 +387,7 @@ public class StorePhoto {
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
 	public byte[] getPhoto(String set, String md5) throws RedirectException{
-		jedis = RedisFactory.getResource();
+		reconnectJedis();
 		String info = null;
 		
 		// Step 1: check the local lookup cache
@@ -387,23 +395,19 @@ public class StorePhoto {
 		if (info == null) {
 			try {
 				info = jedis.hget(set, md5);
+				jedis = RedisFactory.putInstance(jedis);
 			} catch (JedisConnectionException e) {
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-<<<<<<< HEAD
-=======
 				jedis = RedisFactory.putBrokenInstance(jedis);
->>>>>>> origin/master
 				return null;
 			} catch (JedisException e) {
 				jedis = RedisFactory.putBrokenInstance(jedis);
 				return null;
-			}finally{
-				RedisFactory.returnResource(jedis);
 			}
-			
+				
 			if (info == null) {
 				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
 				return null;
@@ -507,15 +511,12 @@ public class StorePhoto {
 	//关闭jedis连接,关闭文件访问流
 	public void close() {
 		try {
-			//该变量是静态的,因此这段代码会关闭所有的raf,导致其他线程在写入时异常
 
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
-<<<<<<< HEAD
-=======
-			RedisFactory.putInstance(jedis);
->>>>>>> origin/master
+			if(jedis != null)
+				RedisFactory.putInstance(jedis);
 		} catch(IOException e){
 			e.printStackTrace();
 		}
