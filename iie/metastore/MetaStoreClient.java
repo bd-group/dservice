@@ -548,6 +548,7 @@ public class MetaStoreClient {
 	    		System.out.println("-lst : list table files.");
 	    		System.out.println("-lfd : list files by digest.");
 	    		System.out.println("-flt : filter table files.");
+                        System.out.println("-flc : count stats of the filter table files.");
 	    		System.out.println("-tct : truncate table files.");
 	    		System.out.println("-pp  : ping pong latency test.");
 	    		System.out.println("-flctc : lots of file createtion test.");
@@ -1453,6 +1454,55 @@ public class MetaStoreClient {
 					break;
 				}
 			}
+                        if(o.flag.equals("-flc"){
+                                if(dbName == null || table == null){
+                                    System.out.println("please set -db and -table");
+                                    System.exit(0);
+                                }
+
+                                List<SplitValue> values = new ArrayList<SplitValue>();
+                                if(flt_l1_key !=null && flt_l1_value !=null){
+                                    String[] l1vs = flt_l1_value.split(";");
+                                    for(String vs:l1vs){
+                                        values.add(new SplitValue(flt_l1_key,1,vs,0));
+                                    }
+                                    if (flt_l2_key != null && flt_l2_value != null) {
+                                        String[] l2vs = flt_l2_value.split(";");
+                                        for (String vs : l2vs) {
+                                            values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+                                        }
+                                    }
+                                }
+                                try {
+                                    long recordnr = 0, length = 0;
+                                    String command = "ssh %s java -jar %s %s %s";
+                                    List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
+                                    StringBuffer sb = new StringBuffer();
+                                    Integer totalRecord = 0;
+                                    Integer totalSize = 0;
+                                    for (SFile f : files) {
+                                        String result = "";
+                                        for (SFileLocation loc : file.getLocations()) {
+                                            result = runRemoteCmdWithResult(String.format(command,loc.getHostAddress,"lutools.jar",loc.getDevid(),loc.getLocation()));
+                                            if(!"".equals(result)){
+                                                String[] dres = result.split(",");
+                                                int drecord = Integer.parseInt(dres[0]);
+                                                int dsize = Integer.parseInt(dres[1]);
+                                                totalRecord += drecord;
+                                                totalSize += dsize;
+                                                System.out.printf("Name:%s Records:%d Size:%d\n",f.getName(),drecord,dsize);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    System.out.printf("TotalRecords:%s TotalSize:%s\n",totalRecord,totalSize);
+				} catch (MetaException e) {
+                                    e.printStackTrace();
+				} catch (TException e) {
+                                    e.printStackTrace();
+				}
+
+                            }
 			if (o.flag.equals("-flt")) {
 				// filter table files
 				if (dbName == null || tableName == null) {
