@@ -24,6 +24,11 @@ import redis.clients.jedis.exceptions.JedisException;
 
 public class PhotoClient {
 	private ClientConf conf;
+	private RedisFactory rf;
+	
+	public RedisFactory getRf() {
+		return rf;
+	}
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
@@ -195,12 +200,15 @@ public class PhotoClient {
 	private long id;
 	public PhotoClient(){
 		conf = new ClientConf();
+		rf = new RedisFactory(conf);
 	}
 
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
+		rf = new RedisFactory(conf);
 		RedisInstance ri = conf.getRedisInstance();
-		this.jedis = RedisFactory.getNewInstance(ri.hostname, ri.port);
+		if (ri != null)
+			this.jedis = rf.getNewInstance(ri);
 	}
 	
 	public long getId() {
@@ -249,7 +257,7 @@ public class PhotoClient {
 		synchronized (this) {
 			if (jedis == null) {
 				RedisInstance ri = conf.getRedisInstance();
-				jedis = RedisFactory.getNewInstance(ri.hostname, ri.port);
+				jedis = rf.getNewInstance(ri);
 			}
 		}
 	}
@@ -314,8 +322,9 @@ public class PhotoClient {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+				jedis = rf.putBrokenInstance(jedis);
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = rf.putBrokenInstance(jedis);
 			}
 			if (rr == null)
 				throw new IOException("Metadata inconsistent or connection broken?");
@@ -385,8 +394,9 @@ public class PhotoClient {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+				jedis = rf.putBrokenInstance(jedis);
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = rf.putBrokenInstance(jedis);
 			}
 		
 			if (info == null) {
@@ -418,8 +428,9 @@ public class PhotoClient {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+				jedis = rf.putBrokenInstance(jedis);
 			} catch (JedisException e) {
-				jedis = null;
+				jedis = rf.putBrokenInstance(jedis);
 			}
 
 			if (info == null) {
@@ -504,9 +515,9 @@ public class PhotoClient {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = null;
+			jedis = rf.putBrokenInstance(jedis);
 		} catch (JedisException e) {
-			jedis = null;
+			jedis = rf.putBrokenInstance(jedis);
 		}
 		
 		if (info == null) {
@@ -724,8 +735,9 @@ public class PhotoClient {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
+			jedis = rf.putBrokenInstance(jedis);
 		} catch (JedisException e) {
-			jedis = null;
+			jedis = rf.putBrokenInstance(jedis);
 		}
 		throw new IOException("Jedis Connection broken.");
 	}

@@ -40,40 +40,39 @@ public class ProfileTimerTask extends TimerTask {
 			throw new JedisException("Get default jedis instance failed.");
 		
 		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
-			Pipeline pi = jedis.pipelined();
-			pi.set(hbkey, "1");
-			pi.expire(hbkey, period + 5);
-			pi.sync();
+		Pipeline pi = jedis.pipelined();
+		pi.set(hbkey, "1");
+		pi.expire(hbkey, period + 5);
+		pi.sync();
 
-			// determine the ID of ourself, register ourself
-			String self = conf.getNodeName() + ":" + conf.getServerPort();
-			Long sid;
-			if (jedis.zrank("mm.active", self) == null) {
-				sid = jedis.incr("mm.next.serverid");
-				// FIXME: if two server start with the same port, fail!
-				jedis.zadd("mm.active", sid, self);
-			}
-			// reget the sid
-			sid = jedis.zscore("mm.active", self).longValue();
-			ServerConf.serverId = sid;
-			System.out.println("Got ServerID " + sid + " for Server " + self);
+		// determine the ID of ourself, register ourself
+		String self = conf.getNodeName() + ":" + conf.getServerPort();
+		Long sid;
+		if (jedis.zrank("mm.active", self) == null) {
+			sid = jedis.incr("mm.next.serverid");
+			// FIXME: if two server start with the same port, fail!
+			jedis.zadd("mm.active", sid, self);
+		}
+		// reget the sid
+		sid = jedis.zscore("mm.active", self).longValue();
+		ServerConf.serverId = sid;
+		System.out.println("Got ServerID " + sid + " for Server " + self);
 
 
-			// use the same serverID to register in mm.active.http
-			self = conf.getNodeName() + ":" + conf.getHttpPort();
-			jedis.zadd("mm.active.http", sid, self);
-			System.out.println("Register HTTP server " + self + " done.");
-			
-			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
-			if (active != null && active.size() > 0) {
-				for (Tuple t : active) {
-					ServerConf.servers.put((long)t.getScore(), t.getElement());
-					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
-				}
-			}
-			
-			this.period = period;
+		// use the same serverID to register in mm.active.http
+		self = conf.getNodeName() + ":" + conf.getHttpPort();
+		jedis.zadd("mm.active.http", sid, self);
+		System.out.println("Register HTTP server " + self + " done.");
 		
+		Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+		if (active != null && active.size() > 0) {
+			for (Tuple t : active) {
+				ServerConf.servers.put((long)t.getScore(), t.getElement());
+				System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+			}
+		}
+		jedis = RedisFactory.putInstance(jedis);
+		this.period = period;
 	}
 
 	@Override
@@ -104,15 +103,13 @@ public class ProfileTimerTask extends TimerTask {
 			if (jedis == null)
 				jedis = new RedisFactory(conf).getDefaultInstance();
 			if (jedis == null)
-			{
 				info += ", redis down?";
-				throw new JedisConnectionException("failed to connect to redis");
+			else {
+				Pipeline pi = jedis.pipelined();
+				pi.set(hbkey, "1");
+				pi.expire(hbkey, period + 5);
+				pi.sync();
 			}
-			Pipeline pi = jedis.pipelined();
-			pi.set(hbkey, "1");
-			pi.expire(hbkey, period + 5);
-			pi.sync();
-			
 			// update server list
 			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
 			if (active != null && active.size() > 0) {
@@ -120,15 +117,10 @@ public class ProfileTimerTask extends TimerTask {
 					ServerConf.servers.put((long)t.getScore(), t.getElement());
 				}
 			}
-			//每次用完jedis要放回去
-			jedis = RedisFactory.putInstance(jedis);
-			
-		}catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken when doing profiling task.");
+		} catch (Exception e) {
 			jedis = RedisFactory.putBrokenInstance(jedis);
-		}catch (Exception e) {
-			jedis = RedisFactory.putInstance(jedis);
-			e.printStackTrace();
+		} finally {
+			RedisFactory.putInstance(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里

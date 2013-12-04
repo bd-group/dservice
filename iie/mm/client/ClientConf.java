@@ -5,6 +5,7 @@ import java.net.UnknownHostException;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Random;
+import java.util.Set;
 
 public class ClientConf {
 	public static class RedisInstance {
@@ -16,17 +17,26 @@ public class ClientConf {
 			this.port = port;
 		}
 	}
+	private Set<String> sentinels;
 	private List<RedisInstance> redisIns;
 	private String serverName;
 	private int serverPort;
 	private int dupNum;			//一个文件存储份数
 	private int sockPerServer;
+	
 	public static enum MODE {
 		DEDUP, NODEDUP,
 	};
-	private MODE mode;
 	
-	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode,int dupNum) throws UnknownHostException {
+	public enum RedisMode {
+		SENTINEL, STANDALONE,
+	};
+	
+	private MODE mode;
+	private RedisMode redisMode;
+	
+	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode, 
+			int dupNum) throws UnknownHostException {
 		if (serverName != null)
 			this.setServerName(serverName);
 		else
@@ -41,18 +51,32 @@ public class ClientConf {
 		
 		this.dupNum = dupNum;
 		this.setSockPerServer(5);
+		this.setRedisMode(RedisMode.STANDALONE);
+	}
+	
+	public ClientConf(Set<String> sentinels, MODE mode, int dupNum) throws UnknownHostException {
+		redisIns = new ArrayList<RedisInstance>();
+		this.dupNum = dupNum;
+		this.mode = mode;
+		this.setSockPerServer(5);
+		this.setSentinels(sentinels);
+		this.setRedisMode(RedisMode.SENTINEL);
 	}
 	
 	public ClientConf() {
 		redisIns = new ArrayList<RedisInstance>();
 		this.dupNum = 1;
 		this.mode = MODE.NODEDUP;
+		this.setRedisMode(RedisMode.SENTINEL);
 		this.setSockPerServer(5);
 	}
 
 	public RedisInstance getRedisInstance() {
-		Random r = new Random();
-		return redisIns.get(r.nextInt(redisIns.size()));
+		if (redisIns.size() > 0) {
+			Random r = new Random();
+			return redisIns.get(r.nextInt(redisIns.size()));
+		} else 
+			return null;
 	}
 	
 	public void setRedisInstance(RedisInstance ri) {
@@ -101,5 +125,21 @@ public class ClientConf {
 
 	public void setSockPerServer(int sockPerServer) {
 		this.sockPerServer = sockPerServer;
+	}
+
+	public RedisMode getRedisMode() {
+		return redisMode;
+	}
+
+	public void setRedisMode(RedisMode redisMode) {
+		this.redisMode = redisMode;
+	}
+
+	public Set<String> getSentinels() {
+		return sentinels;
+	}
+
+	public void setSentinels(Set<String> sentinels) {
+		this.sentinels = sentinels;
 	}
 }
