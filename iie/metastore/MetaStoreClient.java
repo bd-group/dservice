@@ -1478,11 +1478,11 @@ public class MetaStoreClient {
                                     String command = "ssh %s java -jar %s %s %s";
                                     List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
                                     StringBuffer sb = new StringBuffer();
-                                    Integer totalRecord = 0;
-                                    Integer totalSize = 0;
+                                    int totalRecord = 0;
+                                    int totalSize = 0;
                                     for (SFile f : files) {
                                         String result = "";
-                                        for (SFileLocation loc : file.getLocations()) {
+                                        for (SFileLocation loc : f.getLocations()) {
                                             result = runRemoteCmdWithResult(String.format(command,loc.getHostAddress,"../../lib/lutools.jar",loc.getDevid(),loc.getLocation()));
                                             if(!"".equals(result)){
                                                 String[] dres = result.split(",");
@@ -1495,12 +1495,14 @@ public class MetaStoreClient {
                                             }
                                         }
                                     }
-                                    System.out.printf("TotalRecords:%s TotalSize:%s\n",totalRecord,totalSize);
+                                    System.out.printf("TotalRecords:%d TotalSize:%d\n",totalRecord,totalSize);
 				} catch (MetaException e) {
                                     e.printStackTrace();
+                                    break;
 				} catch (TException e) {
                                     e.printStackTrace();
-				}
+                                    break;
+                              }
 
                             }
 			if (o.flag.equals("-flt")) {
