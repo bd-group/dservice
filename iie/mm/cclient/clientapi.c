@@ -205,7 +205,7 @@ static inline void __parse_token(char *key, int *m, int *n)
 int get(char *key, void **buffer, size_t *len)
 {
     char *dup = strdup(key);
-    char *p = dup, *n;
+    char *p = dup, *n = NULL;
     int err = 0, sharpnr, atnr;
 
     __parse_token(key, &sharpnr, &atnr);

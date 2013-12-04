@@ -228,6 +228,7 @@ public class StorePhoto {
 			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
+			e.printStackTrace();
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
@@ -398,7 +399,8 @@ public class StorePhoto {
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
-			RedisFactory.putInstance(jedis);
+			if (jedis != null)
+				RedisFactory.putInstance(jedis);
 		} catch(IOException e){
 			e.printStackTrace();
 		}

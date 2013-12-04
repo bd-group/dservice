@@ -18,12 +18,15 @@ public class RedisFactory {
 			return new Jedis(conf.getRedisHost(), conf.getRedisPort());
 		case SENTINEL:
 		{
+			Jedis r;
+			
 			if (jsp != null)
-				return jsp.getResource();
+				r = jsp.getResource();
 			else {
 				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
-				return jsp.getResource();
+				r = jsp.getResource();
 			}
+			return r;
 		}
 		}
 		return null;
@@ -37,6 +40,7 @@ public class RedisFactory {
 			break;
 		case SENTINEL:
 			jsp.returnResource(j);
+
 		}
 		return null;
 	}

@@ -478,7 +478,7 @@ int update_mmserver(struct redisConnection *rc)
         struct MMSConnection *c;
 
         for (j = 0; j < rpy->elements; j += 2) {
-            char *p = rpy->element[j]->str, *n, *hostname;
+            char *p = rpy->element[j]->str, *n = NULL, *hostname;
             int port;
             long sid;
 
