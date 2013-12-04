@@ -56,8 +56,10 @@ mmhc : DEPEND $(MMHC)
 
 DEPEND : 
 	@$(ECHO) -e " " MK Depends
+	@tar zxvf redis-2.8.2.tar.gz
 	@$(MAKE) --no-print-directory -C redis-2.8.2
 	@rm -rf bin/*
+	@mkdir -p bin
 	@cp -rf redis-2.8.2/src/redis-server bin/
 	@cp -rf redis-2.8.2/src/redis-cli bin/
 	@cp -rf redis-2.8.2/src/redis-sentinel bin/
