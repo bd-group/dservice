@@ -30,8 +30,92 @@ int search_mm_object(char *infos, void **buf, size_t *length);
 struct redisConnection *getRC();
 void putRC(struct redisConnection *rc);
 
-int init(char *uris)
+static int init_with_sentinel(char *uris)
 {
+    int err = 0, inited = 0;
+
+    err = client_init();
+    if (err) {
+        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
+        goto out;
+    }
+
+    char *dup = strdup(uris), *p, *n = NULL, *q, *m = NULL;
+
+    p = dup;
+    do {
+        p = strtok_r(p, ";", &n);
+        if (p) {
+            /* parse sentinel server */
+
+            char *rh = NULL;
+            int rp;
+
+            q = p;
+            q = strtok_r(q, ":", &m);
+            if (q) {
+                rh = strdup(p);
+            } else {
+                hvfs_err(mmcc, "parse hostname failed.\n");
+                continue;
+            }
+            q = strtok_r(NULL, ":", &m);
+            if (q) {
+                rp = atol(q);
+            } else {
+                hvfs_err(mmcc, "parse port failed.\n");
+                continue;
+            }
+            /* ok, connect to sentinel here */
+            {
+                redisContext *rc = redisConnect(rh, rp);
+                redisReply *r = NULL;
+
+                if (rc->err) {
+                    hvfs_err(mmcc, "can't connect to redis at %s:%d %s\n",
+                             rh, rp, rc->errstr);
+                    continue;
+                }
+                r = redisCommand(rc, "SENTINEL get-master-addr-by-name mymaster");
+                if (r == NULL) {
+                    hvfs_err(mmcc, "get master failed.\n");
+                    goto free_rc;
+                }
+                if (r->type == REDIS_REPLY_NIL || r->type == REDIS_REPLY_ERROR) {
+                    hvfs_warning(mmcc, "SENTINEL get master from %s:%d failed, "
+                                 "try next one\n", rh, rp);
+                }
+                if (r->type == REDIS_REPLY_ARRAY) {
+                    if (r->elements != 2) {
+                        hvfs_warning(mmcc, "Invalid SENTINEL reply? len=%ld\n",
+                                     r->elements);
+                    } else {
+                        redisHost = strdup(r->element[0]->str);
+                        redisPort = atoi(r->element[1]->str);
+                        hvfs_info(mmcc, "OK, got MMM Server %s:%d\n",
+                                  redisHost, redisPort);
+                        inited = 1;
+                    }
+                }
+                freeReplyObject(r);
+            free_rc:                
+                redisFree(rc);
+            }
+            if (inited)
+                break;
+        } else
+            break;
+    } while (p = NULL, 1);
+    
+out:
+    return err;
+}
+
+static int init_standalone(char *uris)
+{
+    char *dup = strdup(uris), *p, *n = NULL;
+	char *rh = NULL;
+	int rp;
     int err = 0;
     
     err = client_init();
@@ -39,10 +123,6 @@ int init(char *uris)
         hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
         goto out;
     }
-
-    char *dup = strdup(uris), *p, *n;
-	char *rh = NULL;
-	int rp;
 
     p = dup;
     p = strtok_r(p, ":", &n);
@@ -90,18 +170,25 @@ out_free:
     return err;
 }
 
-int countChInStr(char* str,char c)
+/* URIs:
+ * standalone redis server -> STA:host:port;host:port
+ * sentinel   redis server -> STL:host:port;host:port
+ */
+int init(char *uris)
 {
-    int n = 0;
-    for(;*str != '\0';str++)
-    {
-        if(*str == c)
-            n++;
+    if (!uris)
+        return EMMINVAL;
+    
+    if (strstr(uris, "STL:")) {
+        return init_with_sentinel(uris + 4);
+    } else if (strstr(uris, "STA")) {
+        return init_standalone(uris + 4);
+    } else {
+        return init_standalone(uris);
     }
-    return n;
 }
 
-void __parse_token(char *key, int *m, int *n)
+static inline void __parse_token(char *key, int *m, int *n)
 {
     *m = *n = 0;
     
@@ -137,26 +224,3 @@ int get(char *key, void **buffer, size_t *len)
 
     return err;
 }
-
-int get_old(char *key, void **buffer, size_t *len)
-{
-	int n = countChInStr(key,'@') + countChInStr(key,'#');
-    char *p = strdup(key), *np = NULL;
-    int err;
-
-	if(n == 1) {
-		char *set = strtok_r(p,"@", &np);
-		char *md5 = strtok_r(NULL,"@", &np);
-        err = get_mm_object(set,md5,buffer,len);
-	} else if((n+1)%8 == 0) {
-        err = search_mm_object(key,buffer,len);
-	} else {
-		printf("wrong format of key:%s\n",key);
-        err = EMMINVAL;
-	}
-    xfree(p);
-
-    return err;
-}
-
-

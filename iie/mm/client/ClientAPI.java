@@ -74,7 +74,8 @@ public class ClientAPI {
 				throw new Exception("wrong format of url: " + url);
 			
 			if (pc.getJedis() == null) {
-				jedis = pc.getRf().getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
+				pc.getRf();
+				jedis = RedisFactory.getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
 				pc.setJedis(jedis);
 			} else {
 				// Use the Redis Server in conf
@@ -103,6 +104,13 @@ public class ClientAPI {
 			pc.setConf(new ClientConf());
 		}
 		pc.getConf().clrRedisIns();
+		if (urls.startsWith("STL:")) {
+			urls = urls.substring(4);
+			pc.getConf().setRedisMode(ClientConf.RedisMode.SENTINEL);
+		} else if (urls.startsWith("STA:")) {
+			urls = urls.substring(4);
+			pc.getConf().setRedisMode(ClientConf.RedisMode.STANDALONE);
+		}
 		switch (pc.getConf().getRedisMode()) {
 		case SENTINEL:
 			init_by_sentinel(pc.getConf(), urls);

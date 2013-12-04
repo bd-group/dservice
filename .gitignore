@@ -5,5 +5,3 @@ lib/*.[ao]
 .classpath
 .project
 .settings
-log
-test

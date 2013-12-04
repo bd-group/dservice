@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-02 11:28:37 macan>
+# Time-stamp: <2013-12-04 16:09:35 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -56,7 +56,7 @@ mmhc : DEPEND $(MMHC)
 
 DEPEND : 
 	@$(ECHO) -e " " MK Depends
-	@tar zxvf redis-2.8.2.tar.gz
+	@if [ ! -d redis-2.8.2 ]; then tar zxvf redis-2.8.2.tar.gz; fi
 	@$(MAKE) --no-print-directory -C redis-2.8.2
 	@rm -rf bin/*
 	@mkdir -p bin
