@@ -123,13 +123,18 @@ int main(int argc, char *argv[])
     size_t len = 0;
     
     printf("MMCC Demo\n");
+    if (argc < 2) {
+        printf("Usage: demo rul\n");
+        goto out;
+    }
 
-    err = init("192.168.1.36:6379");
+    err = init(argv[1]);
     if (err) {
         printf("init() failed w/ %d\n", err);
         goto out;
     }
 
+#if 0
     err = get(key, (void **)&buffer, &len);
     if (err) {
         printf("get() failed w/ %d\n", err);
@@ -169,6 +174,7 @@ int main(int argc, char *argv[])
 
     printf("Get key %s => len %ld\n", key, len);
     free(buffer);
+#endif
 
     err = thread_get("default", 100000, 5);
     if (err) {

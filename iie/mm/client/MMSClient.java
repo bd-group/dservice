@@ -181,6 +181,7 @@ public class MMSClient {
 		boolean lgt_docheck = false;
 		int dupNum = 1;
 		Set<String> sentinels = new HashSet<String>();
+		String uri = null;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -205,6 +206,8 @@ public class MMSClient {
 				System.out.println("-getserverinfo  :  get info from all servers online" ); 
 				
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
+				
+				System.out.println("-uri  : unified uri for SENTINEL and STANDALONE.");
 				
 				System.exit(0);
 			}
@@ -300,9 +303,17 @@ public class MMSClient {
 					sentinels.add(stls[i]);
 				}
 			}
+			if (o.flag.equals("-uri")) {
+				// parse uri
+				if (o.opt == null) {
+					System.out.println("-uri URI");
+					System.exit(0);
+				}
+				uri = o.opt;
+			}
 		}
 		
-		ClientConf conf = null;
+		/*ClientConf conf = null;
 		try {
 			if (sentinels.size() > 0)
 				conf = new ClientConf(sentinels, mode, dupNum);
@@ -311,11 +322,13 @@ public class MMSClient {
 		} catch (UnknownHostException e) {
 			e.printStackTrace();
 			System.exit(0);
-		}
+		}*/
 		ClientAPI pcInfo = null;
 		try {
-			pcInfo = new ClientAPI(conf);
-			pcInfo.init(redisHost + ":" + redisPort);
+			//pcInfo = new ClientAPI(conf);
+			//pcInfo.init(redisHost + ":" + redisPort);
+			pcInfo = new ClientAPI();
+			pcInfo.init(uri);
 		} catch (IOException e) {
 			e.printStackTrace();
 			System.exit(0);
@@ -633,7 +646,7 @@ public class MMSClient {
 				}
 			}
 		}
-		if (sentinels.size() > 0)
+		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
 			pcInfo.getPc().getRf().quit();
 	}
 
