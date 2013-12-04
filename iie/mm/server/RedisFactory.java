@@ -2,7 +2,7 @@ package iie.mm.server;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
-
+import redis.clients.jedis.exceptions.JedisConnectionException;
 public class RedisFactory {
 	private static ServerConf conf;
 	private static JedisSentinelPool jsp = null;
@@ -18,18 +18,30 @@ public class RedisFactory {
 			return new Jedis(conf.getRedisHost(), conf.getRedisPort());
 		case SENTINEL:
 		{
-			if (jsp != null)
-				return jsp.getResource();
-			else {
-				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
-				return jsp.getResource();
+			try{
+				if (jsp != null)
+					return jsp.getResource();
+				else {
+					jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
+					return jsp.getResource();
+				}
+				
+			}catch(JedisConnectionException e){
+				//如果出现这个异常，表明要与master建立一个新的连接时失败了
+				//此时就会反复的递归调用，直到一个新的master被选举出来
+				System.out.println("Could not get a resource from the pool");
+				System.out.println("wait and then retry.");
+				try{
+					Thread.sleep(10*1000);
+				}catch(InterruptedException ex){}
+				return this.getDefaultInstance();
 			}
 		}
 		}
 		return null;
 	}
 	
-	public static Jedis putInstance(Jedis j) {
+	public static synchronized Jedis putInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {
@@ -41,7 +53,7 @@ public class RedisFactory {
 		return null;
 	}
 	
-	public static Jedis putBrokenInstance(Jedis j) {
+	public static synchronized Jedis putBrokenInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {
