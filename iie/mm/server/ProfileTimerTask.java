@@ -109,18 +109,19 @@ public class ProfileTimerTask extends TimerTask {
 				pi.set(hbkey, "1");
 				pi.expire(hbkey, period + 5);
 				pi.sync();
-			}
-			// update server list
-			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
-			if (active != null && active.size() > 0) {
-				for (Tuple t : active) {
-					ServerConf.servers.put((long)t.getScore(), t.getElement());
+				
+				// update server list
+				Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+				if (active != null && active.size() > 0) {
+					for (Tuple t : active) {
+						ServerConf.servers.put((long)t.getScore(), t.getElement());
+					}
 				}
 			}
 		} catch (Exception e) {
 			jedis = RedisFactory.putBrokenInstance(jedis);
 		} finally {
-			RedisFactory.putInstance(jedis);
+			jedis = RedisFactory.putInstance(jedis);
 		}
 
 		//把统计信息写入文件,每一天的信息放在一个文件里
