@@ -44,6 +44,38 @@ public class ClientAPI {
 		return pc;
 	}
 	
+	private void updateClientConf(Jedis jedis, ClientConf conf) {
+		if (conf == null || !conf.isAutoConf() || jedis == null)
+			return;
+		try {
+			String dupMode = jedis.hget("mm.client.conf", "dupmode");
+			if (dupMode != null) {
+				if (dupMode.equalsIgnoreCase("dedup")) {
+					conf.setMode(ClientConf.MODE.DEDUP);
+				} else if (dupMode.equalsIgnoreCase("nodedup")) {
+					conf.setMode(ClientConf.MODE.NODEDUP);
+				}
+			}
+			String dupNum = jedis.hget("mm.client.conf", "dupnum");
+			if (dupNum != null) {
+				int dn = Integer.parseInt(dupNum);
+				if (dn > 1)
+					conf.setDupNum(dn);
+			}
+			String sockPerServer = jedis.hget("mm.client.conf", "sockperserver");
+			if (sockPerServer != null) {
+				int sps = Integer.parseInt(sockPerServer);
+				if (sps >= 1)
+					conf.setSockPerServer(sps);
+			}
+			System.out.println("Auto conf client with: dupMode=" + dupMode + 
+					", dupNum=" + conf.getDupNum() + ", sockPerServer=" + 
+					conf.getSockPerServer());
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
 	private int init_by_sentinel(ClientConf conf, String urls) throws Exception {
 		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
 			return -1;
@@ -62,6 +94,7 @@ public class ClientAPI {
 			conf.setSentinels(sens);
 		}
 		jedis = pc.getRf().getNewInstance(null);
+		updateClientConf(jedis, conf);
 		
 		return 0;
 	}
@@ -83,6 +116,7 @@ public class ClientAPI {
 			}
 			conf.setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
 		}
+		updateClientConf(jedis, conf);
 		
 		return 0;
 	}
@@ -104,11 +138,11 @@ public class ClientAPI {
 			pc.setConf(new ClientConf());
 		}
 		pc.getConf().clrRedisIns();
-		if (urls.startsWith("STL:")) {
-			urls = urls.substring(4);
+		if (urls.startsWith("STL://")) {
+			urls = urls.substring(6);
 			pc.getConf().setRedisMode(ClientConf.RedisMode.SENTINEL);
-		} else if (urls.startsWith("STA:")) {
-			urls = urls.substring(4);
+		} else if (urls.startsWith("STA://")) {
+			urls = urls.substring(6);
 			pc.getConf().setRedisMode(ClientConf.RedisMode.STANDALONE);
 		}
 		switch (pc.getConf().getRedisMode()) {

@@ -13,6 +13,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 import org.hyperic.sigar.SigarException;
 
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
+
 public class Handler implements Runnable{
 	private ServerConf conf;
 	private ConcurrentHashMap<String,BlockingQueue<WriteTask>> sq;
@@ -53,7 +56,11 @@ public class Handler implements Runnable{
 					
 					
 					String result = null;
-					result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
+					try {
+						result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
+					} catch (JedisException e) {
+						result = "#FAIL:" + e.getMessage();
+					}
 
 					if (result == null)
 						dos.writeInt(-1);
