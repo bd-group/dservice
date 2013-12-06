@@ -1,6 +1,9 @@
 package iie.mm.server;
 
+import org.apache.commons.pool.impl.GenericObjectPool;
+
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 public class RedisFactory {
@@ -32,7 +35,7 @@ public class RedisFactory {
 		return null;
 	}
 	
-	public static synchronized Jedis putInstance(Jedis j) {
+	public static Jedis putInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {
@@ -45,7 +48,7 @@ public class RedisFactory {
 		return null;
 	}
 	
-	public static synchronized Jedis putBrokenInstance(Jedis j) {
+	public static Jedis putBrokenInstance(Jedis j) {
 		if (j == null)
 			return null;
 		switch (conf.getRedisMode()) {

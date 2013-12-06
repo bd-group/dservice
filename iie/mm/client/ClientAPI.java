@@ -275,5 +275,6 @@ public class ClientAPI {
 			pc.getRf().putInstance(jedis);
 			pc.getRf().quit();
 		}
+		pc.close();
 	}
 }

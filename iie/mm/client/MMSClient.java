@@ -648,6 +648,7 @@ public class MMSClient {
 		}
 		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
 			pcInfo.getPc().getRf().quit();
+		pcInfo.quit();
 	}
 
 }
