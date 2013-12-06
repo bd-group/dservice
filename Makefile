@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-04 16:09:35 macan>
+# Time-stamp: <2013-12-06 14:14:25 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -82,7 +82,7 @@ $(MMHC) : iie/mm/hclient/hclient.c
 demo : $(DEMO)
 
 $(DEMO) : iie/mm/cclient/demo.c
-	@$(GCC) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
+	@$(GCC) $(CFLAGS) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@

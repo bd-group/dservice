@@ -46,7 +46,7 @@ public class DeleteSet {
 			}
 			Socket s = new Socket();
 			try {
-				s.setSoTimeout(60000);				//删除图片时接受该server的响应
+				s.setSoTimeout(60000);
 				s.connect(new InetSocketAddress(infos[0], Integer.parseInt(infos[1])));
 				byte[] header = new byte[4];
 				header[0] = ActionType.DELSET;

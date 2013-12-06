@@ -90,16 +90,18 @@ public class StorePhoto {
 			storeArray.add(".");
 		}
 		diskArray = storeArray.toArray(new String[0]);
-		jedis = new RedisFactory(conf).getDefaultInstance();
+		//jedis = new RedisFactory(conf).getDefaultInstance();
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
 	}
 	
-	public void reconnectJedis() {
+	public void reconnectJedis() throws IOException {
 		if (jedis == null) {
 			jedis = new RedisFactory(conf).getDefaultInstance();
 		}
+		if (jedis == null)
+			throw new IOException("Connection to MMM Server failed.");
 	}
 
 	/**
@@ -111,8 +113,16 @@ public class StorePhoto {
 	 * @return		type@set@serverid@block@offset@length@disk,这几个信息通过redis存储,分别表示元信息类型,该图片所属集合,所在节点,
 	 * 				节点的端口号,所在相对路径（包括完整文件名）,位于所在块的偏移的字节数，该图片的字节数,磁盘
 	 */
-	public String storePhoto(String set, String md5, byte[] content, int coff, int clen) {
-		reconnectJedis();
+	public String storePhoto(String set, String md5, byte[] content, int coff, 
+			int clen) {
+		String returnStr = "+FAIL: unknown error.";
+		int err = 0;
+		
+		try {
+			reconnectJedis();
+		} catch (IOException e2) {
+			return "+FAIL: MMM Server can not be reached.";
+		}
 		StringBuffer rVal = new StringBuffer(128);
 		
 		//随机选一个磁盘
@@ -190,13 +200,19 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = RedisFactory.putBrokenInstance(jedis);
-				return "#FAIL:" + e.getMessage();
+				err = -1;
+				returnStr = "#FAIL:" + e.getMessage();
 			} catch (JedisException e) {
-				jedis = RedisFactory.putBrokenInstance(jedis);
-				return "#FAIL:" + e.getMessage();
+				err = -1;
+				returnStr = "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
-				return "#FAIL:" + e.getMessage();
+				err = -1;
+				returnStr = "#FAIL:" + e.getMessage();
+			} finally {
+				if (err < 0) {
+					jedis = RedisFactory.putBrokenInstance(jedis);
+					return returnStr;
+				}
 			}
 		}
 		
@@ -207,12 +223,9 @@ public class StorePhoto {
 			Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
 			Response<String> r2 = t1.hget(set,md5);
 			t1.exec();
-			if (r1.get() == 1)
-				return returnVal;
-			else {
+			if (r1.get() != 1) {
 				returnVal = r2.get() + "#" + returnVal;
 				jedis.hset(set, md5, returnVal);
-				return returnVal;
 				/*
 				 * Concurrent modify:
 				 * 
@@ -233,15 +246,22 @@ public class StorePhoto {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = RedisFactory.putBrokenInstance(jedis);
-			return "#FAIL:" + e.getMessage();
+			err = -1;
+			returnStr = "#FAIL:" + e.getMessage();
 		} catch (JedisException e) {
-			jedis = RedisFactory.putBrokenInstance(jedis);
-			return "#FAIL:" + e.getMessage();
+			err = -1;
+			returnStr = "#FAIL:" + e.getMessage();
 		} catch (Exception e) {
 			e.printStackTrace();
-			return "#FAIL:" + e.getMessage();
+			err = -1;
+			returnStr = "#FAIL:" + e.getMessage();
+		} finally {
+			if (err < 0) {
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			} else
+				jedis = RedisFactory.putInstance(jedis);
 		}
+		return returnStr;
 	}
 	
 	/**
@@ -271,8 +291,13 @@ public class StorePhoto {
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
 	public byte[] getPhoto(String set, String md5) throws RedirectException {
-		reconnectJedis();
+		try {
+			reconnectJedis();
+		} catch (IOException e2) {
+			return null;
+		}
 		String info = null;
+		int err = 0;
 		
 		// Step 1: check the local lookup cache
 		info = (String) lookupCache.get(set + "." + md5);
@@ -284,11 +309,16 @@ public class StorePhoto {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				err = -1;
 				return null;
 			} catch (JedisException e) {
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				err = -1;
 				return null;
+			} finally {
+				if (err < 0)
+					jedis = RedisFactory.putBrokenInstance(jedis);
+				else
+					jedis = RedisFactory.putInstance(jedis);
 			}
 			
 			if (info == null) {
@@ -399,10 +429,11 @@ public class StorePhoto {
 			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
 				entry.getValue().close();
 			}
-			if (jedis != null)
-				RedisFactory.putInstance(jedis);
 		} catch(IOException e){
 			e.printStackTrace();
+		} finally {
+			if (jedis != null)
+				RedisFactory.putInstance(jedis);
 		}
 	}
 	

@@ -167,8 +167,8 @@ public class ClientAPI {
 					Socket sock = new Socket();
 					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
 					try {
-						sock.setTcpNoDelay(true);//不要延迟
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
+						sock.setTcpNoDelay(true);
+						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
 						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
 								new DataOutputStream(sock.getOutputStream()));
 						socketHash.put(t.getElement(), she);
@@ -185,6 +185,7 @@ public class ClientAPI {
 				}
 			}
 		}
+		System.out.println("Got active server size=" + socketHash.size());
 		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
 		return 0;

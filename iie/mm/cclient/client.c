@@ -894,7 +894,7 @@ int search_by_info(char *info, void **buf, size_t *length)
             goto out_disconn;
         }
 	
-        count = recv_int(s->sock);		
+        count = recv_int(s->sock);
         if (count == -1) {
             err = EMMNOTFOUND;
             goto out_put;
