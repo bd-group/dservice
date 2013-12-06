@@ -40,10 +40,11 @@ public class RedisFactory {
 			return null;
 		switch (conf.getRedisMode()) {
 		case STANDALONE:
+			j.quit();
 			break;
 		case SENTINEL:
 			jsp.returnResource(j);
-
+			break;
 		}
 		return null;
 	}

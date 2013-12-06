@@ -4,6 +4,7 @@ import iie.mm.server.StorePhoto.RedirectException;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
@@ -14,6 +15,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import org.hyperic.sigar.SigarException;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class Handler implements Runnable{
 	private ServerConf conf;
@@ -38,12 +40,11 @@ public class Handler implements Runnable{
 	@Override
 	public void run() {
 		try {
-			while(true) {
+			while (true) {
 				byte[] header = new byte[4];
 				
-				if ((dis.read(header)) == -1) {
-					break;
-				} else if (header[0] == ActionType.SYNCSTORE) {
+				dis.readFully(header);
+				if (header[0] == ActionType.SYNCSTORE) {
 					int setlen = header[1];
 					int md5len = header[2];
 					int contentlen = dis.readInt();
@@ -54,12 +55,10 @@ public class Handler implements Runnable{
 					String md5 = new String(setmd5content, setlen, md5len);
 					
 					String result = null;
-					try{
+					try {
 						result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
-						
-					}catch(JedisConnectionException e){
-						result = "#FAIL:"+e.getMessage();
-						e.printStackTrace();
+					} catch (JedisException e) {
+						result = "#FAIL:" + e.getMessage();
 					}
 
 					if (result == null)
@@ -199,6 +198,8 @@ public class Handler implements Runnable{
 					dos.flush();
 				}
 			}
+		} catch (EOFException e) {
+			// socket close, it is ok
 		} catch (IOException e) {
 			e.printStackTrace();
 		} catch (Exception e) {

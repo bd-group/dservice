@@ -196,8 +196,13 @@ public class PhotoClient {
 	
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
-	private Jedis jedis = null;
-	private long id;
+	private final ThreadLocal<Jedis> jedis =
+         new ThreadLocal<Jedis>() {
+             @Override protected Jedis initialValue() {
+                 return null;
+         }
+	};
+	
 	public PhotoClient(){
 		conf = new ClientConf();
 		rf = new RedisFactory(conf);
@@ -208,17 +213,9 @@ public class PhotoClient {
 		rf = new RedisFactory(conf);
 		RedisInstance ri = conf.getRedisInstance();
 		if (ri != null)
-			this.jedis = rf.getNewInstance(ri);
+			jedis.set(rf.getNewInstance(ri));
 	}
 	
-	public long getId() {
-		return id;
-	}
-
-	public void setId(long id) {
-		this.id = id;
-	}
-
 	public ClientConf getConf() {
 		return conf;
 	}
@@ -246,20 +243,22 @@ public class PhotoClient {
 	}
 
 	public Jedis getJedis() {
-		return jedis;
+		return jedis.get();
 	}
 	
 	public void setJedis(Jedis jedis) {
-		this.jedis = jedis;
+		this.jedis.set(jedis);
 	}
 	
-	public void refreshJedis() {
+	public void refreshJedis() throws IOException {
 		synchronized (this) {
-			if (jedis == null) {
+			if (jedis.get() == null) {
 				RedisInstance ri = conf.getRedisInstance();
-				jedis = rf.getNewInstance(ri);
+				jedis.set(rf.getNewInstance(ri));
 			}
 		}
+		if (jedis.get() == null)
+			throw new IOException("Invalid Jedis connection.");
 	}
 	
 	private byte[] __handleInput(DataInputStream dis) throws IOException {
@@ -313,18 +312,16 @@ public class PhotoClient {
 		if (r == null) {
 			String rr = null;
 			try {
-				synchronized (jedis) {
-					rr = jedis.hget(set, md5);
-				}
+				rr = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken, wait ...");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = rf.putBrokenInstance(jedis);
+				jedis.set(rf.putBrokenInstance(jedis.get()));
 			} catch (JedisException e) {
-				jedis = rf.putBrokenInstance(jedis);
+				jedis.set(rf.putBrokenInstance(jedis.get()));
 			}
 			if (rr == null)
 				throw new IOException("Metadata inconsistent or connection broken?");
@@ -379,24 +376,29 @@ public class PhotoClient {
 	 * @return		
 	 */
 	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she, boolean nodedup) throws IOException {
-		refreshJedis();
 		if (conf.getMode() == ClientConf.MODE.NODEDUP || nodedup) {
 			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;
+			int err = 0;
+			
+			refreshJedis();
 			try {
-				synchronized (jedis) {
-					info = jedis.hget(set, md5);
-				}
+				info = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken, wait ...");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = rf.putBrokenInstance(jedis);
+				err = -1;
 			} catch (JedisException e) {
-				jedis = rf.putBrokenInstance(jedis);
+				err = -1;
+			} finally {
+				if (err < 0)
+					jedis.set(rf.putBrokenInstance(jedis.get()));
+				else
+					jedis.set(rf.putInstance(jedis.get()));
 			}
 		
 			if (info == null) {
@@ -413,24 +415,29 @@ public class PhotoClient {
 	}
 	
 	public void asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
-		refreshJedis();
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			__asyncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;
+			int err = 0;
+			
+			refreshJedis();
 			try {
-				synchronized (jedis) {
-					info = jedis.hget(set, md5);
-				}
+				info = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken, wait ...");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
-				jedis = rf.putBrokenInstance(jedis);
+				err = -1;
 			} catch (JedisException e) {
-				jedis = rf.putBrokenInstance(jedis);
+				err = -1;
+			} finally {
+				if (err < 0)
+					jedis.set(rf.putBrokenInstance(jedis.get()));
+				else
+					jedis.set(rf.putInstance(jedis.get()));
 			}
 
 			if (info == null) {
@@ -503,21 +510,25 @@ public class PhotoClient {
 	 */
 	public byte[] getPhoto(String set, String md5) throws IOException {
 		String info = null;
-		refreshJedis();
+		int err = 0;
 		
+		refreshJedis();
 		try {
-			synchronized (jedis) {
-				info = jedis.hget(set, md5);
-			}
+			info = jedis.get().hget(set, md5);
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken, wait in getObject ...");
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = rf.putBrokenInstance(jedis);
+			err = -1;
 		} catch (JedisException e) {
-			jedis = rf.putBrokenInstance(jedis);
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
 		}
 		
 		if (info == null) {
@@ -550,7 +561,6 @@ public class PhotoClient {
 	public byte[] searchPhoto(String infos) throws IOException {
 		byte[] r = null;
 
-		refreshJedis();
 		for (String info : infos.split("#")) {
 			try {
 				String[] si = info.split("@");
@@ -572,8 +582,6 @@ public class PhotoClient {
 	 * info是一个文件的元信息，没有拼接的
 	 */
 	public byte[] searchByInfo(String info, String[] infos) throws IOException {
-		refreshJedis();
-
 		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + infos.length);
 		}
@@ -612,7 +620,7 @@ public class PhotoClient {
 			searchSocket.map.get(id).dos.write(header);
 			
 			//info的实际内容写过去
-			searchSocket.map.get(id).dos.write(info.getBytes());
+			searchSocket.map.get(id).dos.writeBytes(info);
 			searchSocket.map.get(id).dos.flush();
 	
 			r = __handleInput(searchSocket.map.get(id).dis);
@@ -713,8 +721,6 @@ public class PhotoClient {
 	 */
 	public void close() {
 		try {
-			jedis.quit();
-			
 			for (SocketHashEntry s : socketHash.values()){
 				for (SEntry e : s.map.values()) {
 					e.sock.close();
@@ -726,18 +732,25 @@ public class PhotoClient {
 	}
 		
 	public Map<String, String> getNrFromSet(String set) throws IOException {
+		int err = 0;
+		
 		refreshJedis();
 		try {
-			return jedis.hgetAll(set);
+			return jedis.get().hgetAll(set);
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken, wait ...");
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = rf.putBrokenInstance(jedis);
+			err = -1;
 		} catch (JedisException e) {
-			jedis = rf.putBrokenInstance(jedis);
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
 		}
 		throw new IOException("Jedis Connection broken.");
 	}

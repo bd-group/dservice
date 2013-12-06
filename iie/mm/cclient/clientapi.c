@@ -171,18 +171,18 @@ out_free:
 }
 
 /* URIs:
- * standalone redis server -> STA:host:port;host:port
- * sentinel   redis server -> STL:host:port;host:port
+ * standalone redis server -> STA://host:port;host:port
+ * sentinel   redis server -> STL://host:port;host:port
  */
 int mmcc_init(char *uris)
 {
     if (!uris)
         return EMMINVAL;
     
-    if (strstr(uris, "STL:")) {
-        return init_with_sentinel(uris + 4);
-    } else if (strstr(uris, "STA")) {
-        return init_standalone(uris + 4);
+    if (strstr(uris, "STL://")) {
+        return init_with_sentinel(uris + 6);
+    } else if (strstr(uris, "STA://")) {
+        return init_standalone(uris + 6);
     } else {
         return init_standalone(uris);
     }

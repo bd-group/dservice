@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
     free(buffer);
 #endif
 
-    err = thread_get("default", 100000, 5);
+    err = thread_get("default", 100000, 500);
     if (err) {
         printf("thread_get() failed w/ %d\n", err);
     }
