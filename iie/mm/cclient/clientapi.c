@@ -174,7 +174,7 @@ out_free:
  * standalone redis server -> STA://host:port;host:port
  * sentinel   redis server -> STL://host:port;host:port
  */
-int init(char *uris)
+int mmcc_init(char *uris)
 {
     if (!uris)
         return EMMINVAL;
@@ -202,7 +202,7 @@ static inline void __parse_token(char *key, int *m, int *n)
     }
 }
 
-int get(char *key, void **buffer, size_t *len)
+int mmcc_get(char *key, void **buffer, size_t *len)
 {
     char *dup = strdup(key);
     char *p = dup, *n = NULL;

@@ -16,6 +16,8 @@
 #include "memory.h"
 #include "xhash.h"
 
+//编译时要加上-l hiredis
+
 #define HVFS_TRACING
 #include "tracing.h"
 

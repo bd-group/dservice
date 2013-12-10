@@ -1,8 +1,11 @@
 package iie.mm.server;
 
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisSentinelPool;
+import org.apache.commons.pool.impl.GenericObjectPool;
 
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.JedisSentinelPool;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 public class RedisFactory {
 	private static ServerConf conf;
 	private static JedisSentinelPool jsp = null;
@@ -10,7 +13,7 @@ public class RedisFactory {
 	public RedisFactory(ServerConf conf) {
 		RedisFactory.conf = conf;
 	}
-
+	
 	// 从配置文件中读取redis的地址和端口,以此创建jedis对象
 	public Jedis getDefaultInstance() {
 		switch (conf.getRedisMode()) {
@@ -57,4 +60,11 @@ public class RedisFactory {
 		}
 		return null;
 	}
+//	public static ServerConf getServerConf(){
+//		return this.conf;
+//	}
+//	
+//	public static void setServerConf(ServerConf conf){
+//		this.conf = conf;
+//	}
 }

@@ -9,22 +9,25 @@
 #ifndef __MMCC_H__
 #define __MMCC_H__
 
-#include <unistd.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+#include <unistd.h>
 /*
  * Provide url list, splited by ';'
  */
-int init(char *uris);
+int mmcc_init(char *uris);
 
 /*
  * Return the fast lookup info, it can be used as 'key' in get()
  */
-char *put(char *key, void *content, size_t len);
+char *mmcc_put(char *key, void *content, size_t len);
 
 /*
  * Caller should free the allocated memory by 'free'
  */
-int get(char *key, void **buffer, size_t *len);
+int mmcc_get(char *key, void **buffer, size_t *len);
 
 /*
  * ERROR numbers
@@ -44,5 +47,9 @@ struct key2info
 };
 
 struct key2info *get_k2i(char *set, int *nr);
+
+#ifdef __cplusplus
+}
+#endif 
 
 #endif

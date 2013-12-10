@@ -2,6 +2,7 @@ package iie.mm.client;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
@@ -176,6 +177,7 @@ public class MMSClient {
 		long lpt_nr = 1, lpt_size = 1;
 		int lgt_nr = -1, lgt_th = 1, lpt_th = 1;
 		String lpt_type = "", lgt_type = "";
+		int lmpt_nr = -1,lmpt_pack = -1,lmpt_size = -1;
 		boolean lgt_docheck = false;
 		int dupNum = 1;
 		Set<String> sentinels = new HashSet<String>();
@@ -200,7 +202,8 @@ public class MMSClient {
 				
 				System.out.println("-lpt  : large scacle put test.");
 				System.out.println("-lgt  : large scacle get test.");
-				System.out.println("-getserverinfo  :  get info from all servers online" );
+				System.out.println("-lmpt : large scale mput test");
+				System.out.println("-getserverinfo  :  get info from all servers online" ); 
 				
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				
@@ -279,6 +282,15 @@ public class MMSClient {
 			if (o.flag.equals("-lgt_type")) {
 				// get or search
 				lgt_type = o.opt;
+			}
+			if (o.flag.equals("-lmpt_nr")){
+				lmpt_nr = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lmpt_pack")){
+				lmpt_pack = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lmpt_size")){
+				lmpt_size = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-stl")) {
 				// parse sentinels
@@ -537,6 +549,47 @@ public class MMSClient {
 					e.printStackTrace();
 				}
 			}
+			
+			if(o.flag.equals("-lmpt")){
+				if(lmpt_nr < 0 || lmpt_pack < 0 || lmpt_size < 0)
+				{
+					System.out.println("please provide lmpt_nr,lmpt_pack,lmpt_size");
+					System.exit(0);
+				}
+				System.out.println("LMPT args: nr " + lmpt_nr + ", size " + lmpt_size +", package number "+lmpt_pack );
+				
+				try {
+					long begin = System.currentTimeMillis();
+					Random r = new Random();
+					MessageDigest md;
+					md = MessageDigest.getInstance("md5");
+					
+					for (int i = 0; i < lmpt_nr/lmpt_pack; i++) {
+						byte[][] content = new byte[lmpt_pack][lmpt_size];
+						String[] md5s = new String[lmpt_pack];
+						for(int l = 0;l<lmpt_pack;l++)
+						{
+							r.nextBytes(content[l]);
+							md.update(content[l]);
+							byte[] mdbytes = md.digest();
+							StringBuffer sb = new StringBuffer();
+							for (int j = 0; j < mdbytes.length; j++) {
+								sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+							}
+							md5s[l] = sb.toString();
+						}
+						pcInfo.mPut(set,md5s,content);
+					}
+					long end = System.currentTimeMillis();
+					System.out.println("LPT nr " + lmpt_nr + " size " + lmpt_size + 
+							": BW " + lmpt_size * lmpt_nr * 1000.0 / 1024.0 / (end - begin) + " KBps," + 
+							" LAT " + (end - begin) / (double)lmpt_nr + " ms");
+				} catch (NoSuchAlgorithmException e) {
+					e.printStackTrace();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-get")) {
 				if (o.opt == null) {
 					System.out.println("Please provide the get md5.");
@@ -548,6 +601,9 @@ public class MMSClient {
 				
 				try {
 					byte[] content = pcInfo.get(set + "@" + md5);
+					FileOutputStream fos = new FileOutputStream(md5);
+					fos.write(content);
+					fos.close();
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();
@@ -561,6 +617,9 @@ public class MMSClient {
 				try{
 					
 					byte[] content = pcInfo.get(info);
+					FileOutputStream fos = new FileOutputStream("getbi");
+					fos.write(content);
+					fos.close();
 					System.out.println("get content length:"+content.length);
 				}catch(IOException e){
 					e.printStackTrace();
@@ -589,6 +648,7 @@ public class MMSClient {
 		}
 		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
 			pcInfo.getPc().getRf().quit();
+		pcInfo.quit();
 	}
 
 }

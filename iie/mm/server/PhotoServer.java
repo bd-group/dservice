@@ -17,6 +17,7 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 import org.eclipse.jetty.server.Server;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class PhotoServer {
 	private ServerConf conf;
