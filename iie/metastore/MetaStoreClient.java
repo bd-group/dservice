@@ -6,6 +6,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.StringReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -21,6 +22,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
@@ -32,6 +36,7 @@ import org.apache.hadoop.hive.metastore.api.CreateOperation;
 import org.apache.hadoop.hive.metastore.api.CreatePolicy;
 import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.Device;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.MSOperation;
@@ -43,9 +48,12 @@ import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
 import org.apache.hadoop.hive.metastore.api.SplitValue;
 import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.api.UnknownDBException;
 import org.apache.hadoop.hive.metastore.api.User;
 import org.apache.hadoop.hive.metastore.api.statfs;
 import org.apache.hadoop.hive.metastore.model.MetaStoreConst;
+import org.apache.hadoop.hive.metastore.tools.PartitionFactory;
+import org.apache.hadoop.hive.metastore.tools.PartitionFactory.PartitionInfo;
 import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocolException;
@@ -459,6 +467,59 @@ public class MetaStoreClient {
 		return result;
 	}
 	
+	public static void statfs2_update_map(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, List<SFile> files) throws MetaException, TException, IOException {
+		if (files.size() > 0) {
+			for (SFile f : files) {
+				if (f.getValuesSize() > 0) {
+					Long btime = Long.parseLong(f.getValues().get(0).getValue());
+					Map<String, FileStat> fsmap = fmap.get(btime);
+					
+					if (fsmap == null)
+						fsmap = new TreeMap<String, FileStat>();
+							
+					FileStat fs = fsmap.get(f.getTableName());
+					if (fs == null)
+						fs = new FileStat(f.getTableName());
+						
+					fs.fids.add(f.getFid());
+					// calculate space now
+					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
+						SFileLocation sfl = f.getLocations().get(0);
+						String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+						String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+						String result = runRemoteCmdWithResult(cmd);
+						if (!result.equals("")) {
+							String[] res = result.split("\t");
+							try {
+								fs.addSpace(Long.parseLong(res[0]));
+							} catch (NumberFormatException nfe) {
+								nfe.printStackTrace();
+							}
+						}
+					}
+					fsmap.put(f.getTableName(), fs);
+					fmap.put(btime, fsmap);
+				}
+			}
+		}
+	}
+	
+	public static class FileStat {
+		public String table;
+		public TreeSet<Long> fids;
+		public long space;	// space total used
+		
+		public FileStat(String table) {
+			this.table = table;
+			fids = new TreeSet<Long>();
+			space = 0;
+		}
+		
+		public void addSpace(long toAdd) {
+			space += toAdd;
+		}
+	}
+	
 	public static class Option {
 	     String flag, opt;
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
@@ -493,6 +554,8 @@ public class MetaStoreClient {
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
 	    String ng_name = null;
+	    boolean statfs2_xj = false;
+	    long statfs2_bday = -1, statfs2_days = -1;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -794,6 +857,26 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		statfs_range = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-statfs2_xj")) {
+	    		// set statfs time range
+	    		statfs2_xj = true;
+	    	}
+	    	if (o.flag.equals("-statfs2_bday")) {
+	    		// set statfs2 begin day offset
+	    		if (o.opt == null) {
+	    			System.out.println("-statfs2_bday 30");
+	    			System.exit(0);
+	    		}
+	    		statfs2_bday = Long.parseLong(o.opt);
+	    	}
+	    	if (o.flag.equals("-statfs2_days")) {
+	    		// set statfs2 days
+	    		if (o.opt == null) {
+	    			System.out.println("-statfs2_days days");
+	    			System.exit(0);
+	    		}
+	    		statfs2_days = Long.parseLong(o.opt);
 	    	}
 	    	if (o.flag.equals("-ofl_fid")) {
 	    		// set offline file id
@@ -1333,6 +1416,134 @@ public class MetaStoreClient {
 				}
 				System.out.println(dms);
 			}
+			if (o.flag.equals("-statfs2")) {
+				// stat the file system by SplitValue
+				long end = 0;
+				boolean isEmergency = false;
+
+				if ((dbName == null) ||
+					((begin_time < 0 && end_time < 0) &&
+					(statfs_range <= 0) &&
+					(statfs2_bday <= 0 && statfs2_days <= 0))) {
+					System.out.println("Please set -statfs_range or (-statfs2_bday and -statfs2_days) and -db.");
+					System.exit(0);
+				}
+
+				if (statfs2_bday >= 0 && statfs2_days >= 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					end = end_time / 3600 * 3600;
+					end = end - statfs2_bday * 86400;
+					begin_time = end - statfs2_days * 86400;
+				} else if (statfs_range > 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					// find a valid Hour start time
+					end = end_time / 3600 * 3600;
+					begin_time = end_time - statfs_range;
+				} else {
+					end = end_time / 3600 * 3600;
+					begin_time = begin_time / 3600 * 3600;
+				}
+				try {
+					String dms = cli.client.getDMStatus();
+					BufferedReader bufReader = new BufferedReader(new StringReader(dms));
+					String line = null;
+					while ((line = bufReader.readLine()) != null) {
+						if (line.startsWith("Total space")) {
+							String[] ls = line.split(" ");
+							if (Double.parseDouble(ls[ls.length - 1]) <= 0.05) {
+								// emergency mode, automatically delete
+								isEmergency = true;
+							} else if (Double.parseDouble(ls[ls.length - 1]) <= 0.1) {
+								// alert mode, do NOT
+							}
+						}
+					}
+				} catch (MetaException e1) {
+					e1.printStackTrace();
+					break;
+				} catch (TException e1) {
+					e1.printStackTrace();
+					break;
+				}
+				// find oldest files by SplitValue?
+				System.out.println("Note: statfs2 only count SplitValue which is one hour range.");
+				List<String> tables;
+				try {
+					TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+					tables = cli.client.getAllTables(dbName);
+					for (; end > begin_time; end -= 3600) {
+						List<SplitValue> lsv = new ArrayList<SplitValue>();
+						System.out.println("Handling data begin @ " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(end * 1000)));
+						
+						for (String tbl : tables) {
+							lsv.clear();
+							Table t = cli.client.getTable(dbName, tbl);
+							if (t.getFileSplitKeysSize() > 0) {
+								int maxv = 0;
+								List<PartitionInfo> allpis = PartitionFactory.PartitionInfo.getPartitionInfo(t.getFileSplitKeys());
+
+								for (PartitionInfo pi : allpis) {
+									if (maxv < pi.getP_version())
+										maxv = pi.getP_version();
+								}
+								List<List<PartitionInfo>> vpis = new ArrayList<List<PartitionInfo>>();
+								for (int i = 0; i <= maxv; i++) {
+									List<PartitionInfo> lpi = new ArrayList<PartitionInfo>();
+									vpis.add(lpi);
+								}
+								for (PartitionInfo pi : allpis) {
+									vpis.get(pi.getP_version()).add(pi);
+								}
+								// ok, we get versioned PIs; for each version, we generate a LSV and call filterTable
+								for (int i = 0; i <= maxv; i++) {
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+									if (statfs2_xj)
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600 - 1)).toString(), vpis.get(i).get(0).getP_version()));
+									else
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600)).toString(), vpis.get(i).get(0).getP_version()));
+									// call update map
+									List<SFile> files = cli.client.filterTableFiles(dbName, tbl, lsv);
+									System.out.println("Got Table " + tbl + " " + vpis.get(i).get(0).toJson() + " LSV: " + lsv);
+									lsv.clear();
+									statfs2_update_map(cli, fmap, files);
+								}
+							}
+						}
+					}
+					for (Long k : fmap.descendingKeySet()) {
+						Map<String, FileStat> fsmap = fmap.get(k);
+						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+							System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
+									":" + e.getValue().space + "; ");
+						}
+						System.out.println();
+					}
+					System.err.print("Do you really want to delete these files? (Y or N) ");
+					if ((System.in.read() == 'Y') || isEmergency) {
+						for (Long k : fmap.descendingKeySet()) {
+							Map<String, FileStat> fsmap = fmap.get(k);
+							System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+							for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+								System.out.print(e.getKey() + ":" + e.getValue().fids + "; ");
+								for (Long fid : e.getValue().fids) {
+									SFile f = cli.client.get_file_by_id(fid);
+									cli.client.rm_file_physical(f);
+								}
+							}
+							System.out.println();
+						}
+					} else {
+						System.err.println("Delete aborted.");
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+				} catch (UnknownDBException e) {
+					e.printStackTrace();
+				} catch (TException e) {
+					e.printStackTrace();
+				}
+			}
 			if (o.flag.equals("-statfs")) {
 				// stat the file system
 				if ((begin_time < 0 || end_time < 0) && statfs_range <= 0) {
@@ -1594,6 +1805,82 @@ public class MetaStoreClient {
 						}
 					}
 				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-alz")) {
+				// analyze the system to find a set of files that should be physically removed
+				if (dbName == null) {
+					System.out.println("Please set -db.");
+					System.exit(0);
+				}
+				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				try {
+					List<String> tables = cli.client.getAllTables(dbName);
+					for (String tbl : tables) {
+						System.out.println("Handle table '" + tbl + "'");
+						for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
+							List<Long> files = cli.client.listTableFiles(dbName, tbl, i, i + 1000);
+							if (files.size() > 0) {
+								// insert it into hash table
+								List<SFile> lf = cli.client.get_files_by_ids(files);
+								if (lf.size() > 0) {
+									for (SFile f : lf) {
+										if (f.getValuesSize() > 0) {
+											Long btime = Long.parseLong(f.getValues().get(0).getValue());
+											Map<String, FileStat> fsmap = fmap.get(btime);
+											
+											if (fsmap == null)
+												fsmap = new TreeMap<String, FileStat>();
+													
+											FileStat fs = fsmap.get(f.getTableName());
+											if (fs == null)
+												fs = new FileStat(f.getTableName());
+												
+											fs.fids.add(f.getFid());
+											// calculate space now
+											if (f.getLocationsSize() > 0) {
+												SFileLocation sfl = f.getLocations().get(0);
+												String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+												String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+												String result = runRemoteCmdWithResult(cmd);
+												if (!result.equals("")) {
+													String[] res = result.split("\t");
+													try {
+														fs.addSpace(Long.parseLong(res[0]));
+													} catch (NumberFormatException nfe) {
+														nfe.printStackTrace();
+													}
+												}
+											}
+											fsmap.put(f.getTableName(), fs);
+											fmap.put(btime, fsmap);
+										}
+									}
+								}
+							} else {
+								break;
+							}
+						}
+					}
+					// ok, dump the file stats
+					for (Long k : fmap.descendingKeySet()) {
+						Map<String, FileStat> fsmap = fmap.get(k);
+						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+							System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
+									":" + e.getValue().space + "; ");
+						}
+						System.out.println();
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (UnknownDBException e) {
 					e.printStackTrace();
 					break;
 				} catch (TException e) {
