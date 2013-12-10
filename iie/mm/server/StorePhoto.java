@@ -219,15 +219,15 @@ public class StorePhoto {
 		}
 		
 		try {
-			String returnVal = rVal.toString();
+			returnStr = rVal.toString();
 			Transaction t1 = jedis.multi();
 			
-			Response<Long> r1 = t1.hsetnx(set, md5, returnVal);
+			Response<Long> r1 = t1.hsetnx(set, md5, returnStr);
 			Response<String> r2 = t1.hget(set,md5);
 			t1.exec();
 			if (r1.get() != 1) {
-				returnVal = r2.get() + "#" + returnVal;
-				jedis.hset(set, md5, returnVal);
+				returnStr = r2.get() + "#" + returnStr;
+				jedis.hset(set, md5, returnStr);
 				/*
 				 * Concurrent modify:
 				 * 

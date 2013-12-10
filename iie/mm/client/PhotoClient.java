@@ -87,8 +87,11 @@ public class PhotoClient {
 		public long getFreeSocket() throws IOException {
 			boolean found = false;
 			long id = -1;
-
+			int times = 0;
 			do {
+				
+				if(times >= 4)
+					throw new IOException(this.hostname+":"+this.port+" seems to be down.");
 				synchronized (this) {
 					for (SEntry e : map.values()) {
 						if (!e.used) {
@@ -113,13 +116,14 @@ public class PhotoClient {
 										new DataOutputStream(socket.getOutputStream()));
 							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
 						} catch (SocketException e) {
+							times++;
 							xnr.getAndDecrement();
 							System.out.println("Connect to " + hostname + ":" + port + " failed.");
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
 							}
-							throw e;
+//							throw e;
 						} catch (Exception e) {
 							xnr.getAndDecrement();
 							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
@@ -135,7 +139,7 @@ public class PhotoClient {
 							try {
 								synchronized (this) {
 									//System.out.println("wait ...");
-									this.wait();
+									this.wait(10000);
 								}
 							} catch (InterruptedException e) {
 								e.printStackTrace();
