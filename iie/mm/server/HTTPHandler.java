@@ -7,6 +7,7 @@ import javax.servlet.http.HttpServletResponse;
 import javax.servlet.ServletException;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -53,10 +54,12 @@ public class HTTPHandler extends AbstractHandler {
 			response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 			response.getWriter().println("#FAIL: Redirect to serverId " + e.serverId + " failed.");
 		} else {
+			String[] url = serverUrl.split(":");
+			InetSocketAddress isa = new InetSocketAddress(url[0],666);
 			response.setStatus(HttpServletResponse.SC_MOVED_TEMPORARILY);
 			//response.getWriter().println(serverUrl);
 			//response.getWriter().println(e.info);
-			response.sendRedirect("http://" + serverUrl + "/get?key=" + e.info);
+			response.sendRedirect("http://" + isa.getAddress().getHostAddress()+":"+url[1] + "/get?key=" + e.info);
 		}
 		response.getWriter().flush();
 	}
