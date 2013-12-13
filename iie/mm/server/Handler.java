@@ -207,6 +207,12 @@ public class Handler implements Runnable{
 		} finally {
 			if (sp != null)
 				sp.close();
+			try {
+				s.close();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
 	}
 	
