@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-11-05 14:09:30 macan>
+ * Time-stamp: <2013-12-11 21:10:30 macan>
  *
  */
 
@@ -22,6 +22,7 @@ struct dservice_conf
     int mr_interval;
     int fl_interval; // fail interval
     int fl_max_retry;
+    char *addr_filter;
 };
 
 static struct dservice_conf g_ds_conf = {
@@ -38,6 +39,7 @@ static struct dservice_conf g_ds_conf = {
     .mr_interval = 10,
     .fl_interval = 3600,
     .fl_max_retry = 100,
+    .addr_filter = NULL,
 };
 
 static sem_t g_timer_sem;
@@ -156,6 +158,47 @@ static int __init_signal(void)
 
 out:
     return err;
+}
+
+/* use global hint to filter a better IP address
+ */
+static void __convert_host_to_ip(char *host, char *ip)
+{
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    struct sockaddr_in *si;
+    int err = 0, copied = 0;
+
+    if (!g_ds_conf.addr_filter) {
+        strcpy(ip, host);
+        return;
+    }
+    
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    err = getaddrinfo(host, "0", &hints, &result);
+    if (err) {
+        hvfs_warning(lib, "getaddrinfo() failed, use hostname.\n");
+        strcpy(ip, host);
+        return;
+    }
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        si = (struct sockaddr_in *)rp->ai_addr;
+        char p[64];
+        if (inet_ntop(AF_INET, &si->sin_addr, p, sizeof(p)) != NULL) {
+            if (strstr(p, g_ds_conf.addr_filter) != NULL) {
+                /* ok, use this IP */
+                strcpy(ip, p);
+                copied = 1;
+                break;
+            }
+        }
+    }
+    if (!copied) {
+        strcpy(ip, host);
+    }
 }
 
 int get_disks(struct disk_info **di, int *nr, char *label)

@@ -1,5 +1,7 @@
 package iie.metastore;
 
+import iie.metastore.MetaStoreClient.ScrubRule.ScrubAction;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -467,7 +469,57 @@ public class MetaStoreClient {
 		return result;
 	}
 	
-	public static void statfs2_update_map(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, List<SFile> files) throws MetaException, TException, IOException {
+	public static long __get_file_length(MetaStoreClient cli, SFile f) throws MetaException, IOException {
+		if (f.getLocationsSize() == 0)
+			return 0;
+		SFileLocation sfl = f.getLocations().get(0);
+		String mp;
+		try {
+			mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+		} catch (TException e) {
+			e.printStackTrace();
+			return 0;
+		}
+		String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+		String result = runRemoteCmdWithResult(cmd);
+		long r = 0;
+		
+		if (!result.equals("")) {
+			String[] res = result.split("\t");
+			try {
+				r = Long.parseLong(res[0]);
+			} catch (NumberFormatException nfe) {
+				nfe.printStackTrace();
+			}
+		}
+		
+		return r;
+	}
+	
+	public static class FreeSpace {
+		Double ratio;
+		long total;
+	}
+	
+	public static FreeSpace __get_free_space_ratio(MetaStoreClient cli) throws MetaException, TException, NumberFormatException, IOException {
+		String dms = cli.client.getDMStatus();
+		BufferedReader bufReader = new BufferedReader(new StringReader(dms));
+		String line = null;
+		FreeSpace fs = new FreeSpace();
+		
+		while ((line = bufReader.readLine()) != null) {
+			if (line.startsWith("Total space")) {
+				String[] ls = line.split(" ");
+				fs.total = Long.parseLong(ls[2].substring(0, ls[2].length() - 2)) * 1000000;
+				fs.ratio = Double.parseDouble(ls[ls.length - 1]);
+				break;
+			}
+		}
+		
+		return fs; 
+	}
+	
+	public static void statfs2_update_map(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, List<SFile> files, boolean getlen) throws MetaException, TException, IOException {
 		if (files.size() > 0) {
 			for (SFile f : files) {
 				if (f.getValuesSize() > 0) {
@@ -484,6 +536,40 @@ public class MetaStoreClient {
 					fs.fids.add(f.getFid());
 					// calculate space now
 					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
+						if (getlen) {
+							SFileLocation sfl = f.getLocations().get(0);
+							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+							String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+							String result = runRemoteCmdWithResult(cmd);
+							if (!result.equals("")) {
+								String[] res = result.split("\t");
+								try {
+									fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
+								} catch (NumberFormatException nfe) {
+									nfe.printStackTrace();
+								}
+							}
+						}
+					} else if (f.getLength() > 0) {
+						fs.addSpace(f.getLength() / 1000);
+					}
+					fsmap.put(f.getTableName(), fs);
+					fmap.put(btime, fsmap);
+				} else {
+					// unnamed-db/unnamed-table
+					Long btime = 0L;
+					Map<String, FileStat> fsmap = fmap.get(btime);
+					
+					if (fsmap == null)
+						fsmap = new TreeMap<String, FileStat>();
+					
+					FileStat fs = fsmap.get("UNNAMED-DB");
+					if (fs == null)
+						fs = new FileStat("UNNAMED-DB");
+					
+					fs.fids.add(f.getFid());
+					// calculate space now
+					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
 						SFileLocation sfl = f.getLocations().get(0);
 						String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
 						String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
@@ -496,6 +582,8 @@ public class MetaStoreClient {
 								nfe.printStackTrace();
 							}
 						}
+					} else if (f.getLength() > 0) {
+						fs.addSpace(f.getLength() / 1000);
 					}
 					fsmap.put(f.getTableName(), fs);
 					fmap.put(btime, fsmap);
@@ -517,6 +605,33 @@ public class MetaStoreClient {
 		
 		public void addSpace(long toAdd) {
 			space += toAdd;
+		}
+	}
+	
+	public static class ScrubRule {
+		public String type;
+		public int soft, hard;
+		public enum ScrubAction {
+			DELETE, DOWNREP,
+		}
+		public ScrubAction action;
+		
+		public String toString() {
+			String r = "";
+			String act = null;
+			
+			switch (action) {
+			case DELETE:
+				act = "delete";
+				break;
+			case DOWNREP:
+				act = "downrep";
+				break;
+			default:
+				act = "unknown";
+			}
+			r += "Rule -> {" + type + ", soft=" + soft + ", hard=" + hard + ", action=" + act + "}";
+			return r;
 		}
 	}
 	
@@ -554,8 +669,11 @@ public class MetaStoreClient {
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
 	    String ng_name = null;
-	    boolean statfs2_xj = false;
+	    boolean statfs2_xj = false, statfs2_del = false, statfs2_getlen = true;
+	    String statfs2_tbl = "all";	// dx_rz, ybrz, cdr
 	    long statfs2_bday = -1, statfs2_days = -1;
+	    String scrub_rule = null;
+	    long scrub_max = 1000000;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -858,9 +976,41 @@ public class MetaStoreClient {
 	    		}
 	    		statfs_range = Long.parseLong(o.opt);
 	    	}
+	    	if (o.flag.equals("-scrub_rule")) {
+	    		// set scrub rules
+	    		if (o.opt == null) {
+	    			System.out.println("-scrub_rule RULES");
+	    			System.exit(0);
+	    		}
+	    		scrub_rule = o.opt;
+	    	}
+	    	if (o.flag.equals("-scrub_max")) {
+	    		// set scrub max
+	    		if (o.opt == null) {
+	    			System.out.println("-scrub_max ID");
+	    			System.exit(0);
+	    		}
+	    		scrub_max = Long.parseLong(o.opt);
+	    	}
 	    	if (o.flag.equals("-statfs2_xj")) {
 	    		// set statfs time range
 	    		statfs2_xj = true;
+	    	}
+	    	if (o.flag.equals("-statfs2_del")) {
+	    		// set statfs default action to del
+	    		statfs2_del = true;
+	    	}
+	    	if (o.flag.equals("-statfs2_getlen")) {
+	    		// set statfs time range
+	    		statfs2_getlen = true;
+	    	}
+	    	if (o.flag.equals("-statfs2_tbl")) {
+	    		// set statfs table
+	    		if (o.opt == null) {
+	    			System.out.println("-statfs2_tbl TABLE");
+	    			System.exit(0);
+	    		}
+	    		statfs2_tbl = o.opt;
 	    	}
 	    	if (o.flag.equals("-statfs2_bday")) {
 	    		// set statfs2 begin day offset
@@ -1416,6 +1566,163 @@ public class MetaStoreClient {
 				}
 				System.out.println(dms);
 			}
+			if (o.flag.equals("-scrub")) {
+				// into scrub mode, auto clean
+				// Logic: 
+				// 1. get all files, calculate the file length, store into hash map;
+				// 2. while (true) {
+				//       get store ratio
+				//       decide file set that should scrub
+				//       reget new files, update hash map
+				//    }
+				// RULE LOGIC => type:action:soft_limit:hard_limit
+				// RULE EXAMP => ratio:0.15;+hlw:del:15:10;+all:drep:30:30;
+				Double target_ratio = 0.15;
+				List<ScrubRule> srl = new ArrayList<ScrubRule>();
+				
+				if (scrub_rule != null) {
+					String[] rules = scrub_rule.split(";");
+					for (int i = 0; i < rules.length; i++) {
+						if (rules[i].startsWith("ratio")) {
+							String[] r1 = rules[i].split(":");
+							if (r1.length >= 2)
+								target_ratio = Double.parseDouble(r1[1]);
+						}
+						if (rules[i].startsWith("+")) {
+							String[] r2 = rules[i].split(":");
+							if (r2.length >= 4) {
+								ScrubRule sr = new ScrubRule();
+								sr.type = r2[0].substring(1);
+								sr.soft = Integer.parseInt(r2[2]) * 24;
+								sr.hard = Integer.parseInt(r2[3]) * 24;
+								if (r2[1].equalsIgnoreCase("del")) {
+									sr.action = ScrubRule.ScrubAction.DELETE;
+								} else if (r2[1].equalsIgnoreCase("drep")) {
+									sr.action = ScrubRule.ScrubAction.DOWNREP;
+								}
+								srl.add(sr);
+							}
+						}
+					}
+				} else {
+					ScrubRule sr = new ScrubRule();
+					sr.type = "all";
+					sr.soft = 30 * 24;
+					sr.hard = 30 * 24;
+					sr.action = ScrubRule.ScrubAction.DOWNREP;
+				}
+				System.out.println("Target Ratio " + target_ratio);
+				for (ScrubRule sr : srl) {
+					System.out.println(sr);
+				}
+				
+				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				for (int i = 0; i < scrub_max; i += 1000) {
+					System.out.format("\rGet %.2f %%", (double)i / scrub_max * 100);
+					List<Long> fids = new ArrayList<Long>();
+					for (int j = i; j < i + 1000; j++) {
+						fids.add(new Long(j));
+					}
+					try {
+						List<SFile> files = cli.client.get_files_by_ids(fids);
+						statfs2_update_map(cli, fmap, files, statfs2_getlen);
+					} catch (FileOperationException e) {
+						e.printStackTrace();
+					} catch (MetaException e) {
+						e.printStackTrace();
+					} catch (TException e) {
+						e.printStackTrace();
+					}
+				}
+				System.out.println("\rDone.");
+				
+				while (true) {
+					Double ratio = 0.0;
+					try {
+						Thread.sleep(30 * 1000);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					try {
+						String dms = cli.client.getDMStatus();
+						BufferedReader bufReader = new BufferedReader(new StringReader(dms));
+						String line = null;
+						while ((line = bufReader.readLine()) != null) {
+							if (line.startsWith("Total space")) {
+								String[] ls = line.split(" ");
+								ratio = Double.parseDouble(ls[ls.length - 1]);
+								break;
+							}
+						}
+						System.out.println("This Ratio " + ratio + ", target ratio " + target_ratio);
+						if (ratio < target_ratio) {
+							continue;
+						}
+						
+						// sort by time
+						boolean stop = false;
+						long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
+						
+						for (Long k : fmap.descendingKeySet()) {
+							Map<String, FileStat> fsmap = fmap.get(k);
+							long hours = (k - cur_hour) / 3600;
+							long total_free = 0;
+
+							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours);
+							for (ScrubRule sr : srl) {
+								if (hours > sr.soft) {
+									// act on it
+									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+										if (sr.type.equalsIgnoreCase("hlw")) {
+											if (e.getKey().contains("t_gkrz") || 
+													e.getKey().contains("t_gzrz") ||
+													e.getKey().contains("t_jcrz") ||
+													e.getKey().contains("t_ybrz")) {
+												// ok
+											} else
+												continue;
+										} else if (sr.type.equalsIgnoreCase(e.getKey())) {
+											// ok
+										} else if (sr.type.equalsIgnoreCase("all")) {
+											// ok
+										} else {
+											continue;
+										}
+										for (Long fid : e.getValue().fids) {
+											SFile f = cli.client.get_file_by_id(fid);
+
+											switch (sr.action) {
+											case DELETE:
+												cli.client.rm_file_logical(f);
+												total_free += e.getValue().space * 2;
+												break;
+											case DOWNREP:
+												cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
+												total_free += e.getValue().space;
+												break;
+											}
+										}
+									}
+									FreeSpace fs = __get_free_space_ratio(cli);
+									if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
+										stop = true;
+										break;
+									}
+								}
+							}
+							if (stop)
+								break;
+						}
+						
+					} catch (MetaException e1) {
+						e1.printStackTrace();
+						break;
+					} catch (TException e1) {
+						e1.printStackTrace();
+						break;
+					}
+				}
+			}
 			if (o.flag.equals("-statfs2")) {
 				// stat the file system by SplitValue
 				long end = 0;
@@ -1471,7 +1778,69 @@ public class MetaStoreClient {
 				try {
 					TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
 					tables = cli.client.getAllTables(dbName);
-					for (; end > begin_time; end -= 3600) {
+					if (statfs2_tbl.equalsIgnoreCase("all")) {
+						// do nothing
+					} else if (statfs2_tbl.equalsIgnoreCase("dx_rz")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("dx_rz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("cdr")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("cdr")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("HLW")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("t_gkrz") ||
+									t.contains("t_gzrz") ||
+									t.contains("t_jcrz") ||
+									t.contains("t_ybrz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("gkrz")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("gkrz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("gzrz")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("gzrz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("jcrz")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("jcrz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					} else if (statfs2_tbl.equalsIgnoreCase("ybrz")) {
+						List<String> new_tables = new ArrayList<String>();
+						for (String t : tables) {
+							if (t.contains("ybrz")) {
+								new_tables.add(t);
+							}
+						}
+						tables = new_tables;
+					}
+					for (; end >= begin_time; end -= 3600) {
 						List<SplitValue> lsv = new ArrayList<SplitValue>();
 						System.out.println("Handling data begin @ " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(end * 1000)));
 						
@@ -1496,30 +1865,55 @@ public class MetaStoreClient {
 								}
 								// ok, we get versioned PIs; for each version, we generate a LSV and call filterTable
 								for (int i = 0; i <= maxv; i++) {
+									if (vpis.get(i).get(0).getP_type() != PartitionFactory.PartitionType.interval)
+										continue;
 									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
-									if (statfs2_xj)
-										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600 - 1)).toString(), vpis.get(i).get(0).getP_version()));
-									else
-										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600)).toString(), vpis.get(i).get(0).getP_version()));
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600)).toString(), vpis.get(i).get(0).getP_version()));
 									// call update map
 									List<SFile> files = cli.client.filterTableFiles(dbName, tbl, lsv);
-									System.out.println("Got Table " + tbl + " " + vpis.get(i).get(0).toJson() + " LSV: " + lsv);
+									System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
 									lsv.clear();
-									statfs2_update_map(cli, fmap, files);
+									statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									
+									if (statfs2_xj) {
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600 - 1)).toString(), vpis.get(i).get(0).getP_version()));
+										// call update map
+										files = cli.client.filterTableFiles(dbName, tbl, lsv);
+										System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
+										lsv.clear();
+										statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									}
 								}
 							}
 						}
 					}
+					Long total_size = 0L;
+					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					for (Long k : fmap.descendingKeySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
 							System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
 									":" + e.getValue().space + "; ");
+							total_size += e.getValue().space;
+							if (sizeMap.get(e.getKey()) == null) {
+								sizeMap.put(e.getKey(), e.getValue().space);
+							} else {
+								sizeMap.put(e.getKey(), sizeMap.get(e.getKey()) + e.getValue().space);
+							}
 						}
 						System.out.println();
 					}
-					System.err.print("Do you really want to delete these files? (Y or N) ");
+					for (Map.Entry<String, Long> e : sizeMap.entrySet()) {
+						System.out.println("Table " + e.getKey() + " -> " + e.getValue() + " KB");
+					}
+					System.out.println("Total Size " + total_size + " KB");
+					if (statfs2_del)
+						System.err.print("Do you really want to DELETE these files? (Y or N) ");
+					else
+						System.err.print("Do you really want to DOWN-REP these files? (Y or N) ");
+					
 					if ((System.in.read() == 'Y') || isEmergency) {
 						for (Long k : fmap.descendingKeySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
@@ -1528,7 +1922,10 @@ public class MetaStoreClient {
 								System.out.print(e.getKey() + ":" + e.getValue().fids + "; ");
 								for (Long fid : e.getValue().fids) {
 									SFile f = cli.client.get_file_by_id(fid);
-									cli.client.rm_file_physical(f);
+									if (statfs2_del)
+										cli.client.rm_file_physical(f);
+									else
+										cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
 								}
 							}
 							System.out.println();
@@ -1828,40 +2225,7 @@ public class MetaStoreClient {
 							if (files.size() > 0) {
 								// insert it into hash table
 								List<SFile> lf = cli.client.get_files_by_ids(files);
-								if (lf.size() > 0) {
-									for (SFile f : lf) {
-										if (f.getValuesSize() > 0) {
-											Long btime = Long.parseLong(f.getValues().get(0).getValue());
-											Map<String, FileStat> fsmap = fmap.get(btime);
-											
-											if (fsmap == null)
-												fsmap = new TreeMap<String, FileStat>();
-													
-											FileStat fs = fsmap.get(f.getTableName());
-											if (fs == null)
-												fs = new FileStat(f.getTableName());
-												
-											fs.fids.add(f.getFid());
-											// calculate space now
-											if (f.getLocationsSize() > 0) {
-												SFileLocation sfl = f.getLocations().get(0);
-												String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-												String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
-												String result = runRemoteCmdWithResult(cmd);
-												if (!result.equals("")) {
-													String[] res = result.split("\t");
-													try {
-														fs.addSpace(Long.parseLong(res[0]));
-													} catch (NumberFormatException nfe) {
-														nfe.printStackTrace();
-													}
-												}
-											}
-											fsmap.put(f.getTableName(), fs);
-											fmap.put(btime, fsmap);
-										}
-									}
-								}
+								statfs2_update_map(cli, fmap, lf, true);
 							} else {
 								break;
 							}
@@ -1902,7 +2266,10 @@ public class MetaStoreClient {
 							for (Long fid : files) {
 								SFile f = cli.client.get_file_by_id(fid);
 								recordnr += f.getRecord_nr();
-								length += f.getLength();
+								if (f.getLength() > 0)
+									length += f.getLength();
+								else
+									length += __get_file_length(cli, f);
 								System.out.println("fid " + fid + " -> " + toStringSFile(f));
 							}
 						}

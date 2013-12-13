@@ -1,9 +1,10 @@
 #!/bin/bash
 
 echo "Stop servers ..."
-killall redis-server
+
+kill `cat /tmp/mm.r1.pid`
 
 if [ "x$1" == "xall" ]; then
 	echo "Stop sentinels ..."
-	killall redis-sentinel
+	kill `cat /tmp/mm.s1.pid` 
 fi
