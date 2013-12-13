@@ -31,11 +31,26 @@ public class MMSClient {
 		public long begin, end;
 		
 		public LPutThread(ClientAPI ca, String set, long pnr, long size, String type) {
-			this.ca = ca;
 			this.pnr = pnr;
 			this.size = size;
 			this.type = type;
 			this.set = set;
+			if(type.equalsIgnoreCase("pthca"))
+			{
+				this.ca = new ClientAPI();
+				String uri = "STL://";
+				for(String s :ca.getPc().getConf().getSentinels())
+					uri = uri + s + ";";
+				try {
+					this.ca.init(uri.substring(0, uri.length()-1));
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				
+			}
+			else
+				this.ca = ca;
 		}
 		
 		public void run() {
@@ -58,6 +73,8 @@ public class MMSClient {
 						if (type.equalsIgnoreCase("sync"))
 							ca.put(set + "@" + sb.toString(), content);
 						else if (type.equalsIgnoreCase("async"))
+							ca.put(set + "@" + sb.toString(), content);
+						else if (type.equalsIgnoreCase("pthca"))
 							ca.put(set + "@" + sb.toString(), content);
 						else {
 							if (type.equals(""))
