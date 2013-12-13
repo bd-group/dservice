@@ -493,7 +493,7 @@ public class MetaStoreClient {
 			}
 		}
 		
-		return r;
+		return r * 1024;
 	}
 	
 	public static class FreeSpace {
@@ -585,7 +585,7 @@ public class MetaStoreClient {
 					} else if (f.getLength() > 0) {
 						fs.addSpace(f.getLength() / 1000);
 					}
-					fsmap.put(f.getTableName(), fs);
+					fsmap.put("UNNAMED-DB", fs);
 					fmap.put(btime, fsmap);
 				}
 			}
@@ -1662,16 +1662,18 @@ public class MetaStoreClient {
 						// sort by time
 						boolean stop = false;
 						long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
+						List<Long> fsmapToDel = new ArrayList<Long>();
 						
 						for (Long k : fmap.descendingKeySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
 							long hours = (k - cur_hour) / 3600;
 							long total_free = 0;
 
-							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours);
+							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
 							for (ScrubRule sr : srl) {
 								if (hours > sr.soft) {
 									// act on it
+									List<String> toDel = new ArrayList<String>();
 									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
 										if (sr.type.equalsIgnoreCase("hlw")) {
 											if (e.getKey().contains("t_gkrz") || 
@@ -1688,20 +1690,29 @@ public class MetaStoreClient {
 										} else {
 											continue;
 										}
+										System.out.println(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files");
 										for (Long fid : e.getValue().fids) {
 											SFile f = cli.client.get_file_by_id(fid);
 
 											switch (sr.action) {
 											case DELETE:
-												cli.client.rm_file_logical(f);
-												total_free += e.getValue().space * 2;
+												cli.client.rm_file_physical(f);
+												total_free += e.getValue().space * f.getRep_nr();
+												toDel.add(e.getKey());
 												break;
 											case DOWNREP:
 												cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
 												total_free += e.getValue().space;
+												if (f.getRep_nr() == 1)
+													toDel.add(e.getKey());
+												else if (f.getRep_nr() > 1)
+													f.setRep_nr(f.getRep_nr() - 1);
 												break;
 											}
 										}
+									}
+									for (String s : toDel) {
+										fsmap.remove(s);
 									}
 									FreeSpace fs = __get_free_space_ratio(cli);
 									if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
@@ -1710,10 +1721,16 @@ public class MetaStoreClient {
 									}
 								}
 							}
+							if (fsmap.size() == 0)
+								fsmapToDel.add(k);
 							if (stop)
 								break;
 						}
-						
+						if (fsmapToDel.size() > 0) {
+							for (Long k : fsmapToDel) {
+								fmap.remove(k);
+							}
+						}
 					} catch (MetaException e1) {
 						e1.printStackTrace();
 						break;
