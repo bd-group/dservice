@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
@@ -333,6 +334,49 @@ public class MetaStoreClient {
 		r += "]>";
 		
 		return r;
+	}
+	
+	public static class FgetThread extends Thread {
+		private MetaStoreClient cli;
+		public long begin, end, sum;
+		public boolean getlen = true;
+		public TreeMap<Long, Map<String, FileStat>> fmap;
+		
+		public FgetThread(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, long begin, long end, boolean getlen) {
+			this.cli = cli;
+			this.begin = begin;
+			this.end = end;
+			this.fmap = fmap;
+			this.sum = begin;
+			this.getlen = getlen;
+		}
+		
+		public void run() {
+			for (long i = begin; i < end; i += 1000) {
+				List<Long> fids = new ArrayList<Long>();
+				for (long j = i; j < i + 1000; j++) {
+					fids.add(new Long(j));
+				}
+				try {
+					List<SFile> files = cli.client.get_files_by_ids(fids);
+					synchronized (fmap) {
+						try {
+							statfs2_update_map(cli, fmap, files, getlen);
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					}
+				} catch (FileOperationException e) {
+					e.printStackTrace();
+				} catch (MetaException e) {
+					e.printStackTrace();
+				} catch (TException e) {
+					e.printStackTrace();
+				}
+				sum = i + 1000;
+			}
+			System.out.println("\rDone.");
+		}
 	}
 	
 	public static class LFDThread extends Thread {
@@ -668,12 +712,13 @@ public class MetaStoreClient {
 	    long ofl_fid = -1, srep_fid = -1, fsck_begin = -1, fsck_end = -1;
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
+	    int flt_version = 0;
 	    String ng_name = null;
 	    boolean statfs2_xj = false, statfs2_del = false, statfs2_getlen = true;
 	    String statfs2_tbl = "all";	// dx_rz, ybrz, cdr
 	    long statfs2_bday = -1, statfs2_days = -1;
 	    String scrub_rule = null;
-	    long scrub_max = 1000000;
+	    long scrub_max = -1;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -864,6 +909,14 @@ public class MetaStoreClient {
 	    		}
 	    		sap_value = o.opt;
 	    	}
+	    	if (o.flag.equals("-flt_version")) {
+	    		// set filter table level_1 version
+	    		if (o.opt == null) {
+	    			System.out.println("-flt_version version");
+	    			System.exit(0);
+	    		}
+	    		flt_version = Integer.parseInt(o.opt);
+	    	}
 	    	if (o.flag.equals("-flt_l1_key")) {
 	    		// set filter table level_1 key
 	    		if (o.opt == null) {
@@ -1002,7 +1055,7 @@ public class MetaStoreClient {
 	    	}
 	    	if (o.flag.equals("-statfs2_getlen")) {
 	    		// set statfs time range
-	    		statfs2_getlen = true;
+	    		statfs2_getlen = false;
 	    	}
 	    	if (o.flag.equals("-statfs2_tbl")) {
 	    		// set statfs table
@@ -1499,13 +1552,10 @@ public class MetaStoreClient {
 						System.out.println("Add Node: " + o.opt + ", IPL: " + ipl.get(0));
 						Node n = cli.client.add_node(o.opt, ipl);
 					} catch (UnknownHostException e1) {
-						// TODO Auto-generated catch block
 						e1.printStackTrace();
 					} catch (MetaException e) {
-						// TODO Auto-generated catch block
 						e.printStackTrace();
 					} catch (TException e) {
-						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				}
@@ -1566,6 +1616,14 @@ public class MetaStoreClient {
 				}
 				System.out.println(dms);
 			}
+			if (o.flag.equals("-eda")) {
+				// emergency device space average: remove file location that on this 
+				// device to free some space
+				if (devid == null) {
+					System.out.println("Please set -devid.");
+					System.exit(0);
+				}
+			}
 			if (o.flag.equals("-scrub")) {
 				// into scrub mode, auto clean
 				// Logic: 
@@ -1617,8 +1675,19 @@ public class MetaStoreClient {
 				}
 				
 				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				if (scrub_max < 0) {
+					try {
+						scrub_max = cli.client.getMaxFid();
+					} catch (MetaException e) {
+						e.printStackTrace();
+						break;
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+				}
 				for (int i = 0; i < scrub_max; i += 1000) {
-					System.out.format("\rGet %.2f %%", (double)i / scrub_max * 100);
+					System.out.format("\rGet files %.2f %%", (double)i / scrub_max * 100);
 					List<Long> fids = new ArrayList<Long>();
 					for (int j = i; j < i + 1000; j++) {
 						fids.add(new Long(j));
@@ -1655,7 +1724,7 @@ public class MetaStoreClient {
 							}
 						}
 						System.out.println("This Ratio " + ratio + ", target ratio " + target_ratio);
-						if (ratio < target_ratio) {
+						if (target_ratio < ratio) {
 							continue;
 						}
 						
@@ -1670,9 +1739,10 @@ public class MetaStoreClient {
 							long total_free = 0;
 
 							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
+							// iterate on each rule
 							for (ScrubRule sr : srl) {
 								if (hours > sr.soft) {
-									// act on it
+									// act on each table
 									List<String> toDel = new ArrayList<String>();
 									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
 										if (sr.type.equalsIgnoreCase("hlw")) {
@@ -1738,6 +1808,212 @@ public class MetaStoreClient {
 						e1.printStackTrace();
 						break;
 					}
+				}
+			}	
+			if (o.flag.equals("-avglen")) {
+				// get avg length and record number of each table in some time range
+				long end = 0;
+				if ((dbName == null) ||
+						((begin_time < 0 && end_time < 0) &&
+						(statfs_range <= 0) &&
+						(statfs2_bday <= 0 && statfs2_days <= 0))) {
+					System.out.println("Please set -statfs_range or (-statfs2_bday and -statfs2_days) and -db.");
+					System.exit(0);
+				}
+				
+				if (statfs2_bday >= 0 && statfs2_days >= 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					end = end_time / 3600 * 3600;
+					end = end - statfs2_bday * 86400;
+					begin_time = end - statfs2_days * 86400;
+				} else if (statfs_range > 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					// find a valid Hour start time
+					end = end_time / 3600 * 3600;
+					begin_time = end_time - statfs_range;
+				} else {
+					end = end_time / 3600 * 3600;
+					begin_time = begin_time / 3600 * 3600;
+				}
+				List<String> tables;
+				try {
+					TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+					tables = cli.client.getAllTables(dbName);
+					for (; end >= begin_time; end -= 3600) {
+						List<SplitValue> lsv = new ArrayList<SplitValue>();
+						System.out.println("Handling data begin @ " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(end * 1000)));
+						
+						for (String tbl : tables) {
+							lsv.clear();
+							Table t = cli.client.getTable(dbName, tbl);
+							if (t.getFileSplitKeysSize() > 0) {
+								int maxv = 0;
+								List<PartitionInfo> allpis = PartitionFactory.PartitionInfo.getPartitionInfo(t.getFileSplitKeys());
+
+								for (PartitionInfo pi : allpis) {
+									if (maxv < pi.getP_version())
+										maxv = pi.getP_version();
+								}
+								List<List<PartitionInfo>> vpis = new ArrayList<List<PartitionInfo>>();
+								for (int i = 0; i <= maxv; i++) {
+									List<PartitionInfo> lpi = new ArrayList<PartitionInfo>();
+									vpis.add(lpi);
+								}
+								for (PartitionInfo pi : allpis) {
+									vpis.get(pi.getP_version()).add(pi);
+								}
+								// ok, we get versioned PIs; for each version, we generate a LSV and call filterTable
+								for (int i = 0; i <= maxv; i++) {
+									// BUG: in our lv13 demo systems, versions leaks, so we have to ignore some nonexist versions
+									if (vpis.get(i).size() <= 0) {
+										System.out.println("Metadata corrupted, version " + i + " leaks.");
+										continue;
+									}
+									if (vpis.get(i).get(0).getP_type() != PartitionFactory.PartitionType.interval)
+										continue;
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600)).toString(), vpis.get(i).get(0).getP_version()));
+									// call update map
+									List<SFile> files = cli.client.filterTableFiles(dbName, tbl, lsv);
+									System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
+									lsv.clear();
+									statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									
+									if (statfs2_xj) {
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600 - 1)).toString(), vpis.get(i).get(0).getP_version()));
+										// call update map
+										files = cli.client.filterTableFiles(dbName, tbl, lsv);
+										System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
+										lsv.clear();
+										statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									}
+								}
+							}
+						}
+					}
+					Long total_size = 0L;
+					Map<String, Long> sizeMap = new TreeMap<String, Long>();
+					Map<String, Long> fnrMap = new TreeMap<String, Long>();
+					for (Long k : fmap.descendingKeySet()) {
+						Map<String, FileStat> fsmap = fmap.get(k);
+						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+							System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
+									":" + e.getValue().space + "; ");
+							total_size += e.getValue().space;
+							if (sizeMap.get(e.getKey()) == null) {
+								sizeMap.put(e.getKey(), e.getValue().space);
+								fnrMap.put(e.getKey(), (long)e.getValue().fids.size());
+							} else {
+								sizeMap.put(e.getKey(), sizeMap.get(e.getKey()) + e.getValue().space);
+								fnrMap.put(e.getKey(), fnrMap.get(e.getKey()) + e.getValue().fids.size());
+							}
+						}
+						System.out.println();
+					}
+					for (Map.Entry<String, Long> e : fnrMap.entrySet()) {
+						if (e.getValue() > 0)
+							System.out.println("Table " + e.getKey() + " -> Total " + sizeMap.get(e.getKey()) + " KB, avg " + 
+									((double)sizeMap.get(e.getKey()) / e.getValue()) + " KB.");
+					}
+				} catch (MetaException e) {
+					e.printStackTrace();
+				} catch (UnknownDBException e) {
+					e.printStackTrace();
+				} catch (TException e) {
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-scrub_fast")) {
+				// scrub in fast mode
+				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				if (scrub_max < 0) {
+					try {
+						scrub_max = cli.client.getMaxFid();
+					} catch (MetaException e) {
+						e.printStackTrace();
+						break;
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+				}
+				System.out.println("Get Max FID " + scrub_max);
+				
+				List<FgetThread> fgts = new ArrayList<FgetThread>();
+				for (int i = 0; i < lfdc_thread; i++) {
+					MetaStoreClient tcli = null;
+	    			
+	    			if (serverName == null)
+						try {
+							tcli = new MetaStoreClient();
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+					else
+						try {
+							tcli = new MetaStoreClient(serverName, serverPort);
+						} catch (MetaException e) {
+							e.printStackTrace();
+							System.exit(0);
+						}
+					fgts.add(new FgetThread(tcli, fmap, i * (scrub_max / lfdc_thread), 
+							(i + 1) * (scrub_max / lfdc_thread), statfs2_getlen));
+				}
+				for (FgetThread t : fgts) {
+					t.start();
+				}
+
+				do {
+					long total = 0, cur = 0;
+					for (FgetThread t : fgts) {
+						total += t.end - t.begin;
+						cur += t.sum - t.begin;
+					}
+					System.out.format("\rGet files %.2f %%", (double) cur / total * 100);
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e1) {
+						e1.printStackTrace();
+					}
+					if (cur >= total)
+						break;
+				} while (true);
+				
+				for (FgetThread t : fgts) {
+					try {
+						t.join();
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+				
+				Long total_size = 0L;
+				Map<String, Long> sizeMap = new TreeMap<String, Long>();
+				Map<String, Long> fnrMap = new TreeMap<String, Long>();
+				for (Long k : fmap.descendingKeySet()) {
+					Map<String, FileStat> fsmap = fmap.get(k);
+					System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+					for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+						System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
+								":" + e.getValue().space + "; ");
+						total_size += e.getValue().space;
+						if (sizeMap.get(e.getKey()) == null) {
+							sizeMap.put(e.getKey(), e.getValue().space);
+							fnrMap.put(e.getKey(), (long)e.getValue().fids.size());
+						} else {
+							sizeMap.put(e.getKey(), sizeMap.get(e.getKey()) + e.getValue().space);
+							fnrMap.put(e.getKey(), fnrMap.get(e.getKey()) + e.getValue().fids.size());
+						}
+					}
+					System.out.println();
+				}
+				for (Map.Entry<String, Long> e : fnrMap.entrySet()) {
+					if (e.getValue() > 0)
+						System.out.println("Table " + e.getKey() + " -> Total " + sizeMap.get(e.getKey()) + " KB, avg " + 
+								((double)sizeMap.get(e.getKey()) / e.getValue()) + " KB.");
 				}
 			}
 			if (o.flag.equals("-statfs2")) {
@@ -1882,6 +2158,11 @@ public class MetaStoreClient {
 								}
 								// ok, we get versioned PIs; for each version, we generate a LSV and call filterTable
 								for (int i = 0; i <= maxv; i++) {
+									// BUG: in our lv13 demo systems, versions leaks, so we have to ignore some nonexist versions
+									if (vpis.get(i).size() <= 0) {
+										System.out.println("Metadata corrupted, version " + i + " leaks.");
+										continue;
+									}
 									if (vpis.get(i).get(0).getP_type() != PartitionFactory.PartitionType.interval)
 										continue;
 									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
@@ -2084,17 +2365,18 @@ public class MetaStoreClient {
 					System.out.println("please set -db and -table");
 					System.exit(0);
 				}
+				System.out.println("Version " + flt_version);
 				List<SplitValue> values = new ArrayList<SplitValue>();
 				if (flt_l1_key != null && flt_l1_value != null) {
 					// split value into many sub values
 					String[] l1vs = flt_l1_value.split(";");
 					for (String vs : l1vs) {
-						values.add(new SplitValue(flt_l1_key, 1, vs, 0));
+						values.add(new SplitValue(flt_l1_key, 1, vs, flt_version));
 					}
 					if (flt_l2_key != null && flt_l2_value != null) {
 						String[] l2vs = flt_l2_value.split(";");
 						for (String vs : l2vs) {
-							values.add(new SplitValue(flt_l2_key, 2, vs, 0));
+							values.add(new SplitValue(flt_l2_key, 2, vs, flt_version));
 						}
 					}
 				}
@@ -2242,7 +2524,7 @@ public class MetaStoreClient {
 							if (files.size() > 0) {
 								// insert it into hash table
 								List<SFile> lf = cli.client.get_files_by_ids(files);
-								statfs2_update_map(cli, fmap, lf, true);
+								statfs2_update_map(cli, fmap, lf, statfs2_getlen);
 							} else {
 								break;
 							}

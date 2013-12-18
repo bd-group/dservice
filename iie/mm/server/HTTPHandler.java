@@ -12,6 +12,8 @@ import java.net.InetSocketAddress;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 
+import redis.clients.jedis.Jedis;
+
 public class HTTPHandler extends AbstractHandler {
 	private ServerConf conf;
 	private StorePhoto sp;
@@ -113,15 +115,30 @@ public class HTTPHandler extends AbstractHandler {
 
 	private void doInfo(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
-		response.setContentType("text/plain;charset=utf-8");
-		response.setStatus(HttpServletResponse.SC_OK);
-		baseRequest.setHandled(true);
-		response.getWriter().println("#In Current Server Session:");
-		response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
-		response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
-		response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
-		response.getWriter().println(PhotoServer.getServerInfo(conf));
-		response.getWriter().flush();
+		Jedis jedis = null;
+
+		try {
+			jedis = new RedisFactory(conf).getDefaultInstance();
+			response.setContentType("text/plain;charset=utf-8");
+			response.setStatus(HttpServletResponse.SC_OK);
+			baseRequest.setHandled(true);
+			response.getWriter().println("#In Current Server Session:");
+			response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
+			response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
+			response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
+			response.getWriter().println(PhotoServer.getServerInfo(conf));
+			response.getWriter().println();
+			response.getWriter().println("#Client Auto Config:");
+			response.getWriter().println(" dupmode = " + jedis.hget("mm.client.conf", "dupmode"));
+			response.getWriter().println(" dupnum  = " + jedis.hget("mm.client.conf", "dupnum"));
+			response.getWriter().println(" sockperserver = " + jedis.hget("mm.client.conf", "sockperserver"));
+			response.getWriter().println();
+			response.getWriter().println("#Set Stats:");
+			response.getWriter().println(" ");
+			response.getWriter().flush();
+		} finally {
+			RedisFactory.putInstance(jedis);
+		}
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

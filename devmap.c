@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-13 22:28:21 macan>
+ * Time-stamp: <2013-12-17 17:52:13 macan>
  *
  */
 
@@ -53,8 +53,8 @@ JNIEXPORT jstring JNICALL Java_devmap_DevMap_getDevMaps(JNIEnv *env, jclass cls)
     /* Step 2: read in the content */
     memset(buf, 0, sizeof(buf));
     err = read(fd, buf, 4096);
-    if (err)
-        printf("read in shm file error %d\n", errno);
+    if (err) 
+       printf("read in shm file error %d\n", errno);
     close_shm(fd);
     res = buf;
 out:
