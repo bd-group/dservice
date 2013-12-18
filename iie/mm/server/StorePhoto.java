@@ -7,15 +7,16 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.Random;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Transaction;
 import redis.clients.jedis.Response;
+import redis.clients.jedis.Transaction;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
@@ -545,6 +546,40 @@ public class StorePhoto {
 					delFile(a);
 			f.delete();
 		}
+	}
+	
+	/**
+	 * 获得redis中每个set的块数，存在hash表里，键是集合名，值是块数
+	 * @return
+	 */
+	public Map<String,Integer> getSetBlks()
+	{
+		try {
+			reconnectJedis();
+		} catch (IOException e2) {
+			return null;
+		}
+		HashMap<String,Integer> re = new HashMap<String,Integer>();
+		try {
+			String[] keys = jedis.keys("*.blk.*").toArray(new String[0]); 
+			List<String> vals = jedis.mget(keys);
+			for(int i = 0;i<keys.length;i++)
+			{
+				String set = keys[i].split("\\.")[0];
+				re.put(set, re.containsKey(set) ? re.get(set)+Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 );
+			}
+		} catch (JedisConnectionException e) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			jedis = RedisFactory.putBrokenInstance(jedis);
+			return null;
+		} finally {
+			jedis = RedisFactory.putInstance(jedis);
+		}
+		
+		return re;
 	}
 	
 	//关闭jedis连接,关闭文件访问流
