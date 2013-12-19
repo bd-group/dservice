@@ -34,6 +34,7 @@ public class StorePhoto {
 	private static Map<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();		
 	private Map<String, RandomAccessFile> readRafHash;			//读文件时的随机访问流，用哈希来缓存
 	private Jedis jedis;
+	private static String sha = null;
 	
 	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
 	
@@ -97,6 +98,7 @@ public class StorePhoto {
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
+			
 	}
 	
 	public void reconnectJedis() throws IOException {
@@ -126,6 +128,20 @@ public class StorePhoto {
 		} catch (IOException e2) {
 			return "+FAIL: MMM Server can not be reached.";
 		}
+		if(sha == null)
+		{
+			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]) ; "
+					+ "if temp then  "
+					+ "temp = temp..\"#\"..ARGV[2] ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],temp) ;"
+					+ "return temp;"
+					+ "else "
+					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]) ;"
+					+ "return ARGV[2] end";
+			sha = jedis.scriptLoad(script);
+//			System.out.println(sha);
+		}
+		
 		StringBuffer rVal = new StringBuffer(128);
 		
 		//随机选一个磁盘
@@ -221,6 +237,8 @@ public class StorePhoto {
 		
 		try {
 			returnStr = rVal.toString();
+			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
+			/*
 			Transaction t1 = jedis.multi();
 			
 			Response<Long> r1 = t1.hsetnx(set, md5, returnStr);
@@ -240,8 +258,9 @@ public class StorePhoto {
 				 * HSET set md5 R
 				 * DEL set@md5
 				 * EXEC
-				 */
+				 *
 			}
+		*/
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -253,6 +272,8 @@ public class StorePhoto {
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (JedisException e) {
 			err = -1;
+			if(e.getMessage().startsWith("NOSCRIPT"))
+				sha = null;
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (Exception e) {
 			e.printStackTrace();
