@@ -187,12 +187,13 @@ public class Handler implements Runnable{
 					dos.flush();
 				}
 			}
-			if(sp != null)
-				sp.close();
 		} catch (IOException e) {
 			e.printStackTrace();
 		} catch (Exception e) {
 			e.printStackTrace();
+		} finally {
+			if (sp != null)
+				sp.close();
 		}
 	}
 	

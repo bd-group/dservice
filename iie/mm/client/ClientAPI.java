@@ -6,12 +6,10 @@ import iie.mm.client.PhotoClient.SocketHashEntry;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +45,49 @@ public class ClientAPI {
 	public PhotoClient getPc() {
 		return pc;
 	}
+	
+	private int init_by_sentinel(ClientConf conf, String urls) throws Exception {
+		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
+			return -1;
+		}
+		// iterate the sentinel set, get master IP:port, save to RedisFactory
+		if (conf.getSentinels() == null) {
+			if (urls == null) {
+				throw new Exception("Invalid URL or sentinels.");
+			}
+			HashSet<String> sens = new HashSet<String>();
+			String[] s = urls.split(";");
+			
+			for (int i = 0; i < s.length; i++) {
+				sens.add(s[i]);
+			}
+			conf.setSentinels(sens);
+		}
+		jedis = pc.getRf().getNewInstance(null);
+		
+		return 0;
+	}
+	
+	private int init_by_standalone(ClientConf conf, String urls) throws Exception {
+		String[] x = urls.split(";");
+		for (String url : x) {
+			String[] redishp = url.split(":"); 
+			if (redishp.length != 2)
+				throw new Exception("wrong format of url: " + url);
+			
+			if (pc.getJedis() == null) {
+				pc.getRf();
+				jedis = RedisFactory.getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
+				pc.setJedis(jedis);
+			} else {
+				// Use the Redis Server in conf
+				jedis = pc.getJedis();
+			}
+			conf.setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
+		}
+		
+		return 0;
+	}
 
 	/**
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
@@ -60,24 +101,25 @@ public class ClientAPI {
 		if (urls == null) {
 			throw new Exception("The url can not be null.");
 		}
-		String[] x = urls.split(";");
+		
 		if (pc.getConf() == null) {
 			pc.setConf(new ClientConf());
 		}
 		pc.getConf().clrRedisIns();
-		for (String url : x) {
-			String[] redishp = url.split(":"); 
-			if (redishp.length != 2)
-				throw new Exception("wrong format of url: " + url);
-			
-			if (pc.getJedis() == null) {
-				jedis = RedisFactory.getNewInstance(redishp[0], Integer.parseInt(redishp[1]));
-				pc.setJedis(jedis);
-			} else {
-				// Use the Redis Server in conf
-				jedis = pc.getJedis();
-			}
-			pc.getConf().setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
+		if (urls.startsWith("STL:")) {
+			urls = urls.substring(4);
+			pc.getConf().setRedisMode(ClientConf.RedisMode.SENTINEL);
+		} else if (urls.startsWith("STA:")) {
+			urls = urls.substring(4);
+			pc.getConf().setRedisMode(ClientConf.RedisMode.STANDALONE);
+		}
+		switch (pc.getConf().getRedisMode()) {
+		case SENTINEL:
+			init_by_sentinel(pc.getConf(), urls);
+			break;
+		case STANDALONE:
+			init_by_standalone(pc.getConf(), urls);
+			break;
 		}
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
@@ -125,8 +167,8 @@ public class ClientAPI {
 	 * @return		
 	 */
 	public String put(String key, byte[] content) throws IOException, Exception {
-		if (key == null)
-			throw new Exception("key can not be null.");
+		if (key == null || keyList.size() ==0)
+			throw new Exception("key can not be null or MetaError.");
 		String[] keys = key.split("@");
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);
@@ -268,60 +310,10 @@ public class ClientAPI {
 			throw new Exception("wrong format of key:" + key);
 	}
 
-	/**
-	 * 批量同步取，对外提供的接口
-	 * @param key	redis中的键以set开头+#+md5的字符串形成key
-	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
-	 */
-	public Map<String, byte[]> mGet(Set<String> keys) throws Exception {
-//		for(String key : keys){
-//			iGet(key);
-//		}
-//		return wait(keys);
-		return null;
-	}
-
-	/**
-	 * 批量异步取，对外提供的接口
-	 * @param key	redis中的键以set开头+#+md5的字符串形成key
-	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
-	 */
-	public int imGet(Set<String> keys) throws Exception {
-		for(String key : keys){
-			iGet(key);
+	public void quit() {
+		if (pc.getRf() != null) {
+			pc.getRf().putInstance(jedis);
+			pc.getRf().quit();
 		}
-		return 1;
 	}
-	
-	/**
-	 * 从输入流中读取count个字节
-	 * @param count
-	 * @return
-	 */
-	public Map<Long, byte[]> wait(Set<Long> indexs) throws Exception {
-		for(Long ind : indexs){
-			if (ind < 0)
-				throw new Exception("Wrong index！Index can't be negative number.");
-		}
-		return pc.wait(indexs);
-	}
-	
-	/*public Map<String, byte[]> wait(Set<String> keys) throws Exception {
-		Set<String> key = new HashSet<String>(); 
-		for(String k : keys){
-			String[] ks = k.split("#|@");
-			if(ks.length == 2){
-				k = jedis.hget(ks[0], ks[1]);
-				key.add(k);
-			}else if (ks.length % 8 == 0){
-				String[] str = k.split("#");
-				for(String s : str){
-					key.add(s);
-				}
-			}else {
-				throw new Exception("wrong format of key:"+k);
-			}
-		}
-		return pc.wait(key);
-	}*/
 }

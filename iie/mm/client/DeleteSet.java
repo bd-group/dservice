@@ -30,7 +30,7 @@ public class DeleteSet {
 	public DeleteSet(String redisHost, int redisPort) {
 		this.redisHost = redisHost;
 		this.redisPort = redisPort;
-		jedis = RedisFactory.getNewInstance(redisHost, redisPort);
+		jedis = RedisFactory.getRawInstance(redisHost, redisPort);
 	}
 
 	public void delSet(String set) {
