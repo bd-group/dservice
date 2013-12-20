@@ -307,6 +307,20 @@ public class StorePhoto {
 			System.out.println("Array lengths in arguments mismatch.");
 			return null;
 		}
+		if(sha == null)
+		{
+			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]) ; "
+					+ "if temp then  "
+					+ "temp = temp..\"#\"..ARGV[2] ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],temp) ;"
+					+ "return temp;"
+					+ "else "
+					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]) ;"
+					+ "return ARGV[2] end";
+			sha = jedis.scriptLoad(script);
+//			System.out.println(sha);
+		}
+		
 		String[] returnVal = new String[content.length];
 		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
@@ -323,6 +337,13 @@ public class StorePhoto {
 		Map<String, String> mcs = new HashMap<String, String>();
 		synchronized (ssc) {
 			for (int i = 0; i < content.length; i++) {
+				try {
+					reconnectJedis();
+				} catch (IOException e2) {
+					e2.printStackTrace();
+					return null;
+				}
+				
 				StringBuffer rVal = new StringBuffer(128);
 
 				try {
@@ -389,7 +410,12 @@ public class StorePhoto {
 					baos.write(content[i]);
 					returnVal[i] = rVal.toString();
 					ssc.offset += content[i].length;
-
+					
+//					Object o = jedis.evalsha(sha, 1, set,md5[i],returnVal[i]);
+					returnVal[i] = jedis.evalsha(sha, 1, set,md5[i],returnVal[i]).toString();
+//					returnVal[i] = o.toString();
+					
+					/*
 					Transaction t1 = jedis.multi();
 					Response<Long> r1 = t1.hsetnx(set, md5[i], returnVal[i]);
 					Response<String> r2 = t1.hget(set, md5[i]);
@@ -398,10 +424,10 @@ public class StorePhoto {
 						returnVal[i] = r2.get() + "#" + returnVal[i];
 						mcs.put(md5[i], returnVal[i]);
 					}
+					*/
 
 				} catch (JedisConnectionException e) {
-					System.out
-							.println("Jedis connection broken in storeObject.");
+					System.out.println("Jedis connection broken in mstoreObject.");
 					try {
 						Thread.sleep(1000);
 					} catch (InterruptedException e1) {
@@ -409,25 +435,26 @@ public class StorePhoto {
 					jedis = RedisFactory.putBrokenInstance(jedis);
 					return null;
 				} catch (JedisException e) {
+					e.printStackTrace();
 					jedis = RedisFactory.putBrokenInstance(jedis);
 					return null;
 				} catch (Exception e) {
-					jedis = RedisFactory.putInstance(jedis);
+					e.printStackTrace();
 					return null;
+				} finally{
+					jedis = RedisFactory.putInstance(jedis);
 				}
 
 			}
 			try {
 				ssc.raf.write(baos.toByteArray());
 				// 结果一次存入redis
-				if (mcs.size() > 0 && jedis != null)
-					jedis.hmset(set, mcs);
+//				if (mcs.size() > 0 && jedis != null)
+//					jedis.hmset(set, mcs);
 			} catch (IOException e) {
 				e.printStackTrace();
 				return null;
-			} finally {
-				jedis = RedisFactory.putInstance(jedis);
-			}
+			} 
 
 		}
 		return returnVal;

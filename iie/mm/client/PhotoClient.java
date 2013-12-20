@@ -469,30 +469,25 @@ public class PhotoClient {
 		header[0] = ActionType.MPUT;
 		header[1] = (byte) set.length();
 		try{
-			synchronized (dos) {
-				
-				dos.write(header);
-				dos.writeInt(n);
-				dos.write(set.getBytes());
-				for(int i = 0;i<n;i++)
-				{
-					dos.writeInt(md5s[i].getBytes().length);
-					dos.write(md5s[i].getBytes());
-				}
-				for(int i = 0; i<n;i++)
-					dos.writeInt(content[i].length);
-				for(int i = 0; i<n;i++)
-					dos.write(content[i]);
+			dos.write(header);
+			dos.writeInt(n);
+			dos.write(set.getBytes());
+			for(int i = 0;i<n;i++)
+			{
+				dos.writeInt(md5s[i].getBytes().length);
+				dos.write(md5s[i].getBytes());
 			}
-			synchronized (dis){
-				
-				int count = dis.readInt();
-				if (count == -1)
-					throw new IOException("MM server failure." );
-				r[0] = new String(readBytes(count, dis));
-				for(int i = 1;i<n;i++)
-					r[i] = new String(readBytes(dis.readInt(), dis));
-			}
+			for(int i = 0; i<n;i++)
+				dos.writeInt(content[i].length);
+			for(int i = 0; i<n;i++)
+				dos.write(content[i]);
+			
+			int count = dis.readInt();
+			if (count == -1)
+				throw new IOException("MM server failure." );
+			r[0] = new String(readBytes(count, dis));
+			for(int i = 1;i<n;i++)
+				r[i] = new String(readBytes(dis.readInt(), dis));
 			she.setFreeSocket(id);
 		} catch (Exception e) {
 			e.printStackTrace();
