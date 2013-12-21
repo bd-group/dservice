@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-17 17:52:13 macan>
+ * Time-stamp: <2013-12-20 20:39:49 macan>
  *
  */
 
@@ -25,6 +25,38 @@ static int open_shm()
     }
 
     return fd;
+}
+
+#define SHMLOCK_UN      0
+#define SHMLOCK_WR      1
+#define SHMLOCK_RD      2
+static int lock_shm(int fd, int type)
+{
+    struct flock lock;
+    int err = 0;
+
+    switch (type) {
+    case SHMLOCK_UN:
+        lock.l_type = F_UNLCK;
+        break;
+    case SHMLOCK_WR:
+        lock.l_type = F_WRLCK;
+        break;
+    case SHMLOCK_RD:
+        lock.l_type = F_RDLCK;
+        break;
+    }
+    lock.l_start = 0;
+    lock.l_whence = SEEK_SET;
+    lock.l_len = 0;
+    lock.l_pid = getpid();
+
+    err = fcntl(fd, F_SETLKW, &lock);
+    if (err) {
+        printf("lock shm file failed w/ %s\n", strerror(errno));
+    }
+
+    return err;
 }
 
 static void close_shm(int fd)
@@ -52,9 +84,11 @@ JNIEXPORT jstring JNICALL Java_devmap_DevMap_getDevMaps(JNIEnv *env, jclass cls)
     
     /* Step 2: read in the content */
     memset(buf, 0, sizeof(buf));
+    lock_shm(fd, SHMLOCK_RD);
     err = read(fd, buf, 4096);
-    if (err) 
-       printf("read in shm file error %d\n", errno);
+    lock_shm(fd, SHMLOCK_UN);
+    if (err < 0) 
+        printf("read in shm file error %s(%d)\n", strerror(errno), errno);
     close_shm(fd);
     res = buf;
 out:

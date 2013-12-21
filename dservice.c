@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-11 21:10:30 macan>
+ * Time-stamp: <2013-12-20 20:39:01 macan>
  *
  */
 
@@ -917,7 +917,7 @@ void refresh_map(time_t cur)
             hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
                      "any NRs\n", strerror(-err), err);
         }
-        fd = open_shm(O_TRUNC);
+        fd = open_shm(0);
         lock_shm(fd, SHMLOCK_WR);
         write_shm(fd, dpi, nr);
         lock_shm(fd, SHMLOCK_UN);
@@ -1620,6 +1620,7 @@ static void *__rep_thread_main(void *args)
                           pos->to.node, pos->to.mp, pos->to.location,
                           pos->from.node, pos->from.mp, pos->from.location);
                 pos->status = REP_STATE_DOING;
+#if 1
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
@@ -1629,6 +1630,24 @@ static void *__rep_thread_main(void *args)
                         pos->from.node, pos->from.mp, pos->from.location,
                         pos->to.node, pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location);
+#else
+                sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
+                        "ssh %s stat -t %s/%s 2>&1 && "
+                        "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
+                        "if [ -d %s/%s ]; then cd %s/%s ; "
+                        "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | "
+                        "md5sum ; "
+                        "else cd %s ; "
+                        "find ./%s -type f -exec md5sum {} + | awk '{print $1}' | sort | "
+                        "md5sum ; fi",
+                        pos->to.node, pos->to.mp, dirname(dir),
+                        pos->from.node, pos->from.mp, pos->from.location,
+                        pos->from.node, pos->from.mp, pos->from.location,
+                        pos->to.node, pos->to.mp, pos->to.location,
+                        pos->to.mp, pos->to.location,
+                        pos->to.mp, pos->to.location,
+                        pos->to.mp, pos->to.location);
+#endif
                 break;
             case REP_STATE_DOING:
                 continue;
@@ -1760,6 +1779,7 @@ int main(int argc, char *argv[])
         {"mkdirs", no_argument, 0, 'x'},
         {"devtype", required_argument, 0, 'T'},
         {"timeo", required_argument, 0, 'o'},
+        {"iph", required_argument, 0, 'I'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1795,6 +1815,9 @@ int main(int argc, char *argv[])
             break;
         case 'o':
             g_ds_conf.hb_interval = atoi(optarg);
+            break;
+        case 'I':
+            g_ds_conf.addr_filter = strdup(optarg);
             break;
         case 'f':
         {
