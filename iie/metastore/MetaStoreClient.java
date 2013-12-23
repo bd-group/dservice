@@ -1454,55 +1454,53 @@ public class MetaStoreClient {
 					break;
 				}
 			}
-                        if(o.flag.equals("-flc"){
-                                if(dbName == null || table == null){
+                        if(o.flag.equals("-flc")){
+                                if(dbName == null || tableName == null){
                                     System.out.println("please set -db and -table");
                                     System.exit(0);
                                 }
-
-                                List<SplitValue> values = new ArrayList<SplitValue>();
-                                if(flt_l1_key !=null && flt_l1_value !=null){
-                                    String[] l1vs = flt_l1_value.split(";");
-                                    for(String vs:l1vs){
-                                        values.add(new SplitValue(flt_l1_key,1,vs,0));
-                                    }
-                                    if (flt_l2_key != null && flt_l2_value != null) {
-                                        String[] l2vs = flt_l2_value.split(";");
-                                        for (String vs : l2vs) {
-                                            values.add(new SplitValue(flt_l2_key, 2, vs, 0));
-                                        }
-                                    }
-                                }
                                 try {
                                     long recordnr = 0, length = 0;
-                                    String command = "ssh %s java -jar %s %s %s";
-                                    List<SFile> files = cli.client.filterTableFiles(dbName, tableName, values);
-                                    StringBuffer sb = new StringBuffer();
-                                    int totalRecord = 0;
-                                    int totalSize = 0;
-                                    for (SFile f : files) {
-                                        String result = "";
-                                        for (SFileLocation loc : f.getLocations()) {
-                                            result = runRemoteCmdWithResult(String.format(command,loc.getHostAddress,"../../lib/lutools.jar",loc.getDevid(),loc.getLocation()));
-                                            if(!"".equals(result)){
-                                                String[] dres = result.split(",");
-                                                int drecord = Integer.parseInt(dres[0]);
-                                                int dsize = Integer.parseInt(dres[1]);
-                                                totalRecord += drecord;
-                                                totalSize += dsize;
-                                                System.out.printf("Name:%s Records:%d Size:%d\n",f.getName(),drecord,dsize);
-                                                break;
+                                    String command = "ssh %s java -Djava.library.path=dservice2/build/ -jar %s %s %s";
+                                    for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
+                                        List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
+                                        System.out.println("files' size:"+files.size());
+                                        if(files.isEmpty())break;
+                                        StringBuffer sb = new StringBuffer();
+                                        int totalRecord = 0;
+                                        float totalSize = 0.0F;
+                                        for (Long fid : files) {
+                                            SFile f = cli.client.get_file_by_id(fid);
+                                            String result = "";
+                                            for (SFileLocation loc : f.getLocations()) {
+                                                result = runRemoteCmdWithResult(String.format(command,loc.getNode_name(),"dservice2/lib/lutools.jar",loc.getDevid(),loc.getLocation()));
+                                             
+						if(!"".equals(result)&&result.indexOf("$")>=0){
+						   // System.out.println("result>>>>>>"+result);
+                                                    int start = result.indexOf("$");
+						    int end = result.indexOf(")");
+						    result = result.substring(start+2,end);	
+                                                    String[] dres = result.split(",");
+                                                    int drecord = Integer.parseInt(dres[0]);
+                                                    float dsize = Float.parseFloat(dres[1]);
+                                                    totalRecord += drecord;
+                                                    totalSize += dsize;
+                                                    //System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
+                                                    break;
+                                                }
                                             }
+                                            //System.out.println("fid " + fid + " -> " + toStringSFile(f));
                                         }
+                                    	System.out.printf("TotalRecords:%d TotalSize:%.2f MB\n",totalRecord,totalSize);
                                     }
-                                    System.out.printf("TotalRecords:%d TotalSize:%d\n",totalRecord,totalSize);
+
 				} catch (MetaException e) {
                                     e.printStackTrace();
                                     break;
 				} catch (TException e) {
                                     e.printStackTrace();
                                     break;
-                              }
+                                }
 
                             }
 			if (o.flag.equals("-flt")) {
