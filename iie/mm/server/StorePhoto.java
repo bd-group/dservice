@@ -597,7 +597,7 @@ public class StorePhoto {
 	}
 	
 	/**
-	 * 获得redis中每个set的块数，存在hash表里，键是集合名，值是块数
+	 * 获得redis中每个set的块数，存在hash表里，键是[集合名，该集合内的文件数]，值是块数
 	 * @return
 	 */
 	public Map<String,Integer> getSetBlks()
@@ -608,6 +608,7 @@ public class StorePhoto {
 			return null;
 		}
 		HashMap<String,Integer> re = new HashMap<String,Integer>();
+		HashMap<String,Integer> temp = new HashMap<String,Integer>();
 		try {
 			String[] keys = jedis.keys("*.blk.*").toArray(new String[0]); 
 			List<String> vals = jedis.mget(keys);
@@ -615,6 +616,11 @@ public class StorePhoto {
 			{
 				String set = keys[i].split("\\.")[0];
 				re.put(set, re.containsKey(set) ? re.get(set)+Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 );
+			}
+			//此时keyset就是redis中所有的集合名
+			for(String s : re.keySet())
+			{
+				temp.put(s+" , "+jedis.hlen(s), re.get(s));
 			}
 		} catch (JedisConnectionException e) {
 			try {
@@ -627,7 +633,7 @@ public class StorePhoto {
 			jedis = RedisFactory.putInstance(jedis);
 		}
 		
-		return re;
+		return temp;
 	}
 	
 	//关闭jedis连接,关闭文件访问流

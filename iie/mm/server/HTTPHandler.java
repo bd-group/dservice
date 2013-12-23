@@ -137,14 +137,15 @@ public class HTTPHandler extends AbstractHandler {
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
 		PrintWriter pw = response.getWriter();
-		pw.println("#Data Count(M) :");
-		int total = 0;
+		pw.println("#Data Count(name , number , length(M)) :");
+		int totallen = 0,totaln = 0;
 		for(Map.Entry<String, Integer> en : m.entrySet())
 		{
-			total += en.getValue();
-			pw.println(en.getKey() + " : " + (en.getValue() * ((double)conf.getBlockSize()/1024.0/1024.0)));
+			totallen += en.getValue();
+			totaln += Integer.parseInt(en.getKey().split(",")[1].trim());
+			pw.println(en.getKey() + " , " + (en.getValue() * ((double)conf.getBlockSize()/1024.0/1024.0)));
 		}
-		pw.println("total : "+total * ((double)conf.getBlockSize()/1024.0/1024.0));
+		pw.println("Total , "+totaln+" , "+totallen * ((double)conf.getBlockSize()/1024.0/1024.0));
 		
 		
 	}
