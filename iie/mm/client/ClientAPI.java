@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,38 @@ public class ClientAPI {
 		return pc;
 	}
 	
+	private void updateClientConf(Jedis jedis, ClientConf conf) {
+		if (conf == null || !conf.isAutoConf() || jedis == null)
+			return;
+		try {
+			String dupMode = jedis.hget("mm.client.conf", "dupmode");
+			if (dupMode != null) {
+				if (dupMode.equalsIgnoreCase("dedup")) {
+					conf.setMode(ClientConf.MODE.DEDUP);
+				} else if (dupMode.equalsIgnoreCase("nodedup")) {
+					conf.setMode(ClientConf.MODE.NODEDUP);
+				}
+			}
+			String dupNum = jedis.hget("mm.client.conf", "dupnum");
+			if (dupNum != null) {
+				int dn = Integer.parseInt(dupNum);
+				if (dn > 1)
+					conf.setDupNum(dn);
+			}
+			String sockPerServer = jedis.hget("mm.client.conf", "sockperserver");
+			if (sockPerServer != null) {
+				int sps = Integer.parseInt(sockPerServer);
+				if (sps >= 1)
+					conf.setSockPerServer(sps);
+			}
+			System.out.println("Auto conf client with: dupMode=" + dupMode + 
+					", dupNum=" + conf.getDupNum() + ", sockPerServer=" + 
+					conf.getSockPerServer());
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
 	private int init_by_sentinel(ClientConf conf, String urls) throws Exception {
 		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
 			return -1;
@@ -64,6 +97,7 @@ public class ClientAPI {
 			conf.setSentinels(sens);
 		}
 		jedis = pc.getRf().getNewInstance(null);
+		updateClientConf(jedis, conf);
 		
 		return 0;
 	}
@@ -85,6 +119,7 @@ public class ClientAPI {
 			}
 			conf.setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
 		}
+		updateClientConf(jedis, conf);
 		
 		return 0;
 	}
@@ -106,11 +141,11 @@ public class ClientAPI {
 			pc.setConf(new ClientConf());
 		}
 		pc.getConf().clrRedisIns();
-		if (urls.startsWith("STL:")) {
-			urls = urls.substring(4);
+		if (urls.startsWith("STL://")) {
+			urls = urls.substring(6);
 			pc.getConf().setRedisMode(ClientConf.RedisMode.SENTINEL);
-		} else if (urls.startsWith("STA:")) {
-			urls = urls.substring(4);
+		} else if (urls.startsWith("STA://")) {
+			urls = urls.substring(6);
 			pc.getConf().setRedisMode(ClientConf.RedisMode.STANDALONE);
 		}
 		switch (pc.getConf().getRedisMode()) {
@@ -135,8 +170,8 @@ public class ClientAPI {
 					Socket sock = new Socket();
 					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
 					try {
-						sock.setTcpNoDelay(true);//不要延迟
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));//本地与所有的服务器相连
+						sock.setTcpNoDelay(true);
+						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
 						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
 								new DataOutputStream(sock.getOutputStream()));
 						socketHash.put(t.getElement(), she);
@@ -153,6 +188,7 @@ public class ClientAPI {
 				}
 			}
 		}
+		System.out.println("Got active server size=" + socketHash.size());
 		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
 		return 0;
@@ -283,37 +319,12 @@ public class ClientAPI {
 		else 
 			throw new Exception("wrong format of key:" + key);
 	}
-	
-	/**
-	 * It is thread-safe
-	 * 异步取，对外提供的接口
-	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
-	 * @return		成功则返回int类型的一个数值，否则抛出异常
-	 */
-	public long iGet(String key) throws Exception {
-		if(key == null)
-			throw new Exception("key can not be null.");
-		String[] keys = key.split("@");
-		if (keys.length == 2){
-			long l = pc.iGetPhoto(keys[0], keys[1], id);
-			id++;
-			return l;
-		} else if (keys.length == 7){
-			long l = pc.iSearchByInfo(key, keys, id);
-			id++;
-			return l;
-		} else if (keys.length % 7 == 0){		//如果是拼接的元信息，分割后长度是7的倍数
-			long l = pc.iSearchPhoto(key, id);
-			id++;
-			return l;
-		} else 
-			throw new Exception("wrong format of key:" + key);
-	}
 
 	public void quit() {
 		if (pc.getRf() != null) {
 			pc.getRf().putInstance(jedis);
 			pc.getRf().quit();
 		}
+		pc.close();
 	}
 }

@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-04 16:09:35 macan>
+# Time-stamp: <2013-12-06 14:14:25 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -34,8 +34,6 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
 MM_CP = $(shell pwd)/lib/jedis-2.2.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool-1.6.jar
-
-MM_JARS = $(shell pwd)/lib/jedis-2.2.1.jar $(shell pwd)/lib/junixsocket-1.3.jar $(shell pwd)/lib/sigar.jar $(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar $(shell pwd)/lib/servlet-api-2.5.jar
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
 
@@ -84,7 +82,7 @@ $(MMHC) : iie/mm/hclient/hclient.c
 demo : $(DEMO)
 
 $(DEMO) : iie/mm/cclient/demo.c
-	@$(GCC) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
+	@$(GCC) $(CFLAGS) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@
@@ -111,8 +109,9 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@CLASSPATH=$(CP) javac -d build $(IIE)/metastore/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/monitor/*.java
 	@$(ECHO) -e " " JAR"\t" iie.jar
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class 
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
 	@CLASSPATH=$(CP):$(MSCLI_RUNTIME) javac -d build $(IIE)/metastore/*.java

@@ -31,7 +31,7 @@ public class ServerConf {
 	private String nodeName; // 节点名
 	private int serverPort = DEFAULT_SERVER_PORT;
 	private String redisHost;
-	private int redisPort = DEFAULT_REDIS_PORT;
+    private int redisPort = DEFAULT_REDIS_PORT;
 	private int blockSize = DEFAULT_BLOCK_SIZE;
 	private int httpPort = DEFAULT_HTTP_PORT;
 	private int period = DEFAULT_PERIOD; // 每隔period秒统计一次读写速率
@@ -95,9 +95,9 @@ public class ServerConf {
 		if (serverPort > 0)
 			this.serverPort = serverPort;
 		if (redisHost == null)
-			this.redisHost = this.nodeName;
+            this.redisHost = this.nodeName;
 		else
-			this.redisHost = redisHost;
+            this.redisHost = redisHost;
 		this.redisPort = redisPort;
 		this.blockSize = blockSize;
 		this.period = period;
@@ -121,7 +121,7 @@ public class ServerConf {
 			this.period = Integer.parseInt(results.get(2).toString());
 			System.out.println("Get period from redis server: " + this.period);
 		}
-		jedis.disconnect();
+		jedis = RedisFactory.putInstance(jedis);
 	}
 
 	public String getNodeName() {
@@ -141,20 +141,21 @@ public class ServerConf {
 	}
 
 	public String getRedisHost() {
-		return redisHost;
+        return redisHost;
 	}
-
+	
 	public void setRedisHost(String redisHost) {
-		this.redisHost = redisHost;
+	        this.redisHost = redisHost;
 	}
-
+	
 	public int getRedisPort() {
-		return redisPort;
+	        return redisPort;
 	}
-
+	
 	public void setRedisPort(int redisPort) {
-		this.redisPort = redisPort;
+	        this.redisPort = redisPort;
 	}
+	
 
 	public int getHttpPort(){
 		return httpPort;

@@ -50,10 +50,10 @@ public class MMServer {
 	        }
 		}
 		
-		String serverName = null, redisServer = null;
-		int serverPort = ServerConf.DEFAULT_SERVER_PORT, 
-				redisPort = ServerConf.DEFAULT_REDIS_PORT, 
+		String serverName = null,redisMasterName = null,redisServer = null;
+		int serverPort = ServerConf.DEFAULT_SERVER_PORT,
 				blockSize = ServerConf.DEFAULT_BLOCK_SIZE, 
+				redisPort = ServerConf.DEFAULT_REDIS_PORT, 
 				period = ServerConf.DEFAULT_PERIOD,
 				httpPort = ServerConf.DEFAULT_HTTP_PORT;
 		Set<String> sa = new HashSet<String>();
@@ -65,8 +65,9 @@ public class MMServer {
 				System.out.println("-h    : print this help.");
 				System.out.println("-r    : local server name.");
 				System.out.println("-p    : local server listen port.");
-				System.out.println("-rr   : redis server name.");
-				System.out.println("-rp   : redis server port.");
+				System.out.println("-rr : redis server name.");
+                System.out.println("-rp : redis server port.");
+//				System.out.println("-rmn  : redis master name");
 				System.out.println("-hp   : http server port.");
 				System.out.println("-blk  : block size.");
 				System.out.println("-prd  : logging period.");
@@ -92,21 +93,29 @@ public class MMServer {
 				serverPort = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-rr")) {
-				// set redis server name
-				if (o.opt == null) {
-					System.out.println("-rr redisServerName");
-					System.exit(0);
-				}
-				redisServer = o.opt;
-			}
-			if (o.flag.equals("-rp")) {
-				// set redis server port
-				if (o.opt == null) {
-					System.out.println("-rp redisServerPort");
-					System.exit(0);
-				}
-				redisPort = Integer.parseInt(o.opt);
-			}
+                // set redis server name
+                if (o.opt == null) {
+                        System.out.println("-rr redisServerName");
+                        System.exit(0);
+                }
+                redisServer = o.opt;
+	        }
+	        if (o.flag.equals("-rp")) {
+	                // set redis server port
+	                if (o.opt == null) {
+	                        System.out.println("-rp redisServerPort");
+	                        System.exit(0);
+	                }
+	                redisPort = Integer.parseInt(o.opt);
+	        }
+//			if (o.flag.equals("-rmn")) {
+//				if(o.opt == null){
+//					System.out.println("-rmn redis master name");
+//					System.exit(0);
+//				}
+//				redisMasterName = o.opt;
+//				
+//			}
 			if (o.flag.equals("-hp")) {
 				// set http server port
 				httpPort = Integer.parseInt(o.opt);
@@ -162,7 +171,6 @@ public class MMServer {
 			e.printStackTrace();
 			System.exit(0);
 		}
-		
 		PhotoServer ps = null;
 		try {
 			ps = new PhotoServer(conf);

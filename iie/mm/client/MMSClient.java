@@ -2,6 +2,7 @@ package iie.mm.client;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
@@ -30,16 +31,56 @@ public class MMSClient {
 		public long begin, end;
 		
 		public LPutThread(ClientAPI ca, String set, long pnr, long size, String type) {
-			this.ca = ca;
 			this.pnr = pnr;
 			this.size = size;
 			this.type = type;
 			this.set = set;
+			if(type.equalsIgnoreCase("pthca"))
+			{
+				this.ca = new ClientAPI();
+				String uri = "STL://";
+				for(String s :ca.getPc().getConf().getSentinels())
+					uri = uri + s + ";";
+				try {
+					this.ca.init(uri.substring(0, uri.length()-1));
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				
+			}
+			else
+				this.ca = ca;
 		}
 		
 		public void run() {
 			begin = System.nanoTime();
 			try {
+				if (type.startsWith("mput"))
+				{
+					MessageDigest md;
+					md = MessageDigest.getInstance("md5");
+					
+					int pack = Integer.parseInt(type.split("_")[1]);
+					Random r = new Random();
+					for (int i = 0; i < pnr/pack; i++) {
+						byte[][] content = new byte[pack][(int) size];
+						String[] md5s = new String[pack];
+						for(int l = 0;l<pack;l++)
+						{
+							r.nextBytes(content[l]);
+							md.update(content[l]);
+							byte[] mdbytes = md.digest();
+							StringBuffer sb = new StringBuffer();
+							for (int j = 0; j < mdbytes.length; j++) {
+								sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+							}
+							md5s[l] = sb.toString();
+						}
+						ca.mPut(set,md5s,content);
+					}
+				}
+				else{
 				for (int i = 0; i < pnr; i++) {
 					byte[] content = new byte[(int) size];
 					Random r = new Random();
@@ -58,11 +99,13 @@ public class MMSClient {
 							ca.put(set + "@" + sb.toString(), content);
 						else if (type.equalsIgnoreCase("async"))
 							ca.put(set + "@" + sb.toString(), content);
+						else if (type.equalsIgnoreCase("pthca"))
+							ca.put(set + "@" + sb.toString(), content);
 						else {
 							if (type.equals(""))
 								System.out.println("Please provide lpt_type");
 							else
-								System.out.println("Wrong lpt_type, should be sync or async");
+								System.out.println("Wrong lpt_type, should be sync, async, pthca or mput_{pack}");
 							System.exit(0);
 						}
 						apnr++;
@@ -70,10 +113,14 @@ public class MMSClient {
 						e.printStackTrace();
 					}
 				}
+				}
 				end = System.nanoTime();
 				System.out.println(Thread.currentThread().getId() + " --> Put " + apnr + " objects in " +
 						((end - begin) / 1000.0) + " us, PPS is " + (pnr * 1000000000.0) / (end - begin));
 			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
@@ -201,7 +248,8 @@ public class MMSClient {
 				
 				System.out.println("-lpt  : large scacle put test.");
 				System.out.println("-lgt  : large scacle get test.");
-				System.out.println("-getserverinfo  :  get info from all servers online" );
+				System.out.println("-lmpt : large scale mput test");
+				System.out.println("-getserverinfo  :  get info from all servers online" ); 
 				
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				
@@ -280,6 +328,15 @@ public class MMSClient {
 			if (o.flag.equals("-lgt_type")) {
 				// get or search
 				lgt_type = o.opt;
+			}
+			if (o.flag.equals("-lmpt_nr")){
+				lmpt_nr = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lmpt_pack")){
+				lmpt_pack = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lmpt_size")){
+				lmpt_size = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-stl")) {
 				// parse sentinels
@@ -590,6 +647,9 @@ public class MMSClient {
 				
 				try {
 					byte[] content = pcInfo.get(set + "@" + md5);
+					FileOutputStream fos = new FileOutputStream(md5);
+					fos.write(content);
+					fos.close();
 					System.out.println("Get content length: " + content.length);
 				} catch(IOException e){
 					e.printStackTrace();
@@ -603,6 +663,9 @@ public class MMSClient {
 				try{
 					
 					byte[] content = pcInfo.get(info);
+					FileOutputStream fos = new FileOutputStream("getbi");
+					fos.write(content);
+					fos.close();
 					System.out.println("get content length:"+content.length);
 				}catch(IOException e){
 					e.printStackTrace();
@@ -631,6 +694,7 @@ public class MMSClient {
 		}
 		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
 			pcInfo.getPc().getRf().quit();
+		pcInfo.quit();
 	}
 
 }

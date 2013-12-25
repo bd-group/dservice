@@ -14,6 +14,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisException;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class ProfileTimerTask extends TimerTask {
 	private ServerConf conf;
@@ -33,7 +34,7 @@ public class ProfileTimerTask extends TimerTask {
 		if (!dir.exists())
 			dir.mkdirs();
 		
-		// 向redis中插入心跳信息
+		// 向redis的数据库1中插入心跳信息
 		jedis = new RedisFactory(conf).getDefaultInstance();
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
@@ -56,7 +57,8 @@ public class ProfileTimerTask extends TimerTask {
 		sid = jedis.zscore("mm.active", self).longValue();
 		ServerConf.serverId = sid;
 		System.out.println("Got ServerID " + sid + " for Server " + self);
-		
+
+
 		// use the same serverID to register in mm.active.http
 		self = conf.getNodeName() + ":" + conf.getHttpPort();
 		jedis.zadd("mm.active.http", sid, self);
@@ -96,7 +98,7 @@ public class ProfileTimerTask extends TimerTask {
 		lastDl = dl;
 		lastTs = cur;
 		
-		// 发送server的心跳信息
+		//server的心跳信息
 		try {
 			if (jedis == null)
 				jedis = new RedisFactory(conf).getDefaultInstance();

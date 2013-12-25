@@ -3,6 +3,7 @@ package iie.mm.client;
 import iie.mm.client.ClientConf.RedisInstance;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class RedisFactory {
 	// for each ClientAPI, there should be one redisfactory
@@ -23,7 +24,7 @@ public class RedisFactory {
 		return jedis;
 	}
 	
-	public Jedis getNewInstance(RedisInstance ri) {
+	public Jedis getNewInstance(RedisInstance ri) throws JedisConnectionException {
 		switch (conf.getRedisMode()) {
 		case STANDALONE:
 			return new Jedis(ri.hostname, ri.port);

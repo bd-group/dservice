@@ -23,6 +23,7 @@ public class ClientConf {
 	private int serverPort;
 	private int dupNum;			//一个文件存储份数
 	private int sockPerServer;
+	private boolean autoConf = false;
 	
 	public static enum MODE {
 		DEDUP, NODEDUP,
@@ -67,8 +68,9 @@ public class ClientConf {
 		redisIns = new ArrayList<RedisInstance>();
 		this.dupNum = 1;
 		this.mode = MODE.NODEDUP;
-		this.setRedisMode(RedisMode.SENTINEL);
+		this.setRedisMode(RedisMode.STANDALONE);
 		this.setSockPerServer(5);
+		this.setAutoConf(true);
 	}
 
 	public RedisInstance getRedisInstance() {
@@ -141,5 +143,13 @@ public class ClientConf {
 
 	public void setSentinels(Set<String> sentinels) {
 		this.sentinels = sentinels;
+	}
+
+	public boolean isAutoConf() {
+		return autoConf;
+	}
+
+	public void setAutoConf(boolean autoConf) {
+		this.autoConf = autoConf;
 	}
 }

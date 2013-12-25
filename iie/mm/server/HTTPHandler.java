@@ -2,11 +2,14 @@ package iie.mm.server;
 
 import iie.mm.server.StorePhoto.RedirectException;
 
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.InetSocketAddress;
+import java.util.Map;
+
+import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import javax.servlet.ServletException;
-
-import java.io.IOException;
 
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -53,10 +56,12 @@ public class HTTPHandler extends AbstractHandler {
 			response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 			response.getWriter().println("#FAIL: Redirect to serverId " + e.serverId + " failed.");
 		} else {
+			String[] url = serverUrl.split(":");
+			InetSocketAddress isa = new InetSocketAddress(url[0],666);
 			response.setStatus(HttpServletResponse.SC_MOVED_TEMPORARILY);
 			//response.getWriter().println(serverUrl);
 			//response.getWriter().println(e.info);
-			response.sendRedirect("http://" + serverUrl + "/get?key=" + e.info);
+			response.sendRedirect("http://" + isa.getAddress().getHostAddress()+":"+url[1] + "/get?key=" + e.info);
 		}
 		response.getWriter().flush();
 	}
@@ -120,6 +125,30 @@ public class HTTPHandler extends AbstractHandler {
 		response.getWriter().println(PhotoServer.getServerInfo(conf));
 		response.getWriter().flush();
 	}
+	private void doData(String target, Request baseRequest, HttpServletRequest request, 
+			HttpServletResponse response) throws IOException, ServletException {
+		Map<String,Integer> m = sp.getSetBlks();
+		if(m == null)
+		{
+			badResponse(baseRequest, response, "#FAIL:read from redis failed.");
+			return;
+		}
+		response.setContentType("text/plain;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		PrintWriter pw = response.getWriter();
+		pw.println("#Data Count(name , number , length(M)) :");
+		int totallen = 0,totaln = 0;
+		for(Map.Entry<String, Integer> en : m.entrySet())
+		{
+			totallen += en.getValue();
+			totaln += Integer.parseInt(en.getKey().split(",")[1].trim());
+			pw.println(en.getKey() + " , " + (en.getValue() * ((double)conf.getBlockSize()/1024.0/1024.0)));
+		}
+		pw.println("Total , "+totaln+" , "+totallen * ((double)conf.getBlockSize()/1024.0/1024.0));
+		
+		
+	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
@@ -133,6 +162,8 @@ public class HTTPHandler extends AbstractHandler {
 			doPut(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/info")) {
 			doInfo(target, baseRequest, request, response);
+		} else if (target.equalsIgnoreCase("/data")) {
+			doData(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}

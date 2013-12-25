@@ -32,7 +32,7 @@ static void *__tget(void *args)
         char key[256];
 
         sprintf(key, "%s@%s", ta->set, ta->ki[i].key);
-        err = get(key, (void **)&buffer, &len);
+        err = mmcc_get(key, (void **)&buffer, &len);
         if (err) {
             printf("get(%s) failed w/ %d\n", key, err);
         } else {
@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
         goto out;
     }
 
-    err = init(argv[1]);
+    err = mmcc_init(argv[1]);
     if (err) {
         printf("init() failed w/ %d\n", err);
         goto out;
@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
     free(buffer);
 #endif
 
-    err = thread_get("default", 100000, 5);
+    err = thread_get("default", 100000, 500);
     if (err) {
         printf("thread_get() failed w/ %d\n", err);
     }
