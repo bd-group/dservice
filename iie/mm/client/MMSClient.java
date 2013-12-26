@@ -56,6 +56,31 @@ public class MMSClient {
 		public void run() {
 			begin = System.nanoTime();
 			try {
+				if (type.startsWith("mput"))
+				{
+					MessageDigest md;
+					md = MessageDigest.getInstance("md5");
+					
+					int pack = Integer.parseInt(type.split("_")[1]);
+					Random r = new Random();
+					for (int i = 0; i < pnr/pack; i++) {
+						byte[][] content = new byte[pack][(int) size];
+						String[] md5s = new String[pack];
+						for(int l = 0;l<pack;l++)
+						{
+							r.nextBytes(content[l]);
+							md.update(content[l]);
+							byte[] mdbytes = md.digest();
+							StringBuffer sb = new StringBuffer();
+							for (int j = 0; j < mdbytes.length; j++) {
+								sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+							}
+							md5s[l] = sb.toString();
+						}
+						ca.mPut(set,md5s,content);
+					}
+				}
+				else{
 				for (int i = 0; i < pnr; i++) {
 					byte[] content = new byte[(int) size];
 					Random r = new Random();
@@ -80,7 +105,7 @@ public class MMSClient {
 							if (type.equals(""))
 								System.out.println("Please provide lpt_type");
 							else
-								System.out.println("Wrong lpt_type, should be sync or async");
+								System.out.println("Wrong lpt_type, should be sync, async, pthca or mput_{pack}");
 							System.exit(0);
 						}
 						apnr++;
@@ -88,10 +113,14 @@ public class MMSClient {
 						e.printStackTrace();
 					}
 				}
+				}
 				end = System.nanoTime();
 				System.out.println(Thread.currentThread().getId() + " --> Put " + apnr + " objects in " +
 						((end - begin) / 1000.0) + " us, PPS is " + (pnr * 1000000000.0) / (end - begin));
 			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
