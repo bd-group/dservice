@@ -1735,7 +1735,7 @@ public class MetaStoreClient {
 						
 						for (Long k : fmap.descendingKeySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
-							long hours = (k - cur_hour) / 3600;
+							long hours = (cur_hour - k) / 3600;
 							long total_free = 0;
 
 							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
@@ -2188,6 +2188,7 @@ public class MetaStoreClient {
 					}
 					Long total_size = 0L;
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
+					Map<String, Long> fnrMap = new TreeMap<String, Long>();
 					for (Long k : fmap.descendingKeySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
@@ -2197,8 +2198,10 @@ public class MetaStoreClient {
 							total_size += e.getValue().space;
 							if (sizeMap.get(e.getKey()) == null) {
 								sizeMap.put(e.getKey(), e.getValue().space);
+								fnrMap.put(e.getKey(), (long)e.getValue().fids.size());
 							} else {
 								sizeMap.put(e.getKey(), sizeMap.get(e.getKey()) + e.getValue().space);
+								fnrMap.put(e.getKey(), fnrMap.get(e.getKey()) + e.getValue().fids.size());
 							}
 						}
 						System.out.println();
@@ -2406,6 +2409,60 @@ public class MetaStoreClient {
 				try {
 					cli.client.truncTableFiles(dbName, tableName);
 					System.out.println("Begin backgroud table truncate now, please wait!");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-trunc")) {
+				// trunc table files FAST
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table");
+					System.exit(0);
+				}
+				try {
+					long size = 0, recordnr = 0, length = 0;
+					boolean isWrapped = false, isNone = true;
+					for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
+						List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
+						if (files.size() > 0) {
+							for (Long fid : files) {
+								try {
+									SFile f = cli.client.get_file_by_id(fid);
+									if (f.getStore_status() != MetaStoreConst.MFileStoreStatus.RM_PHYSICAL) {
+										recordnr += f.getRecord_nr();
+										if (f.getLength() > 0)
+											length += f.getLength();
+										System.out.println("DEL fid " + fid);
+										cli.client.rm_file_physical(f);
+										isNone = false;
+									} else {
+										System.out.println("IGN fid " + fid);
+									}
+								} catch (FileOperationException foe) {
+									// ignore it
+								}
+							}
+						}
+						size += files.size();
+						if (files.size() == 0) {
+							if (i != 0) {
+								if (isWrapped && isNone)
+									break;
+								System.out.println("Wrap " + i + "," + isWrapped + "," + isNone);
+								i = -1000;
+								isWrapped = true;
+								isNone = true;
+								continue;
+							} else {
+								break;
+							}
+						}
+					}
+					System.out.println("Total " + size + " file(s) listed, record # (~=) " + recordnr + ", length (~=) " + (length / 1000000.0) + "MB.");
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
