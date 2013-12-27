@@ -651,7 +651,7 @@ public class MMSClient {
 					fos.write(content);
 					fos.close();
 					System.out.println("Get content length: " + content.length);
-				} catch(IOException e){
+				} catch (Exception e) {
 					e.printStackTrace();
 				}
 			}
@@ -667,7 +667,7 @@ public class MMSClient {
 					fos.write(content);
 					fos.close();
 					System.out.println("get content length:"+content.length);
-				}catch(IOException e){
+				} catch (Exception e) {
 					e.printStackTrace();
 				}
 			}
