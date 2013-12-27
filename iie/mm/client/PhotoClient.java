@@ -12,7 +12,6 @@ import java.net.Socket;
 import java.util.HashSet;
 import java.net.SocketException;
 import java.util.Map;
-import java.util.Set;
 import java.util.HashMap;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
@@ -279,6 +278,7 @@ public class PhotoClient {
 	}
 	
 	private String __syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+		refreshJedis();
 		long id = she.getFreeSocket();
 		if (id == -1)
 			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);

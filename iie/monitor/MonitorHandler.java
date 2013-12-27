@@ -4,6 +4,13 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -15,6 +22,51 @@ import org.eclipse.jetty.server.handler.ResourceHandler;
 
 public class MonitorHandler extends AbstractHandler {
 
+	private HashMap<String,String> cityip = new HashMap<String, String>();
+	private ConcurrentHashMap<String, Long> uidtime = new ConcurrentHashMap<String, Long>();
+	public MonitorHandler()
+	{
+		cityip.put("GJZX", "10.213.69.5");
+		cityip.put("SC", "10.218.69.5");
+//		cityip.put("XJ", "10.239.69.5");
+		cityip.put("YN", "10.248.65.9");
+		cityip.put("XJ", "192.168.1.37");
+		Timer t = new Timer();
+		t.schedule(new EvictThread(10*1000), 10*1000, 10*1000);
+	}
+	private class EvictThread extends TimerTask
+	{
+		private long expireTime;	//单位ms
+		
+		public EvictThread(long expireTime) {
+			this.expireTime = expireTime;
+		}
+
+		@Override
+		public void run() {
+			// TODO Auto-generated method stub
+			Set<String> keys = new HashSet<String>();
+			for(Map.Entry<String, Long> en : uidtime.entrySet())
+			{
+				if(System.currentTimeMillis() - en.getValue() > expireTime)
+				{
+					keys.add(en.getKey());
+					try {
+						runCmd("rm -rf datacount/"+en.getKey());
+						System.out.println("rm "+en.getKey());
+					} catch (IOException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
+			for(String s : keys)
+			{
+				uidtime.remove(s);
+			}
+		}
+		
+	}
 	private void badResponse(Request baseRequest, HttpServletResponse response,
 			String message) throws IOException {
 		response.setContentType("text/html;charset=utf-8");
@@ -27,16 +79,27 @@ public class MonitorHandler extends AbstractHandler {
 	private void doDataCount(String target, Request baseRequest,
 			HttpServletRequest request, HttpServletResponse response)throws IOException, ServletException {
 		// System.out.println(target);
-		if (target.equalsIgnoreCase("/datacount/main.html")) {
 			String city = request.getParameter("city");
 			String date = request.getParameter("date");
-			String error = runCmd("cd datacount; ./doplot.sh report/"+city+"/report-"+date);
-			if(error != null)
+			String id = request.getParameter("id");
+			if(target.equals("/datacount/main.html"))
 			{
-				badResponse(baseRequest, response, "#FAIL: "+error);
-				return;
+				if(city != null && date != null && id != null)
+				{
+					uidtime.put(id, System.currentTimeMillis());
+					String name = "/report-"+date;
+					String cmd = "cd datacount;"
+							+ "expect data.exp "+cityip.get(city)+" /reports"+ name + " reports/"+city+"/ ;"
+							+ " ./doplot.sh report/"+city+"/"+name +" "+id+"/";
+					System.out.println(cmd);
+					String error = runCmd(cmd);
+					if(error != null)
+					{
+						badResponse(baseRequest, response, "#FAIL: "+error);
+						return;
+					}
+				}
 			}
-		}
 		ResourceHandler rh = new ResourceHandler();
 		rh.setResourceBase(".");
 		rh.handle(target, baseRequest, request, response);

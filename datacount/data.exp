@@ -1,0 +1,11 @@
+set dataname [lindex $argv 1]
+set destpath [lindex $argv 2]
+set ip [lindex $argv 0]
+spawn scp -r metastore@$ip:~/$dataname $destpath/
+expect_before "no)?" {
+send "yes\r" }
+sleep 1
+expect "password:"
+send "111111\r"
+send "exit\r"
+expect eof
