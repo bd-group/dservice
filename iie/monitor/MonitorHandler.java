@@ -52,7 +52,7 @@ public class MonitorHandler extends AbstractHandler {
 				{
 					keys.add(en.getKey());
 					try {
-						runCmd("rm -rf datacount/"+en.getKey());
+						runCmd("cd datacount;rm -rf "+en.getKey());
 						System.out.println("rm "+en.getKey());
 					} catch (IOException e) {
 						// TODO Auto-generated catch block
