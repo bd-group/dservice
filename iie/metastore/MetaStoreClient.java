@@ -589,6 +589,7 @@ public class MetaStoreClient {
 								String[] res = result.split("\t");
 								try {
 									fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
+									fs.addRecordnr(f.getRecord_nr());
 								} catch (NumberFormatException nfe) {
 									nfe.printStackTrace();
 								}
@@ -596,6 +597,7 @@ public class MetaStoreClient {
 						}
 					} else if (f.getLength() > 0) {
 						fs.addSpace(f.getLength() / 1000);
+						fs.addRecordnr(f.getRecord_nr());
 					}
 					fsmap.put(f.getTableName(), fs);
 					fmap.put(btime, fsmap);
@@ -640,15 +642,21 @@ public class MetaStoreClient {
 		public String table;
 		public TreeSet<Long> fids;
 		public long space;	// space total used
+		public long recordnr;
 		
 		public FileStat(String table) {
 			this.table = table;
 			fids = new TreeSet<Long>();
 			space = 0;
+			recordnr = 0;
 		}
 		
 		public void addSpace(long toAdd) {
 			space += toAdd;
+		}
+		
+		public void addRecordnr(long toAdd) {
+			recordnr += toAdd;
 		}
 	}
 	
@@ -1686,10 +1694,11 @@ public class MetaStoreClient {
 						break;
 					}
 				}
-				for (int i = 0; i < scrub_max; i += 1000) {
+				System.out.println("Get MaxFid() " + scrub_max);
+				for (int i = 0; i < scrub_max; i += 2000) {
 					System.out.format("\rGet files %.2f %%", (double)i / scrub_max * 100);
 					List<Long> fids = new ArrayList<Long>();
-					for (int j = i; j < i + 1000; j++) {
+					for (int j = i; j < i + 2000; j++) {
 						fids.add(new Long(j));
 					}
 					try {
@@ -1708,7 +1717,7 @@ public class MetaStoreClient {
 				while (true) {
 					Double ratio = 0.0;
 					try {
-						Thread.sleep(30 * 1000);
+						Thread.sleep(10 * 1000);
 					} catch (InterruptedException e) {
 						e.printStackTrace();
 					}
@@ -1760,24 +1769,36 @@ public class MetaStoreClient {
 										} else {
 											continue;
 										}
-										System.out.println(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files");
+										
+										Set<Long> idToDel = new TreeSet<Long>();
+										System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
 										for (Long fid : e.getValue().fids) {
-											SFile f = cli.client.get_file_by_id(fid);
-
-											switch (sr.action) {
-											case DELETE:
-												cli.client.rm_file_physical(f);
-												total_free += e.getValue().space * f.getRep_nr();
-												toDel.add(e.getKey());
-												break;
-											case DOWNREP:
-												cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
-												total_free += e.getValue().space;
-												if (f.getRep_nr() == 1)
+											try {
+												SFile f = cli.client.get_file_by_id(fid);
+	
+												switch (sr.action) {
+												case DELETE:
+													cli.client.rm_file_physical(f);
+													total_free += e.getValue().space * f.getRep_nr();
 													toDel.add(e.getKey());
-												else if (f.getRep_nr() > 1)
-													f.setRep_nr(f.getRep_nr() - 1);
-												break;
+													System.out.print(f.getFid() + ",");
+													break;
+												case DOWNREP:
+													//total_free += e.getValue().space;
+													if (f.getRep_nr() > 1) {
+														cli.client.set_file_repnr(f.getFid(), f.getRep_nr() - 1);
+														System.out.print(f.getFid() + ",");
+													}
+													break;
+												}
+											} catch (FileOperationException foe) {
+												idToDel.add(fid);
+											}
+										}
+										System.out.println("]");
+										if (idToDel.size() > 0) {
+											for (Long fid : idToDel) {
+												e.getValue().fids.remove(fid);
 											}
 										}
 									}
@@ -2207,7 +2228,7 @@ public class MetaStoreClient {
 						System.out.println();
 					}
 					for (Map.Entry<String, Long> e : sizeMap.entrySet()) {
-						System.out.println("Table " + e.getKey() + " -> " + e.getValue() + " KB");
+						System.out.println("Table " + e.getKey() + " -> " + fnrMap.get(e.getKey()) + " " + e.getValue() + " KB");
 					}
 					System.out.println("Total Size " + total_size + " KB");
 					if (statfs2_del)
