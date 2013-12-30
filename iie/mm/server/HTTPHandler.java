@@ -121,32 +121,36 @@ public class HTTPHandler extends AbstractHandler {
 
 		try {
 			jedis = new RedisFactory(conf).getDefaultInstance();
-			response.setContentType("text/plain;charset=utf-8");
+			response.setContentType("text/html;charset=utf-8");
 			response.setStatus(HttpServletResponse.SC_OK);
 			baseRequest.setHandled(true);
-			response.getWriter().println("#In Current Server Session:");
-			response.getWriter().println(" Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue());
-			response.getWriter().println(" Total Read    Bytes (B): " + ServerProfile.readBytes.longValue());
-			response.getWriter().println(" Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue());
-			response.getWriter().println(PhotoServer.getServerInfo(conf));
-			response.getWriter().println();
-			response.getWriter().println("#Client Auto Config:");
-			response.getWriter().println(" dupmode = " + jedis.hget("mm.client.conf", "dupmode"));
-			response.getWriter().println(" dupnum  = " + jedis.hget("mm.client.conf", "dupnum"));
-			response.getWriter().println(" sockperserver = " + jedis.hget("mm.client.conf", "sockperserver"));
-			response.getWriter().println();
-			response.getWriter().println("#Set Stats:");
-			response.getWriter().println(" ");
+			String page = "<HTML> " +
+							"<HEAD>" +
+							"<TITLE> MM Server Info</TITLE>" +
+							"</HEAD>" +
+							"<BODY>" +
+							"<H1> #In Current Server Session: </H1><tt>" +
+							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
+							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
+							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +
+							PhotoServer.getServerInfoHtml(conf) + "<p>" +
+							"<H1> #Client Auto Config: </H1><tt>" +
+							"dupmode = " + jedis.hget("mm.client.conf", "dupmode") + "<p>" +
+							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
+							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + "</tt>" +
+							"</BODY>" +
+							"</HTML>";
+			response.getWriter().print(page);
 			response.getWriter().flush();
 		} finally {
 			RedisFactory.putInstance(jedis);
 		}
 	}
+	
 	private void doData(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
 		Map<String,Integer> m = sp.getSetBlks();
-		if(m == null)
-		{
+		if (m == null) {
 			badResponse(baseRequest, response, "#FAIL:read from redis failed.");
 			return;
 		}
@@ -154,17 +158,14 @@ public class HTTPHandler extends AbstractHandler {
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
 		PrintWriter pw = response.getWriter();
-		pw.println("#Data Count(name , number , length(M)) :");
-		int totallen = 0,totaln = 0;
-		for(Map.Entry<String, Integer> en : m.entrySet())
-		{
+		pw.println("#Data Count(Set_Name, Number, Length(MB)):");
+		int totallen = 0, totalnr = 0;
+		for (Map.Entry<String, Integer> en : m.entrySet()) {
 			totallen += en.getValue();
-			totaln += Integer.parseInt(en.getKey().split(",")[1].trim());
-			pw.println(en.getKey() + " , " + (en.getValue() * ((double)conf.getBlockSize()/1024.0/1024.0)));
+			totalnr += Integer.parseInt(en.getKey().split(",")[1].trim());
+			pw.println(" " + en.getKey() + ", " + (en.getValue() * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
 		}
-		pw.println("Total , "+totaln+" , "+totallen * ((double)conf.getBlockSize()/1024.0/1024.0));
-		
-		
+		pw.println(" [TOTAL], " + totalnr + ", " + totallen * ((double)conf.getBlockSize() / 1024.0 / 1024.0));
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

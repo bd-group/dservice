@@ -35,39 +35,33 @@ public class MMSClient {
 			this.size = size;
 			this.type = type;
 			this.set = set;
-			if(type.equalsIgnoreCase("pthca"))
-			{
+			if (type.equalsIgnoreCase("pthca")) {
 				this.ca = new ClientAPI();
 				String uri = "STL://";
-				for(String s :ca.getPc().getConf().getSentinels())
+				for(String s : ca.getPc().getConf().getSentinels())
 					uri = uri + s + ";";
 				try {
 					this.ca.init(uri.substring(0, uri.length()-1));
 				} catch (Exception e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
-				
-			}
-			else
+			} else
 				this.ca = ca;
 		}
 		
 		public void run() {
 			begin = System.nanoTime();
 			try {
-				if (type.startsWith("mput"))
-				{
+				if (type.startsWith("mput")) {
 					MessageDigest md;
 					md = MessageDigest.getInstance("md5");
 					
 					int pack = Integer.parseInt(type.split("_")[1]);
 					Random r = new Random();
-					for (int i = 0; i < pnr/pack; i++) {
+					for (int i = 0; i < pnr / pack; i++) {
 						byte[][] content = new byte[pack][(int) size];
 						String[] md5s = new String[pack];
-						for(int l = 0;l<pack;l++)
-						{
+						for(int l = 0; l < pack; l++) {
 							r.nextBytes(content[l]);
 							md.update(content[l]);
 							byte[] mdbytes = md.digest();
@@ -79,40 +73,39 @@ public class MMSClient {
 						}
 						ca.mPut(set,md5s,content);
 					}
-				}
-				else{
-				for (int i = 0; i < pnr; i++) {
-					byte[] content = new byte[(int) size];
-					Random r = new Random();
-					r.nextBytes(content);
-					MessageDigest md;
-					md = MessageDigest.getInstance("md5");
-					md.update(content);
-					byte[] mdbytes = md.digest();
-			
-					StringBuffer sb = new StringBuffer();
-					for (int j = 0; j < mdbytes.length; j++) {
-						sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
-					}
-					try {
-						if (type.equalsIgnoreCase("sync"))
-							ca.put(set + "@" + sb.toString(), content);
-						else if (type.equalsIgnoreCase("async"))
-							ca.put(set + "@" + sb.toString(), content);
-						else if (type.equalsIgnoreCase("pthca"))
-							ca.put(set + "@" + sb.toString(), content);
-						else {
-							if (type.equals(""))
-								System.out.println("Please provide lpt_type");
-							else
-								System.out.println("Wrong lpt_type, should be sync, async, pthca or mput_{pack}");
-							System.exit(0);
+				} else {
+					for (int i = 0; i < pnr; i++) {
+						byte[] content = new byte[(int) size];
+						Random r = new Random();
+						r.nextBytes(content);
+						MessageDigest md;
+						md = MessageDigest.getInstance("md5");
+						md.update(content);
+						byte[] mdbytes = md.digest();
+				
+						StringBuffer sb = new StringBuffer();
+						for (int j = 0; j < mdbytes.length; j++) {
+							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
 						}
-						apnr++;
-					} catch (Exception e) {
-						e.printStackTrace();
+						try {
+							if (type.equalsIgnoreCase("sync"))
+								ca.put(set + "@" + sb.toString(), content);
+							else if (type.equalsIgnoreCase("async"))
+								ca.put(set + "@" + sb.toString(), content);
+							else if (type.equalsIgnoreCase("pthca"))
+								ca.put(set + "@" + sb.toString(), content);
+							else {
+								if (type.equals(""))
+									System.out.println("Please provide lpt_type");
+								else
+									System.out.println("Wrong lpt_type, should be sync, async, pthca or mput_{pack}");
+								System.exit(0);
+							}
+							apnr++;
+						} catch (Exception e) {
+							e.printStackTrace();
+						}
 					}
-				}
 				}
 				end = System.nanoTime();
 				System.out.println(Thread.currentThread().getId() + " --> Put " + apnr + " objects in " +
@@ -120,7 +113,6 @@ public class MMSClient {
 			} catch (NoSuchAlgorithmException e) {
 				e.printStackTrace();
 			} catch (Exception e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
@@ -597,12 +589,11 @@ public class MMSClient {
 			}
 			
 			if(o.flag.equals("-lmpt")){
-				if(lmpt_nr < 0 || lmpt_pack < 0 || lmpt_size < 0)
-				{
+				if(lmpt_nr < 0 || lmpt_pack < 0 || lmpt_size < 0) {
 					System.out.println("please provide lmpt_nr,lmpt_pack,lmpt_size");
 					System.exit(0);
 				}
-				System.out.println("LMPT args: nr " + lmpt_nr + ", size " + lmpt_size +", package number "+lmpt_pack );
+				System.out.println("LMPT args: nr " + lmpt_nr + ", size " + lmpt_size + ", package number " + lmpt_pack);
 				
 				try {
 					long begin = System.currentTimeMillis();
@@ -610,11 +601,10 @@ public class MMSClient {
 					MessageDigest md;
 					md = MessageDigest.getInstance("md5");
 					
-					for (int i = 0; i < lmpt_nr/lmpt_pack; i++) {
+					for (int i = 0; i < lmpt_nr / lmpt_pack; i++) {
 						byte[][] content = new byte[lmpt_pack][lmpt_size];
 						String[] md5s = new String[lmpt_pack];
-						for(int l = 0;l<lmpt_pack;l++)
-						{
+						for (int l = 0; l < lmpt_pack; l++) {
 							r.nextBytes(content[l]);
 							md.update(content[l]);
 							byte[] mdbytes = md.digest();
