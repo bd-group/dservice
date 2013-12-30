@@ -86,6 +86,7 @@ public class PhotoClient {
 		public long getFreeSocket() throws IOException {
 			boolean found = false;
 			long id = -1;
+
 			do {
 				synchronized (this) {
 					for (SEntry e : map.values()) {
@@ -133,7 +134,7 @@ public class PhotoClient {
 							try {
 								synchronized (this) {
 									//System.out.println("wait ...");
-									this.wait();
+									this.wait(60000);
 								}
 							} catch (InterruptedException e) {
 								e.printStackTrace();
@@ -314,7 +315,7 @@ public class PhotoClient {
 			try {
 				rr = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
-				System.out.println("Jedis connection broken, wait ...");
+				System.out.println("Jedis connection broken in __syncStoreObject, wait ...");
 				try {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
@@ -733,7 +734,8 @@ public class PhotoClient {
 		try {
 			return jedis.get().hgetAll(set);
 		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken, wait ...");
+			e.printStackTrace();
+			System.out.println("Jedis connection broken in getNr, wait ...");
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
