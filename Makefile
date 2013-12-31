@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-06 14:14:25 macan>
+# Time-stamp: <2013-12-31 14:35:29 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -11,8 +11,15 @@
 GCC = gcc
 ECHO = /bin/echo
 MAKE = make
+
+GIT = env git
+GIT_SHA = `$(GIT) rev-parse HEAD`
+
+COMPILE_DATE = `date`
+COMPILE_HOST = `hostname`
+
 # TODO: Make sure REMOVE self_test flag when release code
-CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DSELF_TEST_
+CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DCOMPILE_DATE="\"$(COMPILE_DATE)\"" -DCOMPILE_HOST="\"$(COMPILE_HOST)\"" -DGIT_SHA="\"$(GIT_SHA)\"" -DSELF_TEST_
 LDFLAGS = -Llib -lhvfs -lpthread -lrt
 
 include Makefile.profile

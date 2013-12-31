@@ -5,7 +5,7 @@ spawn scp -r metastore@$ip:~/$dataname $destpath
 expect_before "no)?" {
 send "yes\r" }
 sleep 1
-expect "password:"
+expect "password:" {
 send "111111\r"
 send "exit\r"
-expect eof
+expect eof }
