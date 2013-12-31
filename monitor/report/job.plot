@@ -17,7 +17,7 @@ set format x "%H:%S"
 set y2label "Number (#)"
 set ytics nomirror
 set y2tics nomirror
-set logscale y2 10
+#set logscale y2 10
 set key out
 set grid
 
