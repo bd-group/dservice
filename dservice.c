@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-20 20:39:01 macan>
+ * Time-stamp: <2013-12-31 14:37:35 macan>
  *
  */
 
@@ -1767,6 +1767,19 @@ int main(int argc, char *argv[])
     struct disk_part_info *dpi = NULL;
     int nr = 0, nr2 = 0;
     int err = 0;
+
+#ifndef COMPILE_DATE
+#define COMPILE_DATE "Unknown Date"
+#endif
+#ifndef COMPILE_HOST
+#define COMPILE_HOST "localhost"
+#endif
+#ifndef GIT_SHA
+#define GIT_SHA "master"
+#endif
+
+    hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
+               COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
     char *shortflags = "r:p:t:d:h?f:m:xT:o:";
     struct option longflags[] = {
