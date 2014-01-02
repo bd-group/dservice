@@ -16,7 +16,6 @@ import java.util.concurrent.Executor;
 import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
 
 import redis.clients.jedis.Jedis;
-import redistest.A;
 
 import com.taobao.metamorphosis.Message;
 import com.taobao.metamorphosis.client.MessageSessionFactory;
@@ -119,27 +118,7 @@ public class MsgConsumer {
 		consumer.completeSubscribe();
 	}
 
-	private void writeObject(String key, String field, Object o)
-	{
-		jedis = new Jedis("localhost",6379);
-		A a = new A();
-		ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		ObjectOutputStream oos = new ObjectOutputStream(baos);
-		oos.writeObject(a);
-		
-		ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
-		jedis.set("A".getBytes(), baos.toByteArray());
-		ObjectInputStream ois = new ObjectInputStream(bais);
-		A a2 = (A)ois.readObject();
-		System.out.println(a2.toString());
-		
-		bais = new ByteArrayInputStream(jedis.get("A".getBytes()));
-		ois = new ObjectInputStream(bais);
-		A a3 = (A)ois.readObject();
-		System.out.println(a3.toString());
-		System.out.println(a2 == a3);
-		System.out.println(baos.toByteArray().length);
-	}
+	
 	public static void main(String[] args) {
 		String addr = "192.168.1.13:3181";
 		DatabakConf conf = null;
@@ -151,19 +130,38 @@ public class MsgConsumer {
 			RedisMode rm = null;
 			String zkaddr = null;
 			String ra = null;
+			String mh = null, mp = null;
 			for (Option o : ops) {
 				if (o.flag.equals("-h")) {
 					// print help message
 					System.out.println("-h    : print this help.");
+					System.out.println("-mh   : metastore server ip.");
+					System.out.println("-mp   : metastore server port.");
 					System.out.println("-rm   : redis mode, <STA for stand alone or STL for sentinel>.");
 					System.out.println("-ra   : redis or sentinel addr. <host:port;host:port> ");
 					System.out.println("-zka  : zkaddr <host:port>.");
 					
 					System.exit(0);
 				}
+				if (o.flag.equals("-mh")) {
+					// set serverPort
+					if (o.opt == null) {
+						System.out.println("-mh metastore server ip. ");
+						System.exit(0);
+					}
+					mh = o.flag;
+				}
+				if (o.flag.equals("-mp")) {
+					// set serverPort
+					if (o.opt == null) {
+						System.out.println("-mp metastore server port. ");
+						System.exit(0);
+					}
+					mp = o.flag;
+				}
 				if (o.flag.equals("-rm")) {
 					if (o.opt == null) {
-						System.out.println("-r serverName");
+						System.out.println("-rm redismode");
 						System.exit(0);
 					}
 					if(o.opt.equals("STA"))
@@ -193,17 +191,24 @@ public class MsgConsumer {
 		        }
 			}
 			
+			if(mh == null || mp == null)
+			{
+				System.out.println("please provide ms host and ms port");
+				System.exit(0);
+			}
+			
 			if(rm == null || ra == null || zkaddr == null)
 			{
 				System.out.println("please provide enough args.");
 				System.exit(0);
-			}else{
+			}
+			else{
 				switch (rm){
 				case SENTINEL:
 					sentinel = new HashSet<String>();
 					for(String s : ra.split(";"))
 						sentinel.add(s);
-					conf = new DatabakConf(sentinel, rm, zkaddr);
+					conf = new DatabakConf(sentinel, rm, zkaddr, mh, Integer.parseInt(mp));
 					break;
 				case STANDALONE:
 					ri = new ArrayList<RedisInstance>();
@@ -212,7 +217,7 @@ public class MsgConsumer {
 						String[] s = rp.split(":");
 						ri.add(new RedisInstance(s[0], Integer.parseInt(s[1])));
 					}
-					conf = new DatabakConf(ri, rm, zkaddr);
+					conf = new DatabakConf(ri, rm, zkaddr, mh, Integer.parseInt(mp));
 					break;
 				}
 			}
@@ -223,7 +228,7 @@ public class MsgConsumer {
 //			System.out.println("please provide arguments, use -h for help");
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
-			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr);
+			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node14", 10101);
 //			System.exit(0);
 		}
 		try {

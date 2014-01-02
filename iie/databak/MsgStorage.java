@@ -1,8 +1,15 @@
 package iie.databak;
 
 import iie.metastore.MetaStoreClient;
+import iie.databak.RedisFactory;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.GlobalSchema;
@@ -22,10 +29,16 @@ import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
 import org.apache.hadoop.hive.metastore.msg.MSGType;
 import org.apache.thrift.TException;
 
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+
 public class MsgStorage {
 
 	public MetaStoreClient msClient;
-	
+	private Jedis jedis;
+	private RedisFactory rf;
+	private DatabakConf conf;
+
 	private ConcurrentHashMap<String, Database> databaseHm = new ConcurrentHashMap<String, Database>();
 	private ConcurrentHashMap<String, PrivilegeBag> privilegeBagHm = new ConcurrentHashMap<String, PrivilegeBag>();
 	private ConcurrentHashMap<String, Partition> partitionHm = new ConcurrentHashMap<String, Partition>();
@@ -36,39 +49,64 @@ public class MsgStorage {
 	private ConcurrentHashMap<String, SFile> sFileHm = new ConcurrentHashMap<String, SFile>();
 	private ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
 	private ConcurrentHashMap<String, Schema> schemaHm = new ConcurrentHashMap<String, Schema>();
-	
-	
-	public MsgStorage() throws MetaException {
-		msClient = new MetaStoreClient();
+
+	public MsgStorage(DatabakConf conf) throws MetaException {
+		this.conf = conf;
+		rf = new RedisFactory(conf);
+		msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
 	}
 
-	public MsgStorage(MetaStoreClient msClient) throws MetaException {
-		super();
-		this.msClient = msClient;
-	}
-	
-	public int createOrAlterDb (DDLMsg msg){
-		int msgId = (int)msg.getEvent_id();
-		switch(msgId){
-			case MSGType.MSG_NEW_DATABESE:
-				{
-					String dbName = (String)msg.getMsg_data().get("dbname");
-					try {
-						Database db = msClient.client.getDatabase(dbName);
-						databaseHm.put(dbName, db);
-					} catch (NoSuchObjectException e) {
-						e.printStackTrace();
-						return 0;
-					} catch (MetaException e) {
-						e.printStackTrace();
-						return 0;
-					} catch (TException e) {
-						e.printStackTrace();
-						return 0;
-					}
-					return 1;
-				}
+	public int handleMsg(DDLMsg msg) {
+		int eventid = (int) msg.getEvent_id();
+		switch (eventid) {
+		case MSGType.MSG_NEW_DATABESE: 
+			String dbName = (String) msg.getMsg_data().get("dbname");
+			try {
+				Database db = msClient.client.getDatabase(dbName);
+				databaseHm.put(dbName, db);
+			} catch (NoSuchObjectException e) {
+				e.printStackTrace();
+				return 0;
+			} catch (MetaException e) {
+				e.printStackTrace();
+				return 0;
+			} catch (TException e) {
+				e.printStackTrace();
+				return 0;
 			}
 			return 1;
+		
+		}
+		return 1;
+	}
+
+	private void writeObject(String key, String field, Object o)
+			throws JedisConnectionException, IOException {
+		reconnectJedis();
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		ObjectOutputStream oos = new ObjectOutputStream(baos);
+		oos.writeObject(o);
+		jedis.hset(key.getBytes(), field.getBytes(), baos.toByteArray());
+	}
+
+	private Object readObject(String key, String field)
+			throws JedisConnectionException, IOException,
+			ClassNotFoundException {
+		reconnectJedis();
+
+		ByteArrayInputStream bais = new ByteArrayInputStream(jedis.hget(
+				key.getBytes(), field.getBytes()));
+		ObjectInputStream ois = new ObjectInputStream(bais);
+		Object o = ois.readObject();
+		return o;
+	}
+
+	public void reconnectJedis() throws JedisConnectionException {
+		if (jedis == null) {
+			jedis = rf.getDefaultInstance();
+		}
+		if (jedis == null)
+			throw new JedisConnectionException(
+					"Connection to redis Server failed.");
 	}
 }
