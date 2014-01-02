@@ -20,7 +20,7 @@ function init()
 		num=arrtmp[i].indexOf("=");
 		if(num==2){
 			name=arrtmp[i].substring(0,num);
-			alert(name);
+			//alert(name);
 			value=arrtmp[i].substr(num+1);
 			this[name]=value;
 			document.getElementById('back').innerHTML='<center><img src="'+value+'/query.png"/></center>';

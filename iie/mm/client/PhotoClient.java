@@ -276,7 +276,6 @@ public class PhotoClient {
 	}
 	
 	private String __syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
-		refreshJedis();
 		long id = she.getFreeSocket();
 		if (id == -1)
 			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
@@ -312,6 +311,9 @@ public class PhotoClient {
 		
 		if (r == null) {
 			String rr = null;
+			int err = 0;
+			
+			refreshJedis();
 			try {
 				rr = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
@@ -320,9 +322,15 @@ public class PhotoClient {
 					Thread.sleep(1000);
 				} catch (InterruptedException e1) {
 				}
+				err = -1;
 				jedis.set(rf.putBrokenInstance(jedis.get()));
 			} catch (JedisException e) {
-				jedis.set(rf.putBrokenInstance(jedis.get()));
+				err = -1;
+			} finally {
+				if (err < 0)
+					jedis.set(rf.putBrokenInstance(jedis.get()));
+				else
+					jedis.set(rf.putInstance(jedis.get()));
 			}
 			if (rr == null)
 				throw new IOException("Metadata inconsistent or connection broken?");
