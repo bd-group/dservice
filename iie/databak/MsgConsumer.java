@@ -73,9 +73,11 @@ public class MsgConsumer {
 	final MetaClientConfig metaClientConfig = new MetaClientConfig();
 	final ZKConfig zkConfig = new ZKConfig();
 	private DatabakConf conf;
-
+	private MsgStorage ms;
+	
 	public MsgConsumer(DatabakConf conf) {
 		this.conf = conf;
+		ms = new MsgStorage(conf);
 	}
 	public void consume() throws MetaClientException {
 		// 设置zookeeper地址
@@ -104,14 +106,8 @@ public class MsgConsumer {
 
 				System.out.println(data);
 				DDLMsg msg = DDLMsg.fromJson(data);
-				// if(msg.getLocalhost_name().equals(localhost_name))
-				// {
-				// LOG.info("---zy--local msg,no need to refresh " );
-				// // handler.refresh(msg);
-				// }
-				// else
-				// just test
-				// handler.refresh(msg);
+				ms.handleMsg(msg);
+				
 			}
 
 		});
@@ -149,7 +145,7 @@ public class MsgConsumer {
 						System.out.println("-mh metastore server ip. ");
 						System.exit(0);
 					}
-					mh = o.flag;
+					mh = o.opt;
 				}
 				if (o.flag.equals("-mp")) {
 					// set serverPort
@@ -157,7 +153,7 @@ public class MsgConsumer {
 						System.out.println("-mp metastore server port. ");
 						System.exit(0);
 					}
-					mp = o.flag;
+					mp = o.opt;
 				}
 				if (o.flag.equals("-rm")) {
 					if (o.opt == null) {
@@ -179,7 +175,7 @@ public class MsgConsumer {
 						System.out.println("-ra redis or sentinel addr. <host:port;host:port> ");
 						System.exit(0);
 					}
-					ra = o.flag;
+					ra = o.opt;
 				}
 				if (o.flag.equals("-zka")) {
 	                // set redis server name
@@ -214,6 +210,7 @@ public class MsgConsumer {
 					ri = new ArrayList<RedisInstance>();
 					for(String rp : ra.split(";"))
 					{
+						System.out.println(rp);
 						String[] s = rp.split(":");
 						ri.add(new RedisInstance(s[0], Integer.parseInt(s[1])));
 					}
@@ -228,7 +225,7 @@ public class MsgConsumer {
 //			System.out.println("please provide arguments, use -h for help");
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
-			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node14", 10101);
+			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101);
 //			System.exit(0);
 		}
 		try {
