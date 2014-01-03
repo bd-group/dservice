@@ -458,8 +458,7 @@ public class PhotoClient {
 	}
 	
 	//批量存储时没有判断重复
-	public String[] mPut(String set, String[] md5s, byte[][] content, SocketHashEntry she) throws IOException
-	{
+	public String[] mPut(String set, String[] md5s, byte[][] content, SocketHashEntry she) throws IOException {
 		long id = she.getFreeSocket();
 		if (id == -1)
 			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
@@ -471,25 +470,25 @@ public class PhotoClient {
 		byte[] header = new byte[4];
 		header[0] = ActionType.MPUT;
 		header[1] = (byte) set.length();
-		try{
+		try {
 			dos.write(header);
 			dos.writeInt(n);
 			dos.write(set.getBytes());
-			for(int i = 0;i<n;i++)
-			{
+			for (int i = 0; i < n; i++) {
 				dos.writeInt(md5s[i].getBytes().length);
 				dos.write(md5s[i].getBytes());
 			}
-			for(int i = 0; i<n;i++)
+			for (int i = 0; i < n; i++)
 				dos.writeInt(content[i].length);
-			for(int i = 0; i<n;i++)
+			for (int i = 0; i < n; i++)
 				dos.write(content[i]);
 			
+			// BUG-XXX: 注意，此处for循环中也还需要处理dis.readInt()的返回值！
 			int count = dis.readInt();
 			if (count == -1)
-				throw new IOException("MM server failure." );
+				throw new IOException("MM server failure.");
 			r[0] = new String(readBytes(count, dis));
-			for(int i = 1;i<n;i++)
+			for (int i = 1; i < n; i++)
 				r[i] = new String(readBytes(dis.readInt(), dis));
 			she.setFreeSocket(id);
 		} catch (Exception e) {

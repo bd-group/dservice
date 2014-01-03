@@ -98,7 +98,6 @@ public class StorePhoto {
 
 		localHostName = conf.getNodeName();
 		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
-			
 	}
 	
 	public void reconnectJedis() throws IOException {
@@ -128,15 +127,14 @@ public class StorePhoto {
 		} catch (IOException e2) {
 			return "+FAIL: MMM Server can not be reached.";
 		}
-		if(sha == null)
-		{
-			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]) ; "
-					+ "if temp then  "
+		if (sha == null) {
+			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
+					+ "if temp then "
 					+ "temp = temp..\"#\"..ARGV[2] ;"
-					+ "redis.call('hset',KEYS[1],ARGV[1],temp) ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],temp);"
 					+ "return temp;"
 					+ "else "
-					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]) ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
 					+ "return ARGV[2] end";
 			sha = jedis.scriptLoad(script);
 //			System.out.println(sha);
@@ -238,29 +236,6 @@ public class StorePhoto {
 		try {
 			returnStr = rVal.toString();
 			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
-			/*
-			Transaction t1 = jedis.multi();
-			
-			Response<Long> r1 = t1.hsetnx(set, md5, returnStr);
-			Response<String> r2 = t1.hget(set,md5);
-			t1.exec();
-			if (r1.get() != 1) {
-				returnStr = r2.get() + "#" + returnStr;
-				jedis.hset(set, md5, returnStr);
-				/*
-				 * Concurrent modify:
-				 * 
-				 * SETNX set@md5 aaa
-				 * WATCH set@md5
-				 * R = HGET set@md5
-				 * R += returnVal
-				 * MULTI
-				 * HSET set md5 R
-				 * DEL set@md5
-				 * EXEC
-				 *
-			}
-		*/
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -271,8 +246,9 @@ public class StorePhoto {
 			err = -1;
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (JedisException e) {
+			e.printStackTrace();
 			err = -1;
-			if(e.getMessage().startsWith("NOSCRIPT"))
+			if (e.getMessage().startsWith("NOSCRIPT"))
 				sha = null;
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (Exception e) {
@@ -296,6 +272,8 @@ public class StorePhoto {
 	 * @return 出现任何错误返回null，出现错误的话不知道哪些存储成功，哪些不成功
 	 */
 	public String[] mstorePhoto(String set, String[] md5, byte[][] content) {
+		int err = 0;
+		
 		try {
 			reconnectJedis();
 		} catch (IOException e2) {
@@ -307,15 +285,14 @@ public class StorePhoto {
 			System.out.println("Array lengths in arguments mismatch.");
 			return null;
 		}
-		if(sha == null)
-		{
-			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]) ; "
-					+ "if temp then  "
-					+ "temp = temp..\"#\"..ARGV[2] ;"
-					+ "redis.call('hset',KEYS[1],ARGV[1],temp) ;"
+		if (sha == null) {
+			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
+					+ "if temp then "
+					+ "temp = temp..\"#\"..ARGV[2];"
+					+ "redis.call('hset',KEYS[1],ARGV[1],temp);"
 					+ "return temp;"
 					+ "else "
-					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]) ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
 					+ "return ARGV[2] end";
 			sha = jedis.scriptLoad(script);
 //			System.out.println(sha);
@@ -334,7 +311,8 @@ public class StorePhoto {
 		}
 
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		Map<String, String> mcs = new HashMap<String, String>();
+		long init_offset = 0;
+		
 		synchronized (ssc) {
 			for (int i = 0; i < content.length; i++) {
 				try {
@@ -367,7 +345,6 @@ public class StorePhoto {
 						}
 						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 						ssc.raf.seek(ssc.offset);
-
 					}
 
 					if (ssc.offset + content[i].length > blocksize) {
@@ -392,7 +369,7 @@ public class StorePhoto {
 					// 统计写入的字节数
 					ServerProfile.addWrite(content[i].length);
 					// 构造返回值
-					rVal.append("1@"); // type
+					rVal.append("1@"); //type
 					rVal.append(set);
 					rVal.append("@");
 					rVal.append(ServerConf.serverId);
@@ -406,56 +383,71 @@ public class StorePhoto {
 					// 磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 					rVal.append(diskArray[diskid]);
 
-					// ssc.raf.write(content, coff, clen);
 					baos.write(content[i]);
 					returnVal[i] = rVal.toString();
+					if (i == 0)
+						init_offset = ssc.offset;
 					ssc.offset += content[i].length;
-					
-//					Object o = jedis.evalsha(sha, 1, set,md5[i],returnVal[i]);
-					returnVal[i] = jedis.evalsha(sha, 1, set,md5[i],returnVal[i]).toString();
-//					returnVal[i] = o.toString();
-					
-					/*
-					Transaction t1 = jedis.multi();
-					Response<Long> r1 = t1.hsetnx(set, md5[i], returnVal[i]);
-					Response<String> r2 = t1.hget(set, md5[i]);
-					t1.exec();
-					if (r1.get() == 0) {
-						returnVal[i] = r2.get() + "#" + returnVal[i];
-						mcs.put(md5[i], returnVal[i]);
-					}
-					*/
-
 				} catch (JedisConnectionException e) {
 					System.out.println("Jedis connection broken in mstoreObject.");
 					try {
 						Thread.sleep(1000);
 					} catch (InterruptedException e1) {
 					}
-					jedis = RedisFactory.putBrokenInstance(jedis);
-					return null;
+					err = -1;
 				} catch (JedisException e) {
 					e.printStackTrace();
-					jedis = RedisFactory.putBrokenInstance(jedis);
-					return null;
+					err = -1;
 				} catch (Exception e) {
 					e.printStackTrace();
-					return null;
-				} finally{
-					jedis = RedisFactory.putInstance(jedis);
+					err = -1;
+				} finally {
+					if (err < 0) {
+						jedis = RedisFactory.putBrokenInstance(jedis);
+						return null;
+					}
 				}
-
 			}
+			// do write now
 			try {
 				ssc.raf.write(baos.toByteArray());
-				// 结果一次存入redis
-//				if (mcs.size() > 0 && jedis != null)
-//					jedis.hmset(set, mcs);
 			} catch (IOException e) {
 				e.printStackTrace();
+				// Rollback SSC offset
+				ssc.offset = init_offset;
+				jedis = RedisFactory.putInstance(jedis);
 				return null;
 			} 
-
+		}
+		
+		try {
+			for (int i = 0; i < content.length; i++) {
+				returnVal[i] = jedis.evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
+			}
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken in mstoreObject.");
+			e.printStackTrace();
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+			returnVal = null;
+		} catch (JedisException e) {
+			e.printStackTrace();
+			err = -1;
+			if (e.getMessage().startsWith("NOSCRIPT"))
+				sha = null;
+			returnVal = null;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+			returnVal = null;
+		} finally {
+			if (err < 0) {
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			} else
+				jedis = RedisFactory.putInstance(jedis);
 		}
 		return returnVal;
 	}
@@ -600,37 +592,47 @@ public class StorePhoto {
 	 * 获得redis中每个set的块数，存在hash表里，键是[集合名，该集合内的文件数]，值是块数
 	 * @return
 	 */
-	public Map<String,Integer> getSetBlks()
-	{
+	public Map<String, Integer> getSetBlks() {
+		int err = 0;
+		
 		try {
 			reconnectJedis();
 		} catch (IOException e2) {
 			return null;
 		}
-		HashMap<String,Integer> re = new HashMap<String,Integer>();
-		HashMap<String,Integer> temp = new HashMap<String,Integer>();
+		HashMap<String, Integer> re = new HashMap<String,Integer>();
+		HashMap<String, Integer> temp = new HashMap<String,Integer>();
 		try {
-			String[] keys = jedis.keys("*.blk.*").toArray(new String[0]); 
-			List<String> vals = jedis.mget(keys);
-			for(int i = 0;i<keys.length;i++)
-			{
-				String set = keys[i].split("\\.")[0];
-				re.put(set, re.containsKey(set) ? re.get(set)+Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 );
-			}
-			//此时keyset就是redis中所有的集合名
-			for(String s : re.keySet())
-			{
-				temp.put(s+" , "+jedis.hlen(s), re.get(s));
+			Set<String> keys = jedis.keys("*.blk.*");
+			
+			if (keys != null && keys.size() > 0) {
+				String[] keya = keys.toArray(new String[0]);
+				List<String> vals = jedis.mget(keya);
+				
+				for (int i = 0; i < keya.length; i++) {
+					String set = keya[i].split("\\.")[0];
+					re.put(set, re.containsKey(set) ? re.get(set) + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 );
+				}
+				for (String s : re.keySet()) {
+					temp.put(s + ", " + jedis.hlen(s), re.get(s));
+				}
 			}
 		} catch (JedisConnectionException e) {
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
 			}
-			jedis = RedisFactory.putBrokenInstance(jedis);
-			return null;
+			err = -1;
+			temp = null;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+			temp = null;
 		} finally {
-			jedis = RedisFactory.putInstance(jedis);
+			if (err < 0)
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			else
+				jedis = RedisFactory.putInstance(jedis);
 		}
 		
 		return temp;

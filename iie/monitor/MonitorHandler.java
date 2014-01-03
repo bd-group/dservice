@@ -22,20 +22,17 @@ import org.eclipse.jetty.server.handler.ResourceHandler;
 
 public class MonitorHandler extends AbstractHandler {
 
-	private HashMap<String,String> cityip = new HashMap<String, String>();
+	private HashMap<String, String> cityip = new HashMap<String, String>();
 	private ConcurrentHashMap<String, Long> uidtime = new ConcurrentHashMap<String, Long>();
-	public MonitorHandler()
-	{
-		cityip.put("GJZX", "10.213.69.5");
-		cityip.put("SC", "10.218.69.5");
-//		cityip.put("XJ", "10.239.69.5");
-		cityip.put("YN", "10.248.65.9");
-		cityip.put("XJ", "192.168.1.37");
+	private String targetPath;
+	
+	public MonitorHandler(Map<String, String> addrMap, String targetPath) {
+		cityip.putAll(addrMap);
+		this.targetPath = targetPath;
 		Timer t = new Timer();
-		t.schedule(new EvictThread(10*1000), 10*1000, 10*1000);
+		t.schedule(new EvictThread(10 * 1000), 10 * 1000, 10 * 1000);
 	}
-	private class EvictThread extends TimerTask
-	{
+	private class EvictThread extends TimerTask {
 		private long expireTime;	//单位ms
 		
 		public EvictThread(long expireTime) {
@@ -44,29 +41,26 @@ public class MonitorHandler extends AbstractHandler {
 
 		@Override
 		public void run() {
-			// TODO Auto-generated method stub
 			Set<String> keys = new HashSet<String>();
-			for(Map.Entry<String, Long> en : uidtime.entrySet())
-			{
-				if(System.currentTimeMillis() - en.getValue() > expireTime)
-				{
+			for (Map.Entry<String, Long> en : uidtime.entrySet()) {
+				if (System.currentTimeMillis() - en.getValue() > expireTime) {
 					keys.add(en.getKey());
-					try {
-						runCmd("rm -rf datacount/"+en.getKey());
-						System.out.println("rm "+en.getKey());
-					} catch (IOException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
+					if (!(en.getKey().equalsIgnoreCase("") || en.getKey().contains("*") || en.getKey().contains("."))) {
+						try {
+							runCmd("rm -rf datacount/" + en.getKey());
+							System.out.println("rm -rf datacount/" + en.getKey());
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
 					}
 				}
 			}
-			for(String s : keys)
-			{
+			for(String s : keys) {
 				uidtime.remove(s);
 			}
 		}
-		
 	}
+	
 	private void badResponse(Request baseRequest, HttpServletResponse response,
 			String message) throws IOException {
 		response.setContentType("text/html;charset=utf-8");
@@ -77,29 +71,25 @@ public class MonitorHandler extends AbstractHandler {
 	}
 
 	private void doDataCount(String target, Request baseRequest,
-			HttpServletRequest request, HttpServletResponse response)throws IOException, ServletException {
-		// System.out.println(target);
-			String city = request.getParameter("city");
-			String date = request.getParameter("date");
-			String id = request.getParameter("id");
-			if(target.equals("/datacount/main.html"))
-			{
-				if(city != null && date != null && id != null)
-				{
-					uidtime.put(id, System.currentTimeMillis());
-					String name = "/report-"+date;
-					String cmd = "cd datacount;"
-							+ "expect data.exp "+cityip.get(city)+" /reports"+ name + " reports/"+city+"/ ;"
-							+ " ./doplot.sh report/"+city+"/"+name +" "+id+"/";
-					System.out.println(cmd);
-					String error = runCmd(cmd);
-					if(error != null)
-					{
-						badResponse(baseRequest, response, "#FAIL: "+error);
-						return;
-					}
+		HttpServletRequest request, HttpServletResponse response)throws IOException, ServletException {
+		String city = request.getParameter("city");
+		String date = request.getParameter("date");
+		String id = request.getParameter("id");
+		if (target.equals("/monitor/main.html")) {
+			if(city != null && date != null && id != null) {
+				uidtime.put(id, System.currentTimeMillis());
+				String name = "report-" + date;
+				String cmd = "cd monitor;"
+						+ "expect data.exp " + cityip.get(city) + " " + targetPath + "/" + name + " " + id + "/" + city + "." + name + ";"
+						+ " ./doplot.sh " + id + "/" + city + "." + name + " " + id + "/";
+				System.out.println(cmd);
+				String error = runCmd(cmd);
+				if(error != null) {
+					badResponse(baseRequest, response, "#FAIL: "+error);
+					return;
 				}
 			}
+		}
 		ResourceHandler rh = new ResourceHandler();
 		rh.setResourceBase(".");
 		rh.handle(target, baseRequest, request, response);
@@ -113,8 +103,7 @@ public class MonitorHandler extends AbstractHandler {
 			BufferedReader br = new BufferedReader(isr);
 			String error = null;
 			String line = null;
-			while ((line = br.readLine()) != null)
-			{
+			while ((line = br.readLine()) != null) {
 				System.out.println(line);
 				error += line + "\n";
 			}
@@ -133,15 +122,12 @@ public class MonitorHandler extends AbstractHandler {
 	public void handle(String target, Request baseRequest,
 			HttpServletRequest request, HttpServletResponse response)
 			throws IOException, ServletException {
-		// TODO Auto-generated method stub
 		if (target == null) {
 			badResponse(baseRequest, response, "#FAIL:taget can not be null");
-		} else if (target.startsWith("/datacount/")) {
+		} else if (target.startsWith("/monitor/")) {
 			doDataCount(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}
-
 	}
-
 }

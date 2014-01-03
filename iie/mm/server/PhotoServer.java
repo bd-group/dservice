@@ -2,6 +2,7 @@ package iie.mm.server;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Set;
@@ -59,6 +60,33 @@ public class PhotoServer {
 				pool.shutdown();
 			}
 		}
+	}
+	
+	public static String getServerInfoHtml(ServerConf conf) {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		String r = "";
+		
+		if (jedis == null) 
+			return "#FAIL: Get default jedis instance failed.";
+		
+		// find all servers
+		Set<String> servers = jedis.zrange("mm.active.http", 0, -1);
+		r += "<H2> Total HTTP Servers: </H2><tt>";
+		for (String s : servers) {
+			String[] url = s.split(":");
+			InetSocketAddress isa = new InetSocketAddress(url[0], 10000);
+			r += "<p> <a href=http://" + isa.getAddress().getHostAddress() + ":" + url[1] + "/info><tt>" + s + "</tt></a>";
+		}
+		// find heartbeated servers
+		servers = jedis.keys("mm.hb.*");
+		r += "</tt><H2> Active MM Servers: </H2><tt>";
+		for (String s : servers) {
+			r += "<p>" + s.substring(6);
+		}
+		r += "</tt>";
+		RedisFactory.putInstance(jedis);
+		
+		return r;
 	}
 	
 	public static String getServerInfo(ServerConf conf) {
