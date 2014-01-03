@@ -228,6 +228,7 @@ public class StorePhoto {
 			} finally {
 				if (err < 0) {
 					jedis = RedisFactory.putBrokenInstance(jedis);
+					ServerProfile.writeErr.incrementAndGet();
 					return returnStr;
 				}
 			}
@@ -258,6 +259,7 @@ public class StorePhoto {
 		} finally {
 			if (err < 0) {
 				jedis = RedisFactory.putBrokenInstance(jedis);
+				ServerProfile.writeErr.incrementAndGet();
 			} else
 				jedis = RedisFactory.putInstance(jedis);
 		}
@@ -404,6 +406,7 @@ public class StorePhoto {
 				} finally {
 					if (err < 0) {
 						jedis = RedisFactory.putBrokenInstance(jedis);
+						ServerProfile.writeErr.incrementAndGet();
 						return null;
 					}
 				}
@@ -416,6 +419,7 @@ public class StorePhoto {
 				// Rollback SSC offset
 				ssc.offset = init_offset;
 				jedis = RedisFactory.putInstance(jedis);
+				ServerProfile.writeErr.incrementAndGet();
 				return null;
 			} 
 		}
@@ -446,6 +450,7 @@ public class StorePhoto {
 		} finally {
 			if (err < 0) {
 				jedis = RedisFactory.putBrokenInstance(jedis);
+				ServerProfile.writeErr.incrementAndGet();
 			} else
 				jedis = RedisFactory.putInstance(jedis);
 		}
@@ -482,9 +487,10 @@ public class StorePhoto {
 				err = -1;
 				return null;
 			} finally {
-				if (err < 0)
+				if (err < 0) {
 					jedis = RedisFactory.putBrokenInstance(jedis);
-				else
+					ServerProfile.readErr.incrementAndGet();
+				} else
 					jedis = RedisFactory.putInstance(jedis);
 			}
 			

@@ -132,6 +132,8 @@ public class HTTPHandler extends AbstractHandler {
 							"<H1> #In Current Server Session: </H1>" +
 							"<H2> Server Info: </H2><tt>" +
 							"Uptime              (S): " + ((System.currentTimeMillis() - PhotoServer.upts) / 1000) + "<p>" +
+							"Writes (#): total " + ServerProfile.writeN.longValue() + ", error " + ServerProfile.writeErr.longValue() + "<p>" +
+							"Reads  (#): total " + ServerProfile.readN.longValue() + ", error " + ServerProfile.readErr.longValue() + "<p>" +
 							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
 							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
 							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +
