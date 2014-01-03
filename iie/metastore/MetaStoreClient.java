@@ -474,6 +474,10 @@ public class MetaStoreClient {
 	}
 	
 	public static String runRemoteCmdWithResult(String cmd) throws IOException {
+		return runRemoteCmdWithResultVerbose(cmd, true);
+	}
+	
+	public static String runRemoteCmdWithResultVerbose(String cmd, boolean verbose) throws IOException {
 		Process p = Runtime.getRuntime().exec(new String[] {"/bin/bash", "-c", cmd});
 		String result = "";
 		
@@ -484,27 +488,27 @@ public class MetaStoreClient {
 
 			String line = null;
 
-			System.out.println("<ERROR>");
+			if (verbose) System.out.println("<ERROR>");
 
 			while ((line = br.readLine()) != null) {
-				System.out.println(line);
+				if (verbose) System.out.println(line);
 			}
-			System.out.println("</ERROR>");
+			if (verbose) System.out.println("</ERROR>");
 			
 			InputStream out = p.getInputStream();
 			isr = new InputStreamReader(out);
 			br = new BufferedReader(isr);
 
-			System.out.println("<OUTPUT>");
+			if (verbose) System.out.println("<OUTPUT>");
 
 			while ((line = br.readLine()) != null) {
 				result += line;
-				System.out.println(line);
+				if (verbose) System.out.println(line);
 			}
-			System.out.println("</OUTPUT>");
+			if (verbose) System.out.println("</OUTPUT>");
 
 			int exitVal = p.waitFor();
-			System.out.println(" -> exit w/ " + exitVal);
+			if (verbose) System.out.println(" -> exit w/ " + exitVal);
 			if (exitVal > 0)
 				return result;
 		} catch (InterruptedException e) {
@@ -1794,6 +1798,7 @@ public class MetaStoreClient {
 												}
 											} catch (FileOperationException foe) {
 												idToDel.add(fid);
+											} catch (Exception foe) {
 											}
 										}
 										System.out.println("]");
@@ -2384,55 +2389,186 @@ public class MetaStoreClient {
 					break;
 				}
 			}
-                        if(o.flag.equals("-flc")){
-                                if(dbName == null || tableName == null){
-                                    System.out.println("please set -db and -table");
-                                    System.exit(0);
-                                }
-                                try {
-                                    long recordnr = 0, length = 0;
-                                    String command = "ssh %s java -Djava.library.path=dservice2/build/ -jar %s %s %s";
-                                    for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
-                                        List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
-                                        System.out.println("files' size:"+files.size());
-                                        if(files.isEmpty())break;
-                                        StringBuffer sb = new StringBuffer();
-                                        int totalRecord = 0;
-                                        float totalSize = 0.0F;
-                                        for (Long fid : files) {
-                                            SFile f = cli.client.get_file_by_id(fid);
-                                            String result = "";
-                                            for (SFileLocation loc : f.getLocations()) {
-                                                result = runRemoteCmdWithResult(String.format(command,loc.getNode_name(),"dservice2/lib/lutools.jar",loc.getDevid(),loc.getLocation()));
-                                             
-						if(!"".equals(result)&&result.indexOf("$")>=0){
-						   // System.out.println("result>>>>>>"+result);
-                                                    int start = result.indexOf("$");
-						    int end = result.indexOf(")");
-						    result = result.substring(start+2,end);	
-                                                    String[] dres = result.split(",");
-                                                    int drecord = Integer.parseInt(dres[0]);
-                                                    float dsize = Float.parseFloat(dres[1]);
-                                                    totalRecord += drecord;
-                                                    totalSize += dsize;
-                                                    //System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
-                                                    break;
-                                                }
-                                            }
-                                            //System.out.println("fid " + fid + " -> " + toStringSFile(f));
-                                        }
-                                    	System.out.printf("TotalRecords:%d TotalSize:%.2f MB\n",totalRecord,totalSize);
-                                    }
+			if(o.flag.equals("-statfs3")){
+				long end = 0;
+				
+				if ((dbName == null) ||
+					((begin_time < 0 && end_time < 0) &&
+					(statfs_range <= 0) &&
+					(statfs2_bday <= 0 && statfs2_days <= 0))) {
+					System.out.println("Please set -statfs_range or (-statfs2_bday and -statfs2_days) and -db.");
+					System.exit(0);
+				}
+				
+				if (statfs2_bday >= 0 && statfs2_days >= 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					end = end_time / 3600 * 3600;
+					end = end - statfs2_bday * 86400;
+					begin_time = end - statfs2_days * 86400;
+				} else if (statfs_range > 0) {
+					end_time = System.currentTimeMillis() / 1000;
+					// find a valid Hour start time
+					end = end_time / 3600 * 3600;
+					begin_time = end_time - statfs_range;
+				} else {
+					end = end_time / 3600 * 3600;
+					begin_time = begin_time / 3600 * 3600;
+				}
+				
+				try {
+					List<String> tables;
+					TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+					
+					if (tableName == null) 
+						tables = cli.client.getAllTables(dbName);
+					else {
+						tables = new ArrayList<String>();
+						tables.add(tableName);
+					}
 
+					for (; end >= begin_time; end -= 3600) {
+						List<SplitValue> lsv = new ArrayList<SplitValue>();
+						System.out.println("Handling data begin @ " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(end * 1000)));
+						
+						for (String tbl : tables) {
+							lsv.clear();
+							Table t = cli.client.getTable(dbName, tbl);
+							if (t.getFileSplitKeysSize() > 0) {
+								int maxv = 0;
+								List<PartitionInfo> allpis = PartitionFactory.PartitionInfo.getPartitionInfo(t.getFileSplitKeys());
+
+								for (PartitionInfo pi : allpis) {
+									if (maxv < pi.getP_version())
+										maxv = pi.getP_version();
+								}
+								List<List<PartitionInfo>> vpis = new ArrayList<List<PartitionInfo>>();
+								for (int i = 0; i <= maxv; i++) {
+									List<PartitionInfo> lpi = new ArrayList<PartitionInfo>();
+									vpis.add(lpi);
+								}
+								for (PartitionInfo pi : allpis) {
+									vpis.get(pi.getP_version()).add(pi);
+								}
+								// ok, we get versioned PIs; for each version, we generate a LSV and call filterTable
+								for (int i = 0; i <= maxv; i++) {
+									// BUG: in our lv13 demo systems, versions leaks, so we have to ignore some nonexist versions
+									if (vpis.get(i).size() <= 0) {
+										System.out.println("Metadata corrupted, version " + i + " leaks.");
+										continue;
+									}
+									if (vpis.get(i).get(0).getP_type() != PartitionFactory.PartitionType.interval)
+										continue;
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+									lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600)).toString(), vpis.get(i).get(0).getP_version()));
+									// call update map
+									List<SFile> files = cli.client.filterTableFiles(dbName, tbl, lsv);
+									System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
+									lsv.clear();
+									statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									
+									if (statfs2_xj) {
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)end).toString(), vpis.get(i).get(0).getP_version()));
+										lsv.add(new SplitValue(vpis.get(i).get(0).getP_col(), 1, ((Long)(end + Integer.parseInt(vpis.get(i).get(0).getArgs().get(1)) * 3600 - 1)).toString(), vpis.get(i).get(0).getP_version()));
+										// call update map
+										files = cli.client.filterTableFiles(dbName, tbl, lsv);
+										System.out.println("Got Table " + tbl + " LSV: " + lsv + " Hit " + files.size());
+										lsv.clear();
+										statfs2_update_map(cli, fmap, files, statfs2_getlen);
+									}
+								}
+							}
+						}
+					}
+					
+					Long total_size = 0L;
+					Map<String, Long> sizeMap = new TreeMap<String, Long>();
+					Map<String, Long> fnrMap = new TreeMap<String, Long>();
+					Map<String, List<Long>> fidMap = new TreeMap<String, List<Long>>();
+					for (Long k : fmap.descendingKeySet()) {
+						Map<String, FileStat> fsmap = fmap.get(k);
+						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
+						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+							System.out.print(e.getKey() + ":" + e.getValue().fids.size() + 
+									":" + e.getValue().space + "; ");
+							total_size += e.getValue().space;
+							if (sizeMap.get(e.getKey()) == null) {
+								sizeMap.put(e.getKey(), e.getValue().space);
+								fnrMap.put(e.getKey(), (long)e.getValue().fids.size());
+								List<Long> fids = new ArrayList<Long>();
+								fids.addAll(e.getValue().fids);
+								fidMap.put(e.getKey(), fids);
+							} else {
+								sizeMap.put(e.getKey(), sizeMap.get(e.getKey()) + e.getValue().space);
+								fnrMap.put(e.getKey(), fnrMap.get(e.getKey()) + e.getValue().fids.size());
+								fidMap.get(e.getKey()).addAll(e.getValue().fids);
+							}
+						}
+						System.out.println();
+					}
+					for (Map.Entry<String, Long> e : sizeMap.entrySet()) {
+						System.out.println("Table " + e.getKey() + " -> " + fnrMap.get(e.getKey()) + " " + e.getValue() + " KB");
+					}
+					System.out.println("Total Size " + total_size + " KB");
+					
+					String command = "ssh %s 'cd sotstore/dservice ; java -cp build/devmap.jar:build/iie.jar:lib/lucene-core-4.2.1.jar -Djava.library.path=build/ iie.metastore.LuceneStat %s %s'";
+					for (Map.Entry<String, List<Long>> e : fidMap.entrySet()) {
+						long totalRecord = 0;
+						long totalSize = 0;
+						long fnrs = 0, freps = 0;
+						
+						for (Long fid : e.getValue()) {
+							SFile f = cli.client.get_file_by_id(fid);
+							String result = "";
+							boolean isCalc = false;
+							
+							fnrs++;
+							List<Long> tr = new ArrayList<Long>(f.getLocationsSize());
+							List<Long> ts = new ArrayList<Long>(f.getLocationsSize());
+							for (SFileLocation loc : f.getLocations()) {
+								freps++;
+								result = runRemoteCmdWithResultVerbose(String.format(command, 
+										loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
+
+								if (!"".equals(result) && result.indexOf("$") >= 0){
+									int start = result.indexOf("$");
+									int stop = result.indexOf(")");
+									result = result.substring(start+2,stop);	
+									String[] dres = result.split(",");
+									long drecord = Long.parseLong(dres[0]);
+									long dsize = Long.parseLong(dres[1]);
+									if (!isCalc) {
+										isCalc = true;
+										totalRecord += drecord;
+										totalSize += dsize;
+									}
+									//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
+									tr.add(drecord);
+									ts.add(dsize);
+								} else {
+									tr.add(0L);
+									tr.add(0L);
+								}
+							}
+							long xtr = -1;
+							for (int i = 0; i < f.getLocationsSize(); i++) {
+								if (xtr < 0)
+									xtr = tr.get(i);
+								if (xtr != tr.get(i)) 
+									System.out.println("Bad File fid=" + fid + " -> " + xtr + " vs " + tr.get(i));
+							}
+						}
+						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + 
+								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " KB");
+					}
 				} catch (MetaException e) {
-                                    e.printStackTrace();
-                                    break;
+					e.printStackTrace();
+					break;
 				} catch (TException e) {
-                                    e.printStackTrace();
-                                    break;
-                                }
-
-                            }
+					e.printStackTrace();
+					break;
+				}
+			}
+			
 			if (o.flag.equals("-flt")) {
 				// filter table files
 				if (dbName == null || tableName == null) {
