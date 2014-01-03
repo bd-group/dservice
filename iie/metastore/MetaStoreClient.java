@@ -2719,7 +2719,7 @@ public class MetaStoreClient {
 						}					
 					}
 					for (SFileLocation sln : locatsDel){
-						cli.client.del_fileLocation(sln);
+//						cli.client.del_fileLocation(sln);
 					}
 					System.out.println("Delete  " + balanceNum + " M files on device " + devid);
 				} catch (MetaException e) {
