@@ -214,6 +214,8 @@ public class ClientAPI {
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			if (she.probSelected())
+				// BUG-XXX: we have to check if we can recover from this exception, 
+				// then try our best to survive.
 				try {
 					r = pc.syncStorePhoto(keys[0], keys[1], content, she, nodedup);
 					if (r.split("#").length < pc.getConf().getDupNum()) {

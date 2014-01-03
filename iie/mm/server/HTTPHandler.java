@@ -129,11 +129,14 @@ public class HTTPHandler extends AbstractHandler {
 							"<TITLE> MM Server Info</TITLE>" +
 							"</HEAD>" +
 							"<BODY>" +
-							"<H1> #In Current Server Session: </H1><tt>" +
+							"<H1> #In Current Server Session: </H1>" +
+							"<H2> Server Info: </H2><tt>" +
+							"Uptime              (S): " + ((System.currentTimeMillis() - PhotoServer.upts) / 1000) + "<p>" +
 							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
 							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
 							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +
 							PhotoServer.getServerInfoHtml(conf) + "<p>" +
+							PhotoServer.getSpaceInfoHtml(conf) + "<p>" + 
 							"<H1> #Client Auto Config: </H1><tt>" +
 							"dupmode = " + jedis.hget("mm.client.conf", "dupmode") + "<p>" +
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
