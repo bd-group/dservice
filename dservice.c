@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-31 14:37:35 macan>
+ * Time-stamp: <2014-01-05 00:01:48 macan>
  *
  */
 
@@ -1624,7 +1624,7 @@ static void *__rep_thread_main(void *args)
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
-                        "cd %s/%s ; find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
+                        "cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
                         pos->from.node, pos->from.mp, pos->from.location,
@@ -1634,7 +1634,7 @@ static void *__rep_thread_main(void *args)
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
-                        "if [ -d %s/%s ]; then cd %s/%s ; "
+                        "if [ -d %s/%s ]; then cd %s/%s && "
                         "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | "
                         "md5sum ; "
                         "else cd %s ; "

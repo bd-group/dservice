@@ -2514,17 +2514,22 @@ public class MetaStoreClient {
 					for (Map.Entry<String, List<Long>> e : fidMap.entrySet()) {
 						long totalRecord = 0;
 						long totalSize = 0;
-						long fnrs = 0, freps = 0;
+						long fnrs = 0, freps = 0, ignore = 0;
 						
 						for (Long fid : e.getValue()) {
 							SFile f = cli.client.get_file_by_id(fid);
 							String result = "";
 							boolean isCalc = false;
 							
+							freps = 0;
 							fnrs++;
 							List<Long> tr = new ArrayList<Long>(f.getLocationsSize());
 							List<Long> ts = new ArrayList<Long>(f.getLocationsSize());
 							for (SFileLocation loc : f.getLocations()) {
+								if (loc.getVisit_status() != MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
+									ignore++;
+									continue;
+								}
 								freps++;
 								result = runRemoteCmdWithResultVerbose(String.format(command, 
 										loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
@@ -2550,14 +2555,15 @@ public class MetaStoreClient {
 								}
 							}
 							long xtr = -1;
-							for (int i = 0; i < f.getLocationsSize(); i++) {
+							for (int i = 0; i < freps; i++) {
 								if (xtr < 0)
 									xtr = tr.get(i);
 								if (xtr != tr.get(i)) 
 									System.out.println("Bad File fid=" + fid + " -> " + xtr + " vs " + tr.get(i));
 							}
+							System.out.format("\r%.2f %%", ((double)fnrs / e.getValue().size() * 100));
 						}
-						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + 
+						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
 								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " KB");
 					}
 				} catch (MetaException e) {

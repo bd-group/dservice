@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.util.Map;
+import java.util.Set;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -172,6 +173,32 @@ public class HTTPHandler extends AbstractHandler {
 		}
 		pw.println(" [TOTAL], " + totalnr + ", " + totallen * ((double)conf.getBlockSize() / 1024.0 / 1024.0));
 	}
+	
+	private void doBrowse(String target, Request baseRequest, HttpServletRequest request,
+			HttpServletResponse response) throws IOException, ServletException {
+		String set = request.getParameter("set");
+		
+		if (set == null) {
+			response.setContentType("text/html;charset=utf-8");
+			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+			baseRequest.setHandled(true);
+			response.getWriter().println("#FAIL: set can not be null");
+		} else {
+			Set<String> elements = sp.getSetElements(set);
+			String page = "<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>" +
+					"<BODY><H1> Set = " + set + "</H1><UL>";
+			for (String el : elements) {
+				page += "<li><a href=/get?key=" + set + "@" + el + "><tt>" + el + "</tt></a>";
+			}
+			page += "</UL></BODY> </HTML>";
+			
+			response.setContentType("text/html;charset=utf-8");
+			response.setStatus(HttpServletResponse.SC_OK);
+			baseRequest.setHandled(true);
+			response.getWriter().write(page);
+			response.getWriter().flush();
+		}
+	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
@@ -187,6 +214,8 @@ public class HTTPHandler extends AbstractHandler {
 			doInfo(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/data")) {
 			doData(target, baseRequest, request, response);
+		} else if (target.equalsIgnoreCase("/b")) {
+			doBrowse(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}

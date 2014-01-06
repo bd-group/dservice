@@ -594,6 +594,36 @@ public class StorePhoto {
 		}
 	}
 	
+	public Set<String> getSetElements(String set) {
+		Set<String> r = null;
+		int err = 0;
+		
+		try {
+			reconnectJedis();
+		} catch (IOException e) { 
+			return null;
+		}
+		
+		try {
+			r = jedis.hkeys(set);
+		} catch (JedisConnectionException e) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			else
+				jedis = RedisFactory.putInstance(jedis);
+		}
+		return r;
+	}
+	
 	/**
 	 * 获得redis中每个set的块数，存在hash表里，键是[集合名，该集合内的文件数]，值是块数
 	 * @return
