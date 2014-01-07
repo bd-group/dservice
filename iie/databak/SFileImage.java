@@ -9,6 +9,10 @@ import org.apache.hadoop.hive.metastore.api.SFileLocation;
 import org.apache.hadoop.hive.metastore.api.SplitValue;
 
 public class SFileImage implements Serializable{
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = -6145322322000322719L;
 	private long fid; // required
 	private String dbName; // required
 	private String tableName; // required
@@ -160,4 +164,16 @@ public class SFileImage implements Serializable{
 		this.load_status = load_status;
 	}
 
+	
+	@Override
+	public String toString() {
+		return "SFileImage [fid=" + fid + ", dbName=" + dbName + ", tableName="
+				+ tableName + ", store_status=" + store_status + ", rep_nr="
+				+ rep_nr + ", digest=" + digest + ", record_nr=" + record_nr
+				+ ", all_record_nr=" + all_record_nr + ", sflkeys=" + sflkeys
+				+ ", length=" + length + ", ref_files=" + ref_files
+				+ ", values=" + values + ", load_status=" + load_status + "]";
+	}
+
+	
 }

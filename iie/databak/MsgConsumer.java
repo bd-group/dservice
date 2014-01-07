@@ -73,11 +73,11 @@ public class MsgConsumer {
 	final MetaClientConfig metaClientConfig = new MetaClientConfig();
 	final ZKConfig zkConfig = new ZKConfig();
 	private DatabakConf conf;
-	private MsgStorage ms;
+	private MetadataStorage ms;
 	
 	public MsgConsumer(DatabakConf conf) {
 		this.conf = conf;
-		ms = new MsgStorage(conf);
+		ms = new MetadataStorage(conf);
 	}
 	public void consume() throws MetaClientException {
 		// 设置zookeeper地址
