@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-01-08 13:52:16 macan>
+ * Time-stamp: <2014-01-08 19:14:59 macan>
  *
  */
 
@@ -164,38 +164,43 @@ out:
  */
 static void __convert_host_to_ip(char *host, char *ip)
 {
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    struct sockaddr_in *si;
+    struct ifaddrs *ifaddr, *ifa;
+    int family, s;
     int err = 0, copied = 0;
 
     if (!g_ds_conf.addr_filter) {
         strcpy(ip, host);
         return;
     }
-    
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
 
-    err = getaddrinfo(host, "0", &hints, &result);
+    err = getifaddrs(&ifaddr);
     if (err) {
-        hvfs_warning(lib, "getaddrinfo() failed, use hostname.\n");
-        strcpy(ip, host);
-        return;
+        hvfs_err(lib, "getifaddrs() failed w/ %s(%d)\n",
+                 strerror(errno), errno);
+        goto out;
     }
-    for (rp = result; rp != NULL; rp = rp->ai_next) {
-        si = (struct sockaddr_in *)rp->ai_addr;
-        char p[64];
-        if (inet_ntop(AF_INET, &si->sin_addr, p, sizeof(p)) != NULL) {
-            if (strstr(p, g_ds_conf.addr_filter) != NULL) {
-                /* ok, use this IP */
-                strcpy(ip, p);
-                copied = 1;
-                break;
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+        family = ifa->ifa_addr->sa_family;
+        if (family == AF_INET) {
+            s = getnameinfo(ifa->ifa_addr,
+                            sizeof(struct sockaddr_in),
+                            ip, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+            if (s != 0) {
+                hvfs_err(lib, "getnameinfo() failed %s\n", gai_strerror(s));
+            } else {
+                if (strstr(ip, g_ds_conf.addr_filter) != NULL) {
+                    /* ok, use this IP */
+                    copied = 1;
+                    break;
+                }
             }
         }
     }
+    
+out:    
     if (!copied) {
         strcpy(ip, host);
     }
@@ -1371,6 +1376,7 @@ void do_help()
                "-d, --dev         Use this specified dev: DEVID:MOUNTPOINT.\n"
                "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
                "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
+               "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -1761,6 +1767,28 @@ static void *__rep_thread_main(void *args)
     pthread_exit(0);
 }
 
+int __device_scan()
+{
+    struct disk_part_info *dpi = NULL;
+    int nr = 0, err = 0;
+    
+    if (!g_specify_dev) {
+        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
+        if (err) {
+            hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
+            goto out;
+        }
+        
+        err = fix_disk_parts(dpi, nr);
+        if (err) {
+            hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
+                         "any NRs\n", strerror(-err), err);
+        }
+    }
+out:
+    return err;
+}
+
 int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
@@ -1781,7 +1809,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -1817,6 +1845,7 @@ int main(int argc, char *argv[])
             g_hostname = strdup(optarg);
             break;
         case 'd':
+            /* dev_str is dev:mount_point:xx,xx,xx */
             g_specify_dev = 1;
             g_dev_str = strdup(optarg);
             break;
@@ -1886,6 +1915,15 @@ int main(int argc, char *argv[])
             return errno;
         }
         hvfs_info(lib, "Get hostname as '%s'\n", g_hostname);
+    }
+
+    {
+        char ip[NI_MAXHOST];
+
+        memset(ip, 0, sizeof(ip));
+        __convert_host_to_ip(g_hostname, ip);
+        hvfs_info(lib, "TEST CONVERTION: host '%s' to ip '%s'\n", 
+                  g_hostname, ip);
     }
 
     sem_init(&g_main_sem, 0, 0);

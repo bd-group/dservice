@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-10-31 20:15:26 macan>
+ * Time-stamp: <2014-01-08 19:01:44 macan>
  *
  */
 
@@ -34,6 +34,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <limits.h>
+#include <ifaddrs.h>
 
 HVFS_TRACING_INIT();
 
