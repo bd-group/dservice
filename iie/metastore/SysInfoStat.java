@@ -24,19 +24,188 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class SysInfoStat {
 	
-	public static class DiskStatKey implements Comparable<DiskStatKey> {
+	public static class SysStatKey implements Comparable<SysStatKey> {
 		String hostname;
 		String dev;
 		
-		public DiskStatKey(String hostname, String dev) {
+		public SysStatKey(String hostname, String dev) {
 			this.hostname = hostname;
 			this.dev = dev;
 		}
 		
 		@Override
-		public int compareTo(DiskStatKey other) {
+		public int compareTo(SysStatKey other) {
 			System.out.println("THIS " + hostname + ", " + dev + "VS " + other.hostname + ", " + other.dev);
 			return hostname.compareTo(other.hostname) & dev.compareTo(other.dev);
+		}
+	}
+	
+	public static class NetStat {
+		Double tlen = 0.0;
+		Long[] ts = new Long[2];
+		Long[] rx_bytes = new Long[2];
+		Long[] rx_packets = new Long[2];
+		Long[] rx_errs = new Long[2];
+		Long[] rx_drop = new Long[2];
+		Long[] rx_fifo = new Long[2];
+		Long[] rx_frame = new Long[2];
+		Long[] rx_compressed = new Long[2];
+		Long[] rx_multicast = new Long[2];
+		Long[] tx_bytes = new Long[2];
+		Long[] tx_packets = new Long[2];
+		Long[] tx_errs = new Long[2];
+		Long[] tx_drop = new Long[2];
+		Long[] tx_fifo = new Long[2];
+		Long[] tx_frame = new Long[2];
+		Long[] tx_compressed = new Long[2];
+		Long[] tx_multicast = new Long[2];
+		
+		public NetStat() {
+			ts[0] = new Long(0);
+			ts[1] = new Long(0);
+			rx_bytes[0] = new Long(0);
+			rx_bytes[1] = new Long(0);
+			rx_packets[0] = new Long(0);
+			rx_packets[1] = new Long(0);
+			rx_errs[0] = new Long(0);
+			rx_errs[1] = new Long(0);
+			rx_drop[0] = new Long(0);
+			rx_drop[1] = new Long(0);
+			rx_fifo[0] = new Long(0);
+			rx_fifo[1] = new Long(0);
+			rx_frame[0] = new Long(0);
+			rx_frame[1] = new Long(0);
+			rx_compressed[0] = new Long(0);
+			rx_compressed[1] = new Long(0);
+			rx_multicast[0] = new Long(0);
+			rx_multicast[1] = new Long(0);
+			tx_bytes[0] = new Long(0);
+			tx_bytes[1] = new Long(0);
+			tx_packets[0] = new Long(0);
+			tx_packets[1] = new Long(0);
+			tx_errs[0] = new Long(0);
+			tx_errs[1] = new Long(0);
+			tx_drop[0] = new Long(0);
+			tx_drop[1] = new Long(0);
+			tx_fifo[0] = new Long(0);
+			tx_fifo[1] = new Long(0);
+			tx_frame[0] = new Long(0);
+			tx_frame[1] = new Long(0);
+			tx_compressed[0] = new Long(0);
+			tx_compressed[1] = new Long(0);
+			tx_multicast[0] = new Long(0);
+			tx_multicast[1] = new Long(0);
+		}
+		
+		public String toString() {
+			String r = "";
+			
+			r += tlen + "," +
+					(ts[1] - ts[0]) + "," +
+					(rx_bytes[1] - rx_bytes[0]) + "," +
+					(rx_packets[1] - rx_packets[0]) + "," +
+					(rx_errs[1] - rx_errs[0]) + "," +
+					(rx_drop[1] - rx_drop[0]) + "," +
+					(rx_fifo[1] - rx_fifo[0]) + "," +
+					(rx_frame[1] - rx_frame[0]) + "," +
+					(rx_compressed[1] - rx_compressed[0]) + "," +
+					(rx_multicast[1] - rx_multicast[0]) + "," +
+					(tx_bytes[1] - tx_bytes[0]) + "," +
+					(tx_packets[1] - tx_packets[0]) + "," +
+					(tx_errs[1] - tx_errs[0]) + "," +
+					(tx_drop[1] - tx_drop[0]) + "," +
+					(tx_fifo[1] - tx_fifo[0]) + "," +
+					(tx_frame[1] - tx_frame[0]) + "," +
+					(tx_compressed[1] - tx_compressed[0]) + "," +
+					(tx_multicast[1] - tx_multicast[0]);
+			return r;
+		}
+		
+		public void Add(NetStat other) {
+			synchronized (this) {
+				if (tlen == 0.0) {
+					tlen = (double)(other.ts[1] - other.ts[0]);
+					ts[0] = other.ts[0];
+					ts[1] = other.ts[1];
+				} else {
+					tlen = (double) Math.min(ts[1] - ts[0], other.ts[1] - other.ts[0]);
+					ts[0] = (ts[0] + other.ts[0]) / 2;
+					ts[1] = (ts[1] + other.ts[1]) / 2;
+				}
+				rx_bytes[0] += other.rx_bytes[0];
+				rx_bytes[1] += other.rx_bytes[1];
+				rx_packets[0] += other.rx_packets[0];
+				rx_packets[1] += other.rx_packets[1];
+				rx_errs[0] += other.rx_errs[0];
+				rx_errs[1] += other.rx_errs[1];
+				rx_drop[0] += other.rx_drop[0];
+				rx_drop[1] += other.rx_drop[1];
+				rx_fifo[0] += other.rx_fifo[0];
+				rx_fifo[1] += other.rx_fifo[1];
+				rx_frame[0] += other.rx_frame[0];
+				rx_frame[1] += other.rx_frame[1];
+				rx_compressed[0] += other.rx_compressed[0];
+				rx_compressed[1] += other.rx_compressed[1];
+				rx_multicast[0] += other.rx_multicast[0];
+				rx_multicast[1] += other.rx_multicast[1];
+				tx_bytes[0] += other.tx_bytes[0];
+				tx_bytes[1] += other.tx_bytes[1];
+				tx_packets[0] += other.tx_packets[0];
+				tx_packets[1] += other.tx_packets[1];
+				tx_errs[0] += other.tx_errs[0];
+				tx_errs[1] += other.tx_errs[1];
+				tx_drop[0] += other.tx_drop[0];
+				tx_drop[1] += other.tx_drop[1];
+				tx_fifo[0] += other.tx_fifo[0];
+				tx_fifo[1] += other.tx_fifo[1];
+				tx_frame[0] += other.tx_frame[0];
+				tx_frame[1] += other.tx_frame[1];
+				tx_compressed[0] += other.tx_compressed[0];
+				tx_compressed[1] += other.tx_compressed[1];
+				tx_multicast[0] += other.tx_multicast[0];
+				tx_multicast[1] += other.tx_multicast[1];
+			}
+		}
+		
+		public void Update(Long ts, Long rx_bytes, Long rx_packets, Long rx_errs, Long rx_drop, Long rx_fifo, Long rx_frame, Long rx_compressed, Long rx_multicast,
+					Long tx_bytes, Long tx_packets, Long tx_errs, Long tx_drop, Long tx_fifo, Long tx_frame, Long tx_compressed, Long tx_multicast) {
+			synchronized (this) {
+				this.ts[0] = this.ts[1];
+				this.rx_bytes[0] = this.rx_bytes[1];
+				this.rx_packets[0] = this.rx_packets[1];
+				this.rx_errs[0] = this.rx_errs[1];
+				this.rx_drop[0] = this.rx_drop[1];
+				this.rx_fifo[0] = this.rx_fifo[1];
+				this.rx_frame[0] = this.rx_frame[1];
+				this.rx_compressed[0] = this.rx_compressed[1];
+				this.rx_multicast[0] = this.rx_multicast[1];
+				this.tx_bytes[0] = this.tx_bytes[1];
+				this.tx_packets[0] = this.tx_packets[1];
+				this.tx_errs[0] = this.tx_errs[1];
+				this.tx_drop[0] = this.tx_drop[1];
+				this.tx_fifo[0] = this.tx_fifo[1];
+				this.tx_frame[0] = this.tx_frame[1];
+				this.tx_compressed[0] = this.tx_compressed[1];
+				this.tx_multicast[0] = this.tx_multicast[1];
+				
+				this.ts[1] = ts;
+				this.rx_bytes[1] = rx_bytes;
+				this.rx_packets[1] = rx_packets;
+				this.rx_errs[1] = rx_errs;
+				this.rx_drop[1] = rx_drop;
+				this.rx_fifo[1] = rx_fifo;
+				this.rx_frame[1] = rx_frame;
+				this.rx_compressed[1] = rx_compressed;
+				this.rx_multicast[1] = rx_multicast;
+				this.tx_bytes[1] = tx_bytes;
+				this.tx_packets[1] = tx_packets;
+				this.tx_errs[1] = tx_errs;
+				this.tx_drop[1] = tx_drop;
+				this.tx_fifo[1] = tx_fifo;
+				this.tx_frame[1] = tx_frame;
+				this.tx_compressed[1] = tx_compressed;
+				this.tx_multicast[1] = tx_multicast;
+			}
 		}
 	}
 	
@@ -79,6 +248,31 @@ public class SysInfoStat {
 					cpunr;
 			
 			return r;
+		}
+		
+		public void Add(CPUStat other) {
+			synchronized (this) {
+				if (tlen == 0.0) {
+					tlen = (double)(other.ts[1] - other.ts[0]);
+					ts[0] = other.ts[0];
+					ts[1] = other.ts[1];
+				} else {
+					tlen = (double) Math.min(ts[1] - ts[0], other.ts[1] - other.ts[0]);
+					ts[0] = (ts[0] + other.ts[0]) / 2;
+					ts[1] = (ts[1] + other.ts[1]) / 2;
+				}
+				user[0] += other.user[0];
+				user[1] += other.user[1];
+				nice[0] += other.nice[0];
+				nice[1] += other.nice[1];
+				system[0] += other.system[0];
+				system[1] += other.system[1];
+				idle[0] += other.idle[0];
+				idle[1] += other.idle[1];
+				iowait[0] += other.iowait[0];
+				iowait[1] += other.iowait[1];
+				cpunr += other.cpunr;
+			}
 		}
 		
 		public void Update(Long cts, Long user, Long nice, Long system, Long idle, 
@@ -239,9 +433,11 @@ public class SysInfoStat {
 		public int listenPort = 19888;
 		public int interval = 5;
 		public DatagramSocket server;
-		public static Map<String, DiskStatKey> dskMap = new ConcurrentHashMap<String, DiskStatKey>();
-		public static Map<DiskStatKey, DiskStat> dsMap = new ConcurrentHashMap<DiskStatKey, DiskStat>();
+		public static Map<String, SysStatKey> dskMap = new ConcurrentHashMap<String, SysStatKey>();
+		public static Map<SysStatKey, DiskStat> dsMap = new ConcurrentHashMap<SysStatKey, DiskStat>();
 		public static Map<String, CPUStat> cpuMap = new ConcurrentHashMap<String, CPUStat>();
+		public static Map<String, SysStatKey> nskMap = new ConcurrentHashMap<String, SysStatKey>();
+		public static Map<SysStatKey, NetStat> nsMap = new ConcurrentHashMap<SysStatKey, NetStat>();
 		public ServerReportTask spt = new ServerReportTask();
 		public Timer timer = new Timer("ServerReportTask");
 		public String prefix = "sysinfo"; 
@@ -256,6 +452,7 @@ public class SysInfoStat {
 		
 		public class ServerReportTask extends TimerTask {
 			public Map<String, DiskStat> nodeMap = new ConcurrentHashMap<String, DiskStat>();
+			public Map<String, NetStat> nnMap = new ConcurrentHashMap<String, NetStat>();
 			
 			@Override
 			public void run() {
@@ -271,7 +468,8 @@ public class SysInfoStat {
 					
 					StringBuffer sb = new StringBuffer(2048);
 					
-					for (Map.Entry<DiskStatKey, DiskStat> e : dsMap.entrySet()) {
+					// handle disk info
+					for (Map.Entry<SysStatKey, DiskStat> e : dsMap.entrySet()) {
 						DiskStat ds = nodeMap.get(e.getKey().hostname);
 						if (ds == null) {
 							ds = new DiskStat();
@@ -284,20 +482,69 @@ public class SysInfoStat {
 							sb.append("RPT_DEV  -> " + e.getKey().hostname + "," + e.getKey().dev + "," + 
 									(System.currentTimeMillis() / 1000) + "," + e.getValue() + "\n");
 					}
+					DiskStat alldevs = new DiskStat();
+					boolean isAll = false;
 					for (Map.Entry<String, DiskStat> e : nodeMap.entrySet()) {
 						if (e.getValue().tlen > 0 && e.getValue().tlen < 1024) {
+							alldevs.Add(e.getValue());
+							isAll = true;
 							sb.append("RPT_NODE -> " + e.getKey() + "," + 
 									(System.currentTimeMillis() / 1000) + "," + e.getValue() + "\n");
 						}
 					}
+					if (isAll) {
+						sb.append("RPT_NODE -> ALL_DEVS," + 
+								(System.currentTimeMillis() / 1000) + "," + alldevs + "\n");
+					}
 					nodeMap.clear();
 					
+					CPUStat allcpus = new CPUStat();
+					isAll = false;
 					for (Map.Entry<String, CPUStat> e : cpuMap.entrySet()) {
-						if (e.getValue().ts[1] - e.getValue().ts[0] < 1024) 
+						if (e.getValue().ts[1] - e.getValue().ts[0] < 1024) {
+							allcpus.Add(e.getValue());
+							isAll = true;
 							sb.append("RPT_CPU -> " + e.getKey() + "," +
 									(System.currentTimeMillis() / 1000) + "," +
 									e.getValue() + "\n");
+						}
 					}
+					if (isAll) {
+						sb.append("RPT_CPU -> ALL_CPUS," + 
+								(System.currentTimeMillis() / 1000) + "," + allcpus + "\n");
+					}
+					
+					// handle net info
+					for (Map.Entry<SysStatKey, NetStat> e : nsMap.entrySet()) {
+						NetStat ns = nnMap.get(e.getKey().hostname);
+						if (ns == null) {
+							ns = new NetStat();
+							nnMap.put(e.getKey().hostname, ns);
+						}
+						synchronized (e.getValue()) {
+							ns.Add(e.getValue());
+						}
+						if (e.getValue().ts[1] - e.getValue().ts[0] < 1024)
+							sb.append("RPT_NDV -> " + e.getKey().hostname + ","	+ e.getKey().dev + "," +
+									(System.currentTimeMillis() / 1000) + "," +
+									e.getValue() + "\n");
+					}
+					NetStat allnets = new NetStat();
+					isAll = false;
+					for (Map.Entry<String, NetStat> e : nnMap.entrySet()) {
+						if (e.getValue().tlen > 0 && e.getValue().tlen < 1024) {
+							allnets.Add(e.getValue());
+							isAll = true;
+							sb.append("RPT_NET -> " + e.getKey() + "," +
+									(System.currentTimeMillis() / 1000) + "," +
+									e.getValue() + "\n");
+						}
+					}
+					if (isAll) {
+						sb.append("RPT_NET -> ALL_NETS," + 
+								(System.currentTimeMillis() / 1000) + "," + allnets + "\n");
+					}
+					nnMap.clear();
 					
 					// ok, write to file
 					try {
@@ -340,9 +587,9 @@ public class SysInfoStat {
 					String[] ds = line.split(",");
 					if (ds.length == 14) {
 						// DiskStat
-						DiskStatKey dsk = dskMap.get(ds[0] + ":" + ds[1]);
+						SysStatKey dsk = dskMap.get(ds[0] + ":" + ds[1]);
 						if (dsk == null) {
-							dsk = new DiskStatKey(ds[0], ds[1]);
+							dsk = new SysStatKey(ds[0], ds[1]);
 							dskMap.put(ds[0] + ":" + ds[1], dsk);
 						}
 						DiskStat cds = dsMap.get(dsk);
@@ -385,6 +632,36 @@ public class SysInfoStat {
 						}
 					} else if (ds.length == 19) {
 						// NetStat
+						SysStatKey ssk = nskMap.get(ds[0] + ":" + ds[2]);
+						if (ssk == null) {
+							ssk = new SysStatKey(ds[0], ds[2]);
+							nskMap.put(ds[0] + ":" + ds[2], ssk);
+						}
+						NetStat ns = nsMap.get(ssk);
+						if (ns == null) {
+							ns = new NetStat();
+							nsMap.put(ssk, ns);
+							System.out.println("Alloc NET " + ssk.hostname + ":" + ssk.dev);
+						}
+						if (Long.parseLong(ds[1]) > ns.ts[1]) {
+							ns.Update(Long.parseLong(ds[1]), 
+									Long.parseLong(ds[3]),
+									Long.parseLong(ds[4]), 
+									Long.parseLong(ds[5]), 
+									Long.parseLong(ds[6]), 
+									Long.parseLong(ds[7]), 
+									Long.parseLong(ds[8]), 
+									Long.parseLong(ds[9]), 
+									Long.parseLong(ds[10]), 
+									Long.parseLong(ds[11]), 
+									Long.parseLong(ds[12]), 
+									Long.parseLong(ds[13]), 
+									Long.parseLong(ds[14]), 
+									Long.parseLong(ds[15]), 
+									Long.parseLong(ds[16]), 
+									Long.parseLong(ds[17]), 
+									Long.parseLong(ds[18]));
+						}
 					}
 				}
 			}
@@ -479,6 +756,47 @@ public class SysInfoStat {
 									s[6] + "," + 
 									s[7] + "," + 
 									cpunr + "\n"; 
+						}
+					}
+					br.close();
+					fr.close();
+				} catch (FileNotFoundException e) {
+					e.printStackTrace();
+				} catch (UnknownHostException e) {
+					e.printStackTrace();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				
+				File netstats = new File("/proc/net/dev");
+				try {
+					FileReader fr = new FileReader(netstats.getAbsoluteFile());
+					BufferedReader br = new BufferedReader(fr);
+					String line = null;
+					while ((line = br.readLine()) != null) {
+						String[] s0 = line.split(":");
+						//if (s0[0].matches(" *wlan[0-9]+")) {
+						if (s0[0].matches(" *eth[0-9]+")) {
+							String[] s = s0[1].trim().split(" +");
+							sendStr += InetAddress.getLocalHost().getHostName() + "," +
+									System.currentTimeMillis() / 1000 + "," +
+									s0[0].trim() + "," + 
+									s[0] + "," +
+									s[1] + "," + 
+									s[2] + "," + 
+									s[3] + "," + 
+									s[4] + "," + 
+									s[5] + "," + 
+									s[6] + "," + 
+									s[7] + "," + 
+									s[8] + "," + 
+									s[9] + "," + 
+									s[10] + "," + 
+									s[11] + "," + 
+									s[12] + "," + 
+									s[13] + "," + 
+									s[14] + "," + 
+									s[15] + "\n"; 
 						}
 					}
 					br.close();

@@ -642,6 +642,59 @@ public class MetaStoreClient {
 		}
 	}
 	
+	public static void update_fmap(MetaStoreClient cli, int lfdc_thread, String serverName, int serverPort,
+			TreeMap<Long, Map<String, FileStat>> fmap, long from, long to, 
+			boolean getlen) {
+		List<FgetThread> fgts = new ArrayList<FgetThread>();
+		for (int i = 0; i < lfdc_thread; i++) {
+			MetaStoreClient tcli = null;
+
+			if (serverName == null)
+				try {
+					tcli = new MetaStoreClient();
+				} catch (MetaException e) {
+					e.printStackTrace();
+					System.exit(0);
+				}
+			else
+				try {
+					tcli = new MetaStoreClient(serverName, serverPort);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					System.exit(0);
+				}
+			fgts.add(new FgetThread(tcli, fmap, from + i * ((to - from) / lfdc_thread), 
+					from + (i + 1) * ((to - from) / lfdc_thread), getlen));
+		}
+		for (FgetThread t : fgts) {
+			t.start();
+		}
+
+		do {
+			long total = 0, cur = 0;
+			for (FgetThread t : fgts) {
+				total += t.end - t.begin;
+				cur += t.sum - t.begin;
+			}
+			System.out.format("\rGet files %.2f %%", (double) cur / total * 100);
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+				e1.printStackTrace();
+			}
+			if (cur >= total)
+				break;
+		} while (true);
+
+		for (FgetThread t : fgts) {
+			try {
+				t.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
 	public static class FileStat {
 		public String table;
 		public TreeSet<Long> fids;
@@ -1700,7 +1753,7 @@ public class MetaStoreClient {
 					}
 				}
 				System.out.println("Get MaxFid() " + scrub_max);
-				for (int i = 0; i < scrub_max; i += 2000) {
+				/*for (int i = 0; i < scrub_max; i += 2000) {
 					System.out.format("\rGet files %.2f %%", (double)i / scrub_max * 100);
 					List<Long> fids = new ArrayList<Long>();
 					for (int j = i; j < i + 2000; j++) {
@@ -1717,14 +1770,31 @@ public class MetaStoreClient {
 						e.printStackTrace();
 					}
 				}
-				System.out.println("\rDone.");
+				System.out.println("\rDone.");*/
+				
+				long sleepnr = 10;
+				long last_fetch = System.currentTimeMillis();
+				long last_got = 0;
+				
+				update_fmap(cli, 5, serverName, serverPort, fmap, 0, scrub_max, statfs2_getlen);
+				last_got = scrub_max / 5 * 5;
 				
 				while (true) {
 					Double ratio = 0.0;
 					try {
-						Thread.sleep(10 * 1000);
+						Thread.sleep(sleepnr * 1000);
 					} catch (InterruptedException e) {
 						e.printStackTrace();
+					}
+					if (System.currentTimeMillis() - last_fetch >= 3600 * 1000) {
+						// do fetch now
+						try {
+							scrub_max = cli.client.getMaxFid();
+						} catch (Exception e) {
+							scrub_max = last_got;
+						}
+						update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
+						last_got = scrub_max;
 					}
 					try {
 						String dms = cli.client.getDMStatus();
@@ -1737,9 +1807,12 @@ public class MetaStoreClient {
 								break;
 							}
 						}
-						System.out.println("This Ratio " + ratio + ", target ratio " + target_ratio);
+						System.out.println(" -> Current free ratio " + ratio + ", target ratio " + target_ratio);
 						if (target_ratio < ratio) {
+							sleepnr = (sleepnr * 2) % (60);
 							continue;
+						} else {
+							sleepnr = Math.max(sleepnr / 2, 10);
 						}
 						
 						// sort by time
@@ -1955,6 +2028,8 @@ public class MetaStoreClient {
 			if (o.flag.equals("-scrub_fast")) {
 				// scrub in fast mode
 				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				long last_got = 0;
+				
 				if (scrub_max < 0) {
 					try {
 						scrub_max = cli.client.getMaxFid();
@@ -1968,54 +2043,10 @@ public class MetaStoreClient {
 				}
 				System.out.println("Get Max FID " + scrub_max);
 				
-				List<FgetThread> fgts = new ArrayList<FgetThread>();
-				for (int i = 0; i < lfdc_thread; i++) {
-					MetaStoreClient tcli = null;
-	    			
-	    			if (serverName == null)
-						try {
-							tcli = new MetaStoreClient();
-						} catch (MetaException e) {
-							e.printStackTrace();
-							System.exit(0);
-						}
-					else
-						try {
-							tcli = new MetaStoreClient(serverName, serverPort);
-						} catch (MetaException e) {
-							e.printStackTrace();
-							System.exit(0);
-						}
-					fgts.add(new FgetThread(tcli, fmap, i * (scrub_max / lfdc_thread), 
-							(i + 1) * (scrub_max / lfdc_thread), statfs2_getlen));
-				}
-				for (FgetThread t : fgts) {
-					t.start();
-				}
-
-				do {
-					long total = 0, cur = 0;
-					for (FgetThread t : fgts) {
-						total += t.end - t.begin;
-						cur += t.sum - t.begin;
-					}
-					System.out.format("\rGet files %.2f %%", (double) cur / total * 100);
-					try {
-						Thread.sleep(1000);
-					} catch (InterruptedException e1) {
-						e1.printStackTrace();
-					}
-					if (cur >= total)
-						break;
-				} while (true);
-				
-				for (FgetThread t : fgts) {
-					try {
-						t.join();
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}
-				}
+				update_fmap(cli, lfdc_thread, serverName, serverPort, fmap, 0, scrub_max,
+						statfs2_getlen);
+				last_got = scrub_max / lfdc_thread * lfdc_thread;
+				System.out.println("Get File Info upto FID " + last_got);
 				
 				Long total_size = 0L;
 				Map<String, Long> sizeMap = new TreeMap<String, Long>();
@@ -2814,6 +2845,45 @@ public class MetaStoreClient {
 					e.printStackTrace();
 					break;
 				} catch (UnknownDBException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-lst_test")) {
+				// list table files
+				if (dbName == null || tableName == null) {
+					System.out.println("please set -db and -table.");
+					System.exit(0);
+				}
+				try {
+					Set<Long> fids = new TreeSet<Long>();
+					boolean isWrapped = false, isNone = true;
+					for (int i = 0; i < Integer.MAX_VALUE; i += 1000) {
+						List<Long> files = cli.client.listTableFiles(dbName, tableName, i, i + 1000);
+						if (files.size() > 0) {
+							for (Long fid : files) {
+								if (fids.add(fid))
+									isNone = false;
+							}
+						}
+						System.out.println("Got " + i + " -> " + files.size() + ": " + fids.size() + "," + isNone);
+						if (files.size() == 0) {
+							if (i != 0) {
+								if (isWrapped && isNone)
+									break;
+								i = -1000;
+								isWrapped = true;
+								isNone = true;
+								continue;
+							} else
+								break;
+						}
+					}
+					System.out.println("Total Table FID SET size " + fids.size());
+				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
 				} catch (TException e) {
