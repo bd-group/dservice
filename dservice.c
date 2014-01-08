@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-01-05 00:01:48 macan>
+ * Time-stamp: <2014-01-08 13:52:16 macan>
  *
  */
 
@@ -1637,7 +1637,7 @@ static void *__rep_thread_main(void *args)
                         "if [ -d %s/%s ]; then cd %s/%s && "
                         "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | "
                         "md5sum ; "
-                        "else cd %s ; "
+                        "else cd %s && "
                         "find ./%s -type f -exec md5sum {} + | awk '{print $1}' | sort | "
                         "md5sum ; fi",
                         pos->to.node, pos->to.mp, dirname(dir),
