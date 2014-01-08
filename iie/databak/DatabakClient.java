@@ -6,6 +6,7 @@ import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
 import org.apache.hadoop.hive.metastore.api.SFile;
+import org.apache.hadoop.hive.metastore.api.Table;
 
 public class DatabakClient {
 
@@ -19,5 +20,9 @@ public class DatabakClient {
 	public SFile getSFileById(long id) throws RemoteException
 	{
 		return (SFile)dr.getSFileById(id);
+	}
+	
+	public Table getTable(String dbname, String tablename) throws RemoteException{
+		return (Table)dr.getTable(dbname, tablename);
 	}
 }

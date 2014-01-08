@@ -111,12 +111,12 @@ public class MsgConsumer {
 			public void recieveMessages(final Message message) {
 				String data = new String(message.getData());
 				System.out.println(data);
-				try {
-					Thread.sleep(10*1000);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
+//				try {
+//					Thread.sleep(10*1000);
+//				} catch (InterruptedException e) {
+//					// TODO Auto-generated catch block
+//					e.printStackTrace();
+//				}
 				DDLMsg msg = DDLMsg.fromJson(data);
 				ms.handleMsg(msg);
 				

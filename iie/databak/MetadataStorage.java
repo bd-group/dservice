@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.GlobalSchema;
 import org.apache.hadoop.hive.metastore.api.Index;
 import org.apache.hadoop.hive.metastore.api.MetaException;
@@ -39,17 +40,17 @@ public class MetadataStorage {
 	private RedisFactory rf;
 	private DatabakConf conf;
 
-	private ConcurrentHashMap<String, Database> databaseHm = new ConcurrentHashMap<String, Database>();
-	private ConcurrentHashMap<String, PrivilegeBag> privilegeBagHm = new ConcurrentHashMap<String, PrivilegeBag>();
-	private ConcurrentHashMap<String, Partition> partitionHm = new ConcurrentHashMap<String, Partition>();
-	private ConcurrentHashMap<String, Node> nodeHm = new ConcurrentHashMap<String, Node>();
-	private ConcurrentHashMap<String, NodeGroup> nodeGroupHm = new ConcurrentHashMap<String, NodeGroup>();
-	private ConcurrentHashMap<String, GlobalSchema> globalSchemaHm = new ConcurrentHashMap<String, GlobalSchema>();
-	private ConcurrentHashMap<String, Table> tableHm = new ConcurrentHashMap<String, Table>();
-	private Map<String, SFile> sFileHm = new LRUMap<String, SFile>(1000);
-	private ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
-	private ConcurrentHashMap<String, Schema> schemaHm = new ConcurrentHashMap<String, Schema>();
-	private ConcurrentHashMap<String, SFileLocation> sflHm = new ConcurrentHashMap<String, SFileLocation>();
+	private static ConcurrentHashMap<String, Database> databaseHm = new ConcurrentHashMap<String, Database>();
+	private static ConcurrentHashMap<String, PrivilegeBag> privilegeBagHm = new ConcurrentHashMap<String, PrivilegeBag>();
+	private static ConcurrentHashMap<String, Partition> partitionHm = new ConcurrentHashMap<String, Partition>();
+	private static ConcurrentHashMap<String, Node> nodeHm = new ConcurrentHashMap<String, Node>();
+	private static ConcurrentHashMap<String, NodeGroup> nodeGroupHm = new ConcurrentHashMap<String, NodeGroup>();
+	private static ConcurrentHashMap<String, GlobalSchema> globalSchemaHm = new ConcurrentHashMap<String, GlobalSchema>();
+	private static ConcurrentHashMap<String, Table> tableHm = new ConcurrentHashMap<String, Table>();
+	private static Map<String, SFile> sFileHm = new LRUMap<String, SFile>(1000);
+	private static ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
+	private static ConcurrentHashMap<String, Schema> schemaHm = new ConcurrentHashMap<String, Schema>();
+	private static ConcurrentHashMap<String, SFileLocation> sflHm = new ConcurrentHashMap<String, SFileLocation>();
 	
 	public MetadataStorage(DatabakConf conf) {
 		this.conf = conf;
@@ -83,8 +84,7 @@ public class MetadataStorage {
 				case MSGType.MSG_DROP_DATABESE:
 				{
 					String dbname = (String) msg.getMsg_data().get("db_name");
-					if(databaseHm.remove(dbname) != null)
-						removeObject(ObjectType.DATABASE, dbname);
+					removeObject(ObjectType.DATABASE, dbname);
 					break;
 				}
 				case MSGType.MSG_ALT_TALBE_NAME:
@@ -124,17 +124,27 @@ public class MetadataStorage {
 				case MSGType.MSG_CREATE_FILE:
 				{
 					long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
-					SFile sf = msClient.client.get_file_by_id(fid);
+					SFile sf = null;
+					try{
+						sf = msClient.client.get_file_by_id(fid);
+					}catch(FileOperationException e)
+					{
+						//Can not find SFile by FID ...
+						System.out.println(e.getMessage());
+						if(sf == null)
+							break;
+					}
 					SFileImage sfi = SFileImage.generateSFileImage(sf);
+					sFileHm.put(fid+"", sf);
 					writeObject(ObjectType.SFILE, fid+"", sfi);
 					for(int i = 0;i<sfi.getSflkeys().size();i++)
 					{
 						writeObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i), sf.getLocations().get(i));
 					}
-	//				System.out.println(f.getLocations().get(0).getDevid());
 					
 					break;
 				}
+				//在删除文件时，会在之前发几个1307,然后才是4002
 				case MSGType.MSG_DEL_FILE:
 				{
 					long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
@@ -211,8 +221,9 @@ public class MetadataStorage {
 			databaseHm.put(field, (Database)o);
 		if(key.equals(ObjectType.TABLE))
 			tableHm.put(field, (Table)o);
-		if(key.equals(ObjectType.SFILE))
-			sFileHm.put(field, (SFile)o);
+		//对于sfile，函数参数是sfileimage
+//		if(key.equals(ObjectType.SFILE))
+//			sFileHm.put(field, (SFile)o);
 		if(key.equals(ObjectType.SFILELOCATION))
 			sflHm.put(field, (SFileLocation)o);
 		if(key.equals(ObjectType.INDEX))
@@ -253,7 +264,10 @@ public class MetadataStorage {
 			o = partitionHm.get(field);
 		
 		if(o != null)
+		{
+			System.out.println("in function readObject: read "+key+" from cache.");
 			return o;
+		}
 		//SFile 要特殊处理
 		reconnectJedis();
 		if(key.equals(ObjectType.SFILE))
@@ -280,6 +294,8 @@ public class MetadataStorage {
 		ByteArrayInputStream bais = new ByteArrayInputStream(buf);
 		ObjectInputStream ois = new ObjectInputStream(bais);
 		o = ois.readObject();
+		
+		System.out.println("in function readObject: read "+key+" from redis");
 		return o;
 	}
 

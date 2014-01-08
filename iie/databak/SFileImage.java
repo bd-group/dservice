@@ -12,7 +12,7 @@ public class SFileImage implements Serializable{
 	/**
 	 * 
 	 */
-	private static final long serialVersionUID = -6145322322000322719L;
+	private static final long serialVersionUID = 1l;
 	private long fid; // required
 	private String dbName; // required
 	private String tableName; // required
@@ -49,10 +49,13 @@ public class SFileImage implements Serializable{
 	public static SFileImage generateSFileImage(SFile sf)
 	{
 		List<String> sflkeys = new ArrayList<String>();
-		for(int i = 0;i<sf.getLocations().size();i++)
+		if(sf.getLocations() != null)
 		{
-			SFileLocation sfl = sf.getLocations().get(i);
-			sflkeys.add(sfl.getLocation()+"_"+sfl.getDevid());
+			for(int i = 0;i<sf.getLocations().size();i++)
+			{
+				SFileLocation sfl = sf.getLocations().get(i);
+				sflkeys.add(sfl.getLocation()+"_"+sfl.getDevid());
+			}
 		}
 		return new SFileImage(sf.getFid(),sf.getDbName(),sf.getTableName()
 				,sf.getStore_status(),sf.getRep_nr(),sf.getDigest(),sf.getRecord_nr()

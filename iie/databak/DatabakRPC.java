@@ -5,6 +5,7 @@ import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 
 import org.apache.hadoop.hive.metastore.api.SFile;
+import org.apache.hadoop.hive.metastore.api.Table;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
@@ -34,5 +35,11 @@ public class DatabakRPC extends UnicastRemoteObject implements IDatabakRPC {
 		}
 		return null;
 	}
+	@Override
+	public Table getTable(String dbname, String tablename)
+			throws RemoteException {
+		return null;
+	}
+	
 
 }
