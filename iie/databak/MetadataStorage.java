@@ -16,7 +16,6 @@ import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.GlobalSchema;
 import org.apache.hadoop.hive.metastore.api.Index;
-import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.NodeGroup;
@@ -58,154 +57,205 @@ public class MetadataStorage {
 		
 	}
 
-	public int handleMsg(DDLMsg msg) {
-		try {
-			if(msClient == null)
-				msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
-		} catch (MetaException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+	public int handleMsg(DDLMsg msg) throws JedisConnectionException, IOException, NoSuchObjectException, TException {
+		if(msClient == null)
+			msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
+		
 		int eventid = (int) msg.getEvent_id();
 //		System.out.println("handler msg id:"+eventid);
-		try {
-			switch (eventid) {
-			
-				case MSGType.MSG_NEW_DATABESE: 
-				case MSGType.MSG_ALTER_DATABESE:
-				case MSGType.MSG_ALTER_DATABESE_PARAM:
-				{
-					String dbName = (String) msg.getMsg_data().get("db_name");
+		switch (eventid) {
+			case MSGType.MSG_NEW_DATABESE: 
+			case MSGType.MSG_ALTER_DATABESE:
+			case MSGType.MSG_ALTER_DATABESE_PARAM:
+			{
+				String dbName = (String) msg.getMsg_data().get("db_name");
+				try{
 					Database db = msClient.client.getDatabase(dbName);
 					writeObject(ObjectType.DATABASE, dbName, db);
-					break;
-					
+				}catch(NoSuchObjectException e ){
+					e.printStackTrace();
 				}
-				case MSGType.MSG_DROP_DATABESE:
+				break;
+				
+			}
+			case MSGType.MSG_DROP_DATABESE:
+			{
+				String dbname = (String) msg.getMsg_data().get("db_name");
+				removeObject(ObjectType.DATABASE, dbname);
+				break;
+			}
+			case MSGType.MSG_ALT_TALBE_NAME:
+			{
+				String dbname = (String) msg.getMsg_data().get("db_name");
+				String tablename = (String) msg.getMsg_data().get("table_name");
+				String old_tablename = (String) msg.getMsg_data().get("old_table_name");
+				Table t = msClient.client.getTable(dbname, tablename);
+				//rm old, put new
+				break;
+			}
+			case MSGType.MSG_NEW_TALBE:
+			case MSGType.MSG_ALT_TALBE_DISTRIBUTE:
+			case MSGType.MSG_ALT_TALBE_PARTITIONING:
+			case MSGType.MSG_ALT_TABLE_SPLITKEYS:
+			case MSGType.MSG_ALT_TALBE_DEL_COL:
+			case MSGType.MSG_ALT_TALBE_ADD_COL:
+			case MSGType.MSG_ALT_TALBE_ALT_COL_NAME:
+			case MSGType.MSG_ALT_TALBE_ALT_COL_TYPE:
+			case MSGType.MSG_ALT_TABLE_PARAM:
+			{
+				String dbname = (String) msg.getMsg_data().get("db_name");
+				String tablename = (String) msg.getMsg_data().get("table_name");
+//					msClient.client.getTable(dbname, tablename);
+				break;
+			}
+			case MSGType.MSG_DROP_TABLE:
+			{
+				
+				break;
+			}
+			
+			case MSGType.MSG_REP_FILE_CHANGE:
+			case MSGType.MSG_STA_FILE_CHANGE:
+			case MSGType.MSG_REP_FILE_ONOFF:
+			case MSGType.MSG_CREATE_FILE:
+			{
+				long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
+				SFile sf = null;
+				try{
+					sf = msClient.client.get_file_by_id(fid);
+				}catch(FileOperationException e)
 				{
-					String dbname = (String) msg.getMsg_data().get("db_name");
-					removeObject(ObjectType.DATABASE, dbname);
-					break;
+					//Can not find SFile by FID ...
+					System.out.println(e.getMessage());
+					if(sf == null)
+						break;
 				}
-				case MSGType.MSG_ALT_TALBE_NAME:
+				SFileImage sfi = SFileImage.generateSFileImage(sf);
+				sFileHm.put(fid+"", sf);
+				writeObject(ObjectType.SFILE, fid+"", sfi);
+				for(int i = 0;i<sfi.getSflkeys().size();i++)
 				{
-					String dbname = (String) msg.getMsg_data().get("db_name");
-					String tablename = (String) msg.getMsg_data().get("table_name");
-					String old_tablename = (String) msg.getMsg_data().get("old_table_name");
-					Table t = msClient.client.getTable(dbname, tablename);
-					//rm old, put new
-					break;
-				}
-				case MSGType.MSG_NEW_TALBE:
-				case MSGType.MSG_ALT_TALBE_DISTRIBUTE:
-				case MSGType.MSG_ALT_TALBE_PARTITIONING:
-				case MSGType.MSG_ALT_TABLE_SPLITKEYS:
-				case MSGType.MSG_ALT_TALBE_DEL_COL:
-				case MSGType.MSG_ALT_TALBE_ADD_COL:
-				case MSGType.MSG_ALT_TALBE_ALT_COL_NAME:
-				case MSGType.MSG_ALT_TALBE_ALT_COL_TYPE:
-				case MSGType.MSG_ALT_TABLE_PARAM:
-				{
-					String dbname = (String) msg.getMsg_data().get("db_name");
-					String tablename = (String) msg.getMsg_data().get("table_name");
-					//tablename,dbname  or dbname ,tablename  
-//					msClient.client.getTable(arg0, arg1)
-					break;
-				}
-				case MSGType.MSG_DROP_TABLE:
-				{
-					
-					break;
+					writeObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i), sf.getLocations().get(i));
 				}
 				
-				case MSGType.MSG_REP_FILE_CHANGE:
-				case MSGType.MSG_STA_FILE_CHANGE:
-				case MSGType.MSG_REP_FILE_ONOFF:
-				case MSGType.MSG_CREATE_FILE:
+				break;
+			}
+			//在删除文件时，会在之前发几个1307,然后才是4002
+			case MSGType.MSG_DEL_FILE:
+			{
+				long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
+				SFile sf = sFileHm.get(fid+"");
+				if(sf != null)
 				{
-					long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
-					SFile sf = null;
-					try{
-						sf = msClient.client.get_file_by_id(fid);
-					}catch(FileOperationException e)
+					for(SFileLocation sfl : sf.getLocations())
 					{
-						//Can not find SFile by FID ...
-						System.out.println(e.getMessage());
-						if(sf == null)
-							break;
+						String key = sfl.getLocation()+"_"+sfl.getDevid();
+						removeObject(ObjectType.SFILELOCATION, key);
 					}
-					SFileImage sfi = SFileImage.generateSFileImage(sf);
-					sFileHm.put(fid+"", sf);
-					writeObject(ObjectType.SFILE, fid+"", sfi);
-					for(int i = 0;i<sfi.getSflkeys().size();i++)
-					{
-						writeObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i), sf.getLocations().get(i));
-					}
-					
-					break;
+					removeObject(ObjectType.SFILE, fid+"");
 				}
-				//在删除文件时，会在之前发几个1307,然后才是4002
-				case MSGType.MSG_DEL_FILE:
-				{
-					long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
-					SFile sf = sFileHm.get(fid+"");
-					if(sf != null)
-					{
-						for(SFileLocation sfl : sf.getLocations())
-						{
-							String key = sfl.getLocation()+"_"+sfl.getDevid();
-							removeObject(ObjectType.SFILELOCATION, key);
-						}
-						removeObject(ObjectType.SFILE, fid+"");
-					}
-					break;
-				}
-				
-				case MSGType.MSG_NEW_INDEX:
-				case MSGType.MSG_ALT_INDEX:
-				case MSGType.MSG_ALT_INDEX_PARAM:
-				{
+				break;
+			}
+			
+			case MSGType.MSG_NEW_INDEX:
+			case MSGType.MSG_ALT_INDEX:
+			case MSGType.MSG_ALT_INDEX_PARAM:
+			{
 //					String 
 //					msClient.client.getIndex(arg0, arg1, arg2)
-					break;
-				}
-				case MSGType.MSG_DEL_INDEX:
-				{
-					break;
-				}
-				
-				case MSGType.MSG_NEW_NODE:
-				case MSGType.MSG_FAIL_NODE:
-				case MSGType.MSG_BACK_NODE:
-				{
-					String nodename = (String)msg.getMsg_data().get("node_name");
-					Node node = msClient.client.get_node(nodename);
-					writeObject(ObjectType.NODE, nodename, node);
-					break;
-				}
-				
-				case MSGType.MSG_DEL_NODE:
-				{
-					String nodename = (String)msg.getMsg_data().get("node_name");
-					removeObject(ObjectType.NODE, nodename);
-					break;
-				}
+				break;
 			}
-		} catch (NoSuchObjectException e) {
-			e.printStackTrace();
-			return 0;
-		} catch (MetaException e) {
-			e.printStackTrace();
-			return 0;
-		} catch (TException e) {
-			e.printStackTrace();
-			return 0;
-		} catch (JedisConnectionException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			case MSGType.MSG_DEL_INDEX:
+			{
+				break;
+			}
+			
+			case MSGType.MSG_NEW_NODE:
+			case MSGType.MSG_FAIL_NODE:
+			case MSGType.MSG_BACK_NODE:
+			{
+				String nodename = (String)msg.getMsg_data().get("node_name");
+				Node node = msClient.client.get_node(nodename);
+				writeObject(ObjectType.NODE, nodename, node);
+				break;
+			}
+			
+			case MSGType.MSG_DEL_NODE:
+			{
+				String nodename = (String)msg.getMsg_data().get("node_name");
+				removeObject(ObjectType.NODE, nodename);
+				break;
+			}
+			
+			case MSGType.MSG_CREATE_SCHEMA:
+			case MSGType.MSG_MODIFY_SCHEMA_DEL_COL:
+			case MSGType.MSG_MODIFY_SCHEMA_ADD_COL:
+			case MSGType.MSG_MODIFY_SCHEMA_ALT_COL_NAME:
+			case MSGType.MSG_MODIFY_SCHEMA_ALT_COL_TYPE:
+			case MSGType.MSG_MODIFY_SCHEMA_PARAM:
+			{
+				String schema_name = (String)msg.getMsg_data().get("schema_name");
+				try{
+					GlobalSchema s = msClient.client.getSchemaByName(schema_name);
+					writeObject(ObjectType.GLOBALSCHEMA, schema_name, s);
+				}catch(NoSuchObjectException e){
+					e.printStackTrace();
+				}
+				
+				break;
+			}
+			
+			case MSGType.MSG_MODIFY_SCHEMA_NAME:
+			{
+				String old_schema_name = (String)msg.getMsg_data().get("old_schema_name");
+				String schema_name = (String)msg.getMsg_data().get("schema_name");
+				GlobalSchema gs = globalSchemaHm.get(old_schema_name);
+				if(gs != null)
+				{
+					removeObject(ObjectType.GLOBALSCHEMA, old_schema_name);
+					writeObject(ObjectType.GLOBALSCHEMA, schema_name, gs);
+				}
+				else{
+					try{
+						GlobalSchema ngs = msClient.client.getSchemaByName(schema_name);
+						writeObject(ObjectType.GLOBALSCHEMA, schema_name, ngs);
+					}
+					catch(NoSuchObjectException e)
+					{
+						e.printStackTrace();
+					}
+				}
+				break;
+			}
+			
+			case MSGType.MSG_DEL_SCHEMA:
+			{
+				String schema_name = (String)msg.getMsg_data().get("schema_name");
+				removeObject(ObjectType.GLOBALSCHEMA, schema_name);
+				break;
+			}
+			
+			//what can I do...
+		    case MSGType.MSG_GRANT_GLOBAL:
+		    case MSGType.MSG_GRANT_DB:
+		    case MSGType.MSG_GRANT_TABLE:
+		    case MSGType.MSG_GRANT_SCHEMA:
+		    case MSGType.MSG_GRANT_PARTITION:
+		    case MSGType.MSG_GRANT_PARTITION_COLUMN:
+		    case MSGType.MSG_GRANT_TABLE_COLUMN:
+	
+		    case MSGType.MSG_REVOKE_GLOBAL:
+		    case MSGType.MSG_REVOKE_DB:
+		    case MSGType.MSG_REVOKE_TABLE:
+		    case MSGType.MSG_REVOKE_PARTITION:
+		    case MSGType.MSG_REVOKE_SCHEMA:
+		    case MSGType.MSG_REVOKE_PARTITION_COLUMN:
+		    case MSGType.MSG_REVOKE_TABLE_COLUMN:
+		    {
+//		    	msClient.client.
+		    	break;
+		    }
+			
 		}
 		return 1;
 	}
@@ -228,12 +278,12 @@ public class MetadataStorage {
 			sflHm.put(field, (SFileLocation)o);
 		if(key.equals(ObjectType.INDEX))
 			indexHm.put(field, (Index)o);
-		if(key.equals(ObjectType.NODE))
-			nodeHm.put(field, (Node)o);
-		if(key.equals(ObjectType.NODEGROUP))
-			nodeGroupHm.put(field, (NodeGroup)o);
-		if(key.equals(ObjectType.SCHEMA))
-			schemaHm.put(field, (Schema)o);
+//		if(key.equals(ObjectType.NODE))
+//			nodeHm.put(field, (Node)o);
+//		if(key.equals(ObjectType.NODEGROUP))
+//			nodeGroupHm.put(field, (NodeGroup)o);
+//		if(key.equals(ObjectType.GLOBALSCHEMA))
+			globalSchemaHm.put(field, (GlobalSchema)o);
 		if(key.equals(ObjectType.PRIVILEGE))
 			privilegeBagHm.put(field, (PrivilegeBag)o);
 		if(key.equals(ObjectType.PARTITION))
@@ -256,8 +306,8 @@ public class MetadataStorage {
 			o = nodeHm.get(field);
 		if(key.equals(ObjectType.NODEGROUP))
 			o = nodeGroupHm.get(field);
-		if(key.equals(ObjectType.SCHEMA))
-			o = schemaHm.get(field);
+		if(key.equals(ObjectType.GLOBALSCHEMA))
+			o = globalSchemaHm.get(field);
 		if(key.equals(ObjectType.PRIVILEGE))
 			o = privilegeBagHm.get(field);
 		if(key.equals(ObjectType.PARTITION))
@@ -315,8 +365,8 @@ public class MetadataStorage {
 			nodeHm.remove(field);
 		if(key.equals(ObjectType.NODEGROUP))
 			nodeGroupHm.remove(field);
-		if(key.equals(ObjectType.SCHEMA))
-			schemaHm.remove(field);
+		if(key.equals(ObjectType.GLOBALSCHEMA))
+			globalSchemaHm.remove(field);
 		if(key.equals(ObjectType.PRIVILEGE))
 			privilegeBagHm.remove(field);
 		if(key.equals(ObjectType.PARTITION))

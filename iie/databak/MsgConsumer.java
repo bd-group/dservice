@@ -3,14 +3,7 @@ package iie.databak;
 import iie.databak.DatabakConf.RedisInstance;
 import iie.databak.DatabakConf.RedisMode;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.MalformedURLException;
-import java.rmi.AlreadyBoundException;
-import java.rmi.Naming;
-import java.rmi.RMISecurityManager;
+import java.io.IOException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -18,11 +11,14 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
+import org.apache.thrift.TException;
 
-import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 import com.taobao.metamorphosis.Message;
 import com.taobao.metamorphosis.client.MessageSessionFactory;
@@ -81,6 +77,7 @@ public class MsgConsumer {
 	final ZKConfig zkConfig = new ZKConfig();
 	private DatabakConf conf;
 	private MetadataStorage ms;
+	private static ConcurrentLinkedQueue<DDLMsg> failedq = new ConcurrentLinkedQueue<DDLMsg>();
 	
 	public MsgConsumer(DatabakConf conf) {
 		this.conf = conf;
@@ -110,6 +107,7 @@ public class MsgConsumer {
 			@Override
 			public void recieveMessages(final Message message) {
 				String data = new String(message.getData());
+				int time = 0;
 				System.out.println(data);
 //				try {
 //					Thread.sleep(10*1000);
@@ -118,7 +116,55 @@ public class MsgConsumer {
 //					e.printStackTrace();
 //				}
 				DDLMsg msg = DDLMsg.fromJson(data);
-				ms.handleMsg(msg);
+				while(time < 3)
+				{
+					if(time >= 3)
+					{
+						failedq.add(msg);
+						System.out.println("handle msg failed, add msg into failed queue: "+msg.getMsg_id());
+						break;
+					}
+					try{
+						ms.handleMsg(msg);
+						if(failedq.size() > 0)
+						{
+							msg = failedq.poll();
+							System.out.println("handle msg in failed queue: "+msg.getMsg_id());
+							time = 0;
+						}
+						else 		//能到else一定是handlemsg没抛异常成功返回，而failedq是空的
+							break;
+					} catch (JedisConnectionException e) {
+						time++;
+						try {
+							Thread.sleep(1*1000);
+						} catch (InterruptedException e2) {
+						}
+						e.printStackTrace();
+					} catch (IOException e) {
+						time++;
+						try {
+							Thread.sleep(1*1000);
+						} catch (InterruptedException e2) {
+						}
+						e.printStackTrace();
+					} catch (NoSuchObjectException e) {
+						time++;
+						try {
+							Thread.sleep(1*1000);
+						} catch (InterruptedException e2) {
+						}
+						e.printStackTrace();
+					} catch (TException e) {
+						time++;
+						try {
+							Thread.sleep(1*1000);
+						} catch (InterruptedException e2) {
+						}
+						e.printStackTrace();
+					}
+				}
+					
 				
 			}
 
