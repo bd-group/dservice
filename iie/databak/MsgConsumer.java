@@ -162,6 +162,13 @@ public class MsgConsumer {
 						} catch (InterruptedException e2) {
 						}
 						e.printStackTrace();
+					} catch (ClassNotFoundException e) {
+						time++;
+						try {
+							Thread.sleep(1*1000);
+						} catch (InterruptedException e2) {
+						}
+						e.printStackTrace();
 					}
 				}
 					

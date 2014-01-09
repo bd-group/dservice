@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.GlobalSchema;
 import org.apache.hadoop.hive.metastore.api.Index;
@@ -48,7 +49,6 @@ public class MetadataStorage {
 	private static ConcurrentHashMap<String, Table> tableHm = new ConcurrentHashMap<String, Table>();
 	private static Map<String, SFile> sFileHm = new LRUMap<String, SFile>(1000);
 	private static ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
-	private static ConcurrentHashMap<String, Schema> schemaHm = new ConcurrentHashMap<String, Schema>();
 	private static ConcurrentHashMap<String, SFileLocation> sflHm = new ConcurrentHashMap<String, SFileLocation>();
 	
 	public MetadataStorage(DatabakConf conf) {
@@ -57,7 +57,7 @@ public class MetadataStorage {
 		
 	}
 
-	public int handleMsg(DDLMsg msg) throws JedisConnectionException, IOException, NoSuchObjectException, TException {
+	public int handleMsg(DDLMsg msg) throws JedisConnectionException, IOException, NoSuchObjectException, TException, ClassNotFoundException {
 		if(msClient == null)
 			msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
 		
@@ -86,13 +86,21 @@ public class MetadataStorage {
 			}
 			case MSGType.MSG_ALT_TALBE_NAME:
 			{
-				String dbname = (String) msg.getMsg_data().get("db_name");
-				String tablename = (String) msg.getMsg_data().get("table_name");
-				String old_tablename = (String) msg.getMsg_data().get("old_table_name");
-				Table t = msClient.client.getTable(dbname, tablename);
-				//rm old, put new
+				String dbName = (String) msg.getMsg_data().get("db_name");
+				String tableName = (String) msg.getMsg_data().get("table_name");
+				String oldTableName = (String) msg.getMsg_data().get("old_table_name");
+				String oldKey = dbName + "." + oldTableName;
+				String newKey = dbName + "." + tableName;
+				if(tableHm.remove(oldKey) != null){
+					tableHm.remove(oldKey);
+					removeObject(ObjectType.TABLE, oldKey);
+				}
+				Table tbl = msClient.client.getTable(dbName, tableName);
+				TableImage ti = TableImage.generateTableImage(tbl);
+				writeObject(ObjectType.TABLE, newKey, ti);
 				break;
 			}
+			
 			case MSGType.MSG_NEW_TALBE:
 			case MSGType.MSG_ALT_TALBE_DISTRIBUTE:
 			case MSGType.MSG_ALT_TALBE_PARTITIONING:
@@ -103,14 +111,43 @@ public class MetadataStorage {
 			case MSGType.MSG_ALT_TALBE_ALT_COL_TYPE:
 			case MSGType.MSG_ALT_TABLE_PARAM:
 			{
-				String dbname = (String) msg.getMsg_data().get("db_name");
-				String tablename = (String) msg.getMsg_data().get("table_name");
-//					msClient.client.getTable(dbname, tablename);
+				String dbName = (String) msg.getMsg_data().get("db_name");
+				String tableName = (String) msg.getMsg_data().get("table_name");
+				String key = dbName + "." + tableName;
+				Table tbl = msClient.client.getTable(dbName, tableName);
+				TableImage ti = TableImage.generateTableImage(tbl);
+				tableHm.put(key, tbl);
+				writeObject(ObjectType.TABLE, key, ti);
+				for(int i = 0; i < ti.getNgKeys().size();i++){
+					String action = (String) msg.getMsg_data().get("action");
+					if(!action.equals("delng")){
+						if(!nodeGroupHm.containsKey(ti.getNgKeys().get(i))){
+							List<String> ngNames = new ArrayList<String>();
+							ngNames.add(ti.getNgKeys().get(i));
+							List<NodeGroup> ngs = msClient.client.listNodeGroups(ngNames);
+							NodeGroup ng = ngs.get(0);
+							NodeGroupImage ngi = NodeGroupImage.generateNodeGroupImage(ng);
+							writeObject(ObjectType.NODEGROUP, ng.getNode_group_name(), ngi);
+							for(int j = 0; j<ngi.getNodeKeys().size();j++){
+								if(!nodeHm.containsKey(ngi.getNodeKeys().get(j))){
+									Node node = msClient.client.get_node(ngi.getNodeKeys().get(j));
+									writeObject(ObjectType.NODE, ngi.getNodeKeys().get(j), node);
+								}
+							}
+						}
+					}
+				}
 				break;
 			}
 			case MSGType.MSG_DROP_TABLE:
 			{
-				
+				String dbName = (String) msg.getMsg_data().get("db_name");
+				String tableName = (String) msg.getMsg_data().get("table_name");
+				String key = dbName + "." + tableName;
+				if(tableHm.remove(key) != null){
+					tableHm.remove(key);
+					removeObject(ObjectType.TABLE, key);
+				}
 				break;
 			}
 			
@@ -144,7 +181,7 @@ public class MetadataStorage {
 			case MSGType.MSG_DEL_FILE:
 			{
 				long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
-				SFile sf = sFileHm.get(fid+"");
+				SFile sf = (SFile)readObject(ObjectType.SFILE, fid+"");
 				if(sf != null)
 				{
 					for(SFileLocation sfl : sf.getLocations())
@@ -161,12 +198,23 @@ public class MetadataStorage {
 			case MSGType.MSG_ALT_INDEX:
 			case MSGType.MSG_ALT_INDEX_PARAM:
 			{
-//					String 
-//					msClient.client.getIndex(arg0, arg1, arg2)
+				String dbName = (String)msg.getMsg_data().get("db_name");
+				String tblName = (String)msg.getMsg_data().get("table_name");
+				String indexName = (String)msg.getMsg_data().get("index_name");
+				Index ind = msClient.client.getIndex(dbName, tblName, indexName);
+				String key = dbName + "." + tblName + "." + indexName;
+				writeObject(ObjectType.INDEX, key, ind);
 				break;
 			}
 			case MSGType.MSG_DEL_INDEX:
 			{
+				String dbName = (String)msg.getMsg_data().get("db_name");
+				String tblName = (String)msg.getMsg_data().get("table_name");
+				String indexName = (String)msg.getMsg_data().get("index_name");
+				//Index ind = msClient.client.getIndex(dbName, tblName, indexName);
+				String key = dbName + "." + tblName + "." + indexName;
+				if(indexHm.remove(key) != null)
+					removeObject(ObjectType.INDEX, key);
 				break;
 			}
 			
@@ -224,8 +272,8 @@ public class MetadataStorage {
 					{
 						e.printStackTrace();
 					}
+				
 				}
-				break;
 			}
 			
 			case MSGType.MSG_DEL_SCHEMA:
@@ -234,6 +282,33 @@ public class MetadataStorage {
 				removeObject(ObjectType.GLOBALSCHEMA, schema_name);
 				break;
 			}
+			
+			case MSGType.MSG_NEW_NODEGROUP:
+			{
+				String nodeGroupName = (String)msg.getMsg_data().get("nodegroup_name");
+				List<String> ngNames = new ArrayList<String>();
+				ngNames.add(nodeGroupName);
+				List<NodeGroup> ngs = msClient.client.listNodeGroups(ngNames);
+				NodeGroup ng = ngs.get(0);
+				NodeGroupImage ngi = NodeGroupImage.generateNodeGroupImage(ng);
+				nodeGroupHm.put(ng.getNode_group_name(), ng);
+				writeObject(ObjectType.NODEGROUP, ng.getNode_group_name(), ngi);
+				for(int i = 0; i<ngi.getNodeKeys().size();i++){
+					if(!nodeHm.containsKey(ngi.getNodeKeys().get(i))){
+						Node node = msClient.client.get_node(ngi.getNodeKeys().get(i));
+						writeObject(ObjectType.NODE, ngi.getNodeKeys().get(i), node);
+					}
+				}
+				break;
+			}
+			//case MSGType.MSG_ALTER_NODEGROUP:
+			case MSGType.MSG_DEL_NODEGROUP:{
+				String nodeGroupName = (String)msg.getMsg_data().get("nodegroup_name");
+				nodeGroupHm.remove(nodeGroupName);
+				removeObject(ObjectType.NODEGROUP, nodeGroupName);
+				break;
+			}
+			
 			
 			//what can I do...
 		    case MSGType.MSG_GRANT_GLOBAL:
@@ -269,8 +344,8 @@ public class MetadataStorage {
 		
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.put(field, (Database)o);
-		if(key.equals(ObjectType.TABLE))
-			tableHm.put(field, (Table)o);
+//		if(key.equals(ObjectType.TABLE))
+//			tableHm.put(field, (Table)o);
 		//对于sfile，函数参数是sfileimage
 //		if(key.equals(ObjectType.SFILE))
 //			sFileHm.put(field, (SFile)o);
@@ -353,8 +428,8 @@ public class MetadataStorage {
 	{
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
-		if(key.equals(ObjectType.TABLE))
-			tableHm.remove(field);
+//		if(key.equals(ObjectType.TABLE))
+//			tableHm.remove(field);
 		if(key.equals(ObjectType.SFILE))
 			sFileHm.remove(field);
 		if(key.equals(ObjectType.SFILELOCATION))
