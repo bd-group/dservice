@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-01-08 19:14:59 macan>
+ * Time-stamp: <2014-01-09 21:26:00 macan>
  *
  */
 
@@ -18,11 +18,14 @@ struct dservice_conf
     char *mpfilter[MAX_FILTERS];
     int sdfilter_len;
     int mpfilter_len;
+    int dscan_interval;         /* dev scan interval */
     int hb_interval;
     int mr_interval;
     int fl_interval; // fail interval
     int fl_max_retry;
+    int max_keeping_days;
     char *addr_filter;
+    char *data_path;
 };
 
 static struct dservice_conf g_ds_conf = {
@@ -35,11 +38,24 @@ static struct dservice_conf g_ds_conf = {
         "/boot",
     },
     .mpfilter_len = 2,
+    .dscan_interval = 10,
     .hb_interval = 5,
     .mr_interval = 10,
     .fl_interval = 3600,
     .fl_max_retry = 100,
+    .max_keeping_days = 30,
     .addr_filter = NULL,
+    /* FIXIME: change it to data */
+    .data_path = "tmp",
+};
+
+struct dev_scan_context
+{
+    char *devid;
+    int level;
+
+    int prob;
+    int nr;
 };
 
 static sem_t g_timer_sem;
@@ -47,17 +63,20 @@ static sem_t g_main_sem;
 static sem_t g_rep_sem;
 static sem_t g_del_sem;
 static sem_t g_async_recv_sem;
+static sem_t g_dscan_sem;
 
 static pthread_t g_timer_thread = 0;
 static pthread_t g_rep_thread = 0;
 static pthread_t g_del_thread = 0;
 static pthread_t g_async_recv_thread = 0;
+static pthread_t g_dscan_thread = 0;
 
 static int g_timer_thread_stop = 0;
 static int g_rep_thread_stop = 0;
 static int g_del_thread_stop = 0;
 static int g_main_thread_stop = 0;
 static int g_async_recv_thread_stop = 0;
+static int g_dscan_thread_stop = 0;
 
 static char *g_devtype = NULL;
 
@@ -74,11 +93,14 @@ static xlock_t g_rep_lock;
 static LIST_HEAD(g_rep);
 static xlock_t g_del_lock;
 static LIST_HEAD(g_del);
+static xlock_t g_verify_lock;
+static LIST_HEAD(g_verify);
 
 #define NORMAL_HB_MODE          0
 #define QUICK_HB_MODE           1
 
 static int g_rep_mkdir_on_nosuchfod = 0;
+static int g_dev_scan_prob = 100;
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -383,6 +405,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
                                        g_ds_conf.mpfilter[i]) == 0) {
                                 // filtered
                                 *nr -= 1;
+                                filtered = 1;
                                 break;
                             }
                         }
@@ -1112,6 +1135,56 @@ int handle_commands(char *recv)
             sem_post(&g_del_sem);
 
             has_cmds = 1;
+        } else if (strncmp(line, "+VYR:", 5) == 0) {
+            /* this means we should check on these files. If they existed too
+             * long (10 days), delete it now */
+            char *p = line + 5, *sp;
+            char fpath[PATH_MAX];
+            struct stat buf;
+            int i, len = 0, err;
+
+            /* parse the : seperated string */
+            for (i = 0; ++i; p = NULL) {
+                p = strtok_r(p, ":", &sp);
+                if (!p)
+                    break;
+                hvfs_info(lib, "GOT %d %s\n", i, p);
+                switch (i) {
+                case 1:
+                    /* devid */
+                    break;
+                case 2:
+                    /* mp */
+                    len += sprintf(fpath + len, "%s/", p);
+                    break;
+                case 3:
+                    /* location */
+                    len += sprintf(fpath + len, "%s", p);
+                    break;
+                }
+            }
+            err = stat(fpath, &buf);
+            if (err) {
+                hvfs_err(lib, "stat(%s) failed w/ %s(%d)\n",
+                         fpath, strerror(errno), errno);
+            } else {
+                if (time(NULL) - buf.st_mtime > 
+                    g_ds_conf.max_keeping_days * 86400) {
+                    char cmd[8192];
+                    FILE *f;
+
+                    hvfs_info(lib, "Verify '%s' time range [OK], delete it\n",
+                              fpath);
+                    sprintf(cmd, "rm -rf %s", fpath);
+                    f = popen(cmd, "r");
+                    if (f == NULL) {
+                        hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                                 cmd, strerror(errno));
+                    } else {
+                        pclose(f);
+                    }
+                }
+            }
         }
     }
 
@@ -1138,11 +1211,20 @@ static void __free_del_args(struct del_args *da)
     xfree(da->target.location);
 }
 
+static void __free_verify_args(struct verify_args *va)
+{
+    xfree(va->target.node);
+    xfree(va->target.mp);
+    xfree(va->target.devid);
+    xfree(va->target.location);
+}
+
 int __do_heartbeat()
 {
     char query[64 * 1024];
     struct rep_args *pos, *n;
     struct del_args *pos2, *n2;
+    struct verify_args *pos3, *n3;
     int err = 0, nr2 = 0, nr_max = 10;
 
     struct disk_part_info *dpi = NULL;
@@ -1238,6 +1320,24 @@ int __do_heartbeat()
         }
     }
     xlock_unlock(&g_del_lock);
+
+    xlock_lock(&g_verify_lock);
+    list_for_each_entry_safe(pos3, n3, &g_verify, list) {
+        if (nr2 >= nr_max) {
+            mode = QUICK_HB_MODE;
+            break;
+        }
+        hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d\n",
+                  pos3->target.devid, pos3->target.location, pos3->level);
+        len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d\n",
+                       g_hostname, pos3->target.devid,
+                       pos3->target.location, pos3->level);
+        list_del(&pos3->list);
+        __free_verify_args(pos3);
+        xfree(pos3);
+        nr2++;
+    }
+    xlock_unlock(&g_verify_lock);
     
     err = __dgram_send(query);
     if (err) {
@@ -1303,6 +1403,7 @@ static void *__timer_thread_main(void *arg)
         /* trigger incomplete requests if they exists */
         sem_post(&g_rep_sem);
         sem_post(&g_del_sem);
+        sem_post(&g_dscan_sem);
     }
 
     hvfs_debug(lib, "Hooo, I am exiting...\n");
@@ -1767,10 +1868,114 @@ static void *__rep_thread_main(void *args)
     pthread_exit(0);
 }
 
-int __device_scan()
+typedef void (*__dir_iterate_func)(char *path, char *name, int depth, void *data);
+
+static inline
+int __ignore_self_parent(char *dir)
+{
+    if ((strcmp(dir, ".") == 0) ||
+        (strcmp(dir, "..") == 0)) {
+        return 0;
+    }
+    return 1;
+}
+
+void __print_targets(char *path, char *name, int depth, void *data)
+{
+    char tname[PATH_MAX];
+
+    sprintf(tname, "%s/%s", path, name);
+    hvfs_info(lib, " -> %s\n", tname);
+}
+
+void __select_target(char *path, char *name, int depth, void *data)
+{
+    struct dev_scan_context *dsc = data;
+    struct verify_args *va;
+    char tname[PATH_MAX];
+
+    if (random() % dsc->prob == 0) {
+        sprintf(tname, "%s/%s", path, name);
+        va = xzalloc(sizeof(*va));
+        if (!va) {
+            hvfs_err(lib, "xzalloc() verify_args failed, no memory\n");
+            return;
+        }
+        INIT_LIST_HEAD(&va->list);
+        va->target.devid = strdup(dsc->devid);
+        va->target.location = strdup(tname);
+        va->level = dsc->level;
+    
+        xlock_lock(&g_verify_lock);
+        list_add_tail(&va->list, &g_verify);
+        xlock_unlock(&g_verify_lock);
+    }
+}
+
+static int __dir_iterate(char *parent, char *name, __dir_iterate_func func,
+                         int depth, int max_depth, void *data)
+{
+    char path[PATH_MAX];
+    struct dirent entry;
+    struct dirent *result;
+    DIR *d;
+    int err = 0;
+
+    if (name)
+        sprintf(path, "%s/%s", parent, name);
+    else
+        sprintf(path, "%s", parent);
+    do {
+        int len = strlen(path);
+
+        if (len == 1)
+            break;
+        if (path[len - 1] == '/') {
+            path[len - 1] = '\0';
+        } else
+            break;
+    } while (1);
+
+    d = opendir(path);
+    if (!d) {
+        hvfs_debug(lib, "opendir(%s) failed w/ %s(%d)\n",
+                   path, strerror(errno), errno);
+        goto out;
+    }
+
+    for (err = readdir_r(d, &entry, &result);
+         err == 0 && result != NULL;
+         err = readdir_r(d, &entry, &result)) {
+        /* ok, we should iterate over the dirs */
+        if (entry.d_type == DT_DIR && __ignore_self_parent(entry.d_name)) {
+            if (depth >= max_depth) {
+                /* call the function now */
+                func(path, entry.d_name, depth, data);
+            } else {
+                err = __dir_iterate(path, entry.d_name, func, depth + 1, 
+                                    max_depth, data);
+                if (err) {
+                    hvfs_err(lib, "Dir %s: iterate to func failed w/ %d\n",
+                             entry.d_name, err);
+                }
+            }
+        }
+    }
+    closedir(d);
+
+out:
+    return err;
+}
+
+static int __device_scan(int prob, int level)
 {
     struct disk_part_info *dpi = NULL;
-    int nr = 0, err = 0;
+    struct dev_scan_context dsc = {
+        .level = level,
+        .prob = prob,
+        .nr = 0,
+    };
+    int nr = 0, err = 0, i;
     
     if (!g_specify_dev) {
         err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
@@ -1785,8 +1990,63 @@ int __device_scan()
                          "any NRs\n", strerror(-err), err);
         }
     }
+
+    if (!dpi)
+        goto out;
+
+    /* for each device, scan mount point with 'data_path' */
+    for (i = 0; i < nr; i++) {
+        char data_root[NAME_MAX];
+
+        dsc.devid = dpi[i].dev_sn;
+        sprintf(data_root, "%s/%s", dpi[i].mount_path,
+                g_ds_conf.data_path);
+        hvfs_info(lib, "Scanning DP '%s' on device %s\n",
+                  data_root, dpi[i].dev_sn);
+        __dir_iterate(data_root, NULL, __select_target, 0, 2, &dsc);
+    }
+
+    dpi_free(dpi, nr);
+    
 out:
     return err;
+}
+
+static void *__dscan_thread_main(void *arg)
+{
+    static time_t last = 0;
+    sigset_t set;
+    time_t cur;
+    int err;
+
+    /* first, let us block the SIGALRM */
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
+                                             * errs */
+    /* then, we loop for the timer events */
+    while (!g_dscan_thread_stop) {
+        err = sem_wait(&g_dscan_sem);
+        if (err) {
+            if (errno == EINTR)
+                continue;
+            hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
+        }
+
+        cur = time(NULL);
+        if (!last)
+            last = cur;
+        if (cur - last > g_ds_conf.dscan_interval) {
+            err = __device_scan(g_dev_scan_prob, VERIFY_LEVEL_EXIST);
+            if (err) {
+                hvfs_err(lib, "__device_scan() failed w/ %s\n", strerror(errno));
+            }
+            last = cur;
+        }
+    }
+
+    hvfs_debug(lib, "Hooo, I am exiting...\n");
+    pthread_exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -1806,10 +2066,11 @@ int main(int argc, char *argv[])
 #define GIT_SHA "master"
 #endif
 
+    srandom(time(NULL));
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -1821,6 +2082,8 @@ int main(int argc, char *argv[])
         {"devtype", required_argument, 0, 'T'},
         {"timeo", required_argument, 0, 'o'},
         {"iph", required_argument, 0, 'I'},
+        {"prob", required_argument, 0, 'b'},
+        {"mkd", required_argument, 0, 'M'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -1861,6 +2124,12 @@ int main(int argc, char *argv[])
         case 'I':
             g_ds_conf.addr_filter = strdup(optarg);
             break;
+        case 'b':
+            g_dev_scan_prob = atoi(optarg);
+            break;
+        case 'M':
+            g_ds_conf.max_keeping_days = atoi(optarg);
+            break;
         case 'f':
         {
             // parse the filter string, add them to g_ds_conf.sdfilter
@@ -1877,6 +2146,7 @@ int main(int argc, char *argv[])
                 g_ds_conf.sdfilter_len = i + 1;
                 hvfs_info(lib, "GOT NEW SD filter %d: %s\n", i, p);
             }
+            xfree(fstr);
             break;
         }
         case 'm':
@@ -1895,6 +2165,7 @@ int main(int argc, char *argv[])
                 g_ds_conf.mpfilter_len = i + 1;
                 hvfs_info(lib, "GOT NEW MP filter %d: %s\n", i, p);
             }
+            xfree(fstr);
             break;
         }
         default:
@@ -1917,14 +2188,35 @@ int main(int argc, char *argv[])
         hvfs_info(lib, "Get hostname as '%s'\n", g_hostname);
     }
 
+#if 0
     {
         char ip[NI_MAXHOST];
+        char query[65536];
+        struct verify_args *pos3, *n3;
+        int len = 0;
 
         memset(ip, 0, sizeof(ip));
         __convert_host_to_ip(g_hostname, ip);
         hvfs_info(lib, "TEST CONVERTION: host '%s' to ip '%s'\n", 
                   g_hostname, ip);
+        __device_scan(g_dev_scan_prob, VERIFY_LEVEL_EXIST);
+
+        xlock_lock(&g_verify_lock);
+        list_for_each_entry_safe(pos3, n3, &g_verify, list) {
+            hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d\n",
+                      pos3->target.devid, pos3->target.location, pos3->level);
+            len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d\n",
+                           g_hostname, pos3->target.devid,
+                           pos3->target.location, pos3->level);
+            list_del(&pos3->list);
+            __free_verify_args(pos3);
+            xfree(pos3);
+        }
+        xlock_unlock(&g_verify_lock);
+        
+        return 0;
     }
+#endif
 
     sem_init(&g_main_sem, 0, 0);
     sem_init(&g_rep_sem, 0, 0);
@@ -1998,6 +2290,15 @@ int main(int argc, char *argv[])
     }
     sem_post(&g_async_recv_sem);
 
+    /* setup dscan thread */
+    err = pthread_create(&g_dscan_thread, NULL, &__dscan_thread_main,
+                         NULL);
+    if (err) {
+        hvfs_err(lib, "Create DSCAN thread failed w/ %s\n", strerror(errno));
+        err = -errno;
+        goto out_dscan;
+    }
+
     get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
     di_free(di, nr);
     
@@ -2020,6 +2321,11 @@ int main(int argc, char *argv[])
     }
 
     /* exit other threads */
+    g_dscan_thread_stop = 1;
+    if (g_dscan_thread) {
+        sem_post(&g_dscan_sem);
+        pthread_join(g_dscan_thread, NULL);
+    }
     g_async_recv_thread_stop = 1;
     if (g_async_recv_thread) {
         sem_post(&g_async_recv_sem);
@@ -2045,6 +2351,7 @@ int main(int argc, char *argv[])
 
     hvfs_info(lib, "Main thread exiting ...\n");
 
+out_dscan:
 out_async_recv:
 out_del:
 out_rep:

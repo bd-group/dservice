@@ -375,6 +375,7 @@ public class MetaStoreClient {
 				}
 				sum = i + 1000;
 			}
+			cli.stop();
 			System.out.println("\rDone.");
 		}
 	}
@@ -1776,8 +1777,9 @@ public class MetaStoreClient {
 				long last_fetch = System.currentTimeMillis();
 				long last_got = 0;
 				
-				update_fmap(cli, 5, serverName, serverPort, fmap, 0, scrub_max, statfs2_getlen);
-				last_got = scrub_max / 5 * 5;
+				update_fmap(cli, 10, serverName, serverPort, fmap, 0, scrub_max, statfs2_getlen);
+				last_got = scrub_max / 10 * 10;
+				System.out.println("Get File Info upto FID " + last_got);
 				
 				while (true) {
 					Double ratio = 0.0;
@@ -1793,8 +1795,12 @@ public class MetaStoreClient {
 						} catch (Exception e) {
 							scrub_max = last_got;
 						}
-						update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
-						last_got = scrub_max;
+						if (scrub_max > last_got) {
+							update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
+							last_got = scrub_max;
+							System.out.println("Get File Info upto FID " + last_got);
+						}
+						last_fetch = System.currentTimeMillis();
 					}
 					try {
 						String dms = cli.client.getDMStatus();
@@ -1809,7 +1815,7 @@ public class MetaStoreClient {
 						}
 						System.out.println(" -> Current free ratio " + ratio + ", target ratio " + target_ratio);
 						if (target_ratio < ratio) {
-							sleepnr = (sleepnr * 2) % (60);
+							sleepnr = Math.min(sleepnr * 2, 60);
 							continue;
 						} else {
 							sleepnr = Math.max(sleepnr / 2, 10);
@@ -2074,6 +2080,7 @@ public class MetaStoreClient {
 								((double)sizeMap.get(e.getKey()) / e.getValue()) + " KB.");
 				}
 			}
+			
 			if (o.flag.equals("-statfs2")) {
 				// stat the file system by SplitValue
 				long end = 0;
