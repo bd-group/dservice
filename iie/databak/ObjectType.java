@@ -11,4 +11,6 @@ public class ObjectType {
 	public static final String NODEGROUP = "nodegroup";
 	public static final String PRIVILEGE = "privilegebag";
 	public static final String SFILELOCATION = "sfilelocation";
+	public static final String FIELDSCHEMA = "fieldschema";
+	public static final String STORAGEDESCRIPTOR = "storagedescriptor";
 }
