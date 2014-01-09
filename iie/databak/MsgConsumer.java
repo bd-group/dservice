@@ -7,6 +7,13 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.MalformedURLException;
+import java.rmi.AlreadyBoundException;
+import java.rmi.Naming;
+import java.rmi.RMISecurityManager;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -103,8 +110,13 @@ public class MsgConsumer {
 			@Override
 			public void recieveMessages(final Message message) {
 				String data = new String(message.getData());
-
 				System.out.println(data);
+				try {
+					Thread.sleep(10*1000);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 				DDLMsg msg = DDLMsg.fromJson(data);
 				ms.handleMsg(msg);
 				
@@ -228,12 +240,20 @@ public class MsgConsumer {
 			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101);
 //			System.exit(0);
 		}
+		
 		try {
+//			System.setSecurityManager(new RMISecurityManager());
+			DatabakRPC dr = new DatabakRPC(conf);
+			Registry r = LocateRegistry.createRegistry(8111);
+			r.rebind("DatabakRPC", dr);
 			new MsgConsumer(conf).consume();
+		} catch (RemoteException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		} catch (MetaClientException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
-		}
+		} 
 	}
 
 }
