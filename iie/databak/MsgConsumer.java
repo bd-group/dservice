@@ -4,9 +4,6 @@ import iie.databak.DatabakConf.RedisInstance;
 import iie.databak.DatabakConf.RedisMode;
 
 import java.io.IOException;
-import java.rmi.RemoteException;
-import java.rmi.registry.LocateRegistry;
-import java.rmi.registry.Registry;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -15,8 +12,15 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
+import org.apache.hadoop.hive.metastore.api.ThriftHiveMetastore;
 import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
-import org.apache.thrift.TException;
+import org.apache.thrift.*;
+import org.apache.thrift.server.*;
+import org.apache.thrift.transport.TServerSocket;
+import org.apache.thrift.transport.TServerTransport;
+import org.apache.thrift.transport.TTransportException;
+import org.apache.thrift.transport.TTransportFactory;
+import org.apache.thrift.protocol.*;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
@@ -183,6 +187,7 @@ public class MsgConsumer {
 	public static void main(String[] args) {
 		String addr = "192.168.1.13:3181";
 		DatabakConf conf = null;
+		int rpcp = 0;
 		if(args.length >= 1)
 		{
 			List<Option> ops = parseArgs(args);
@@ -201,6 +206,7 @@ public class MsgConsumer {
 					System.out.println("-rm   : redis mode, <STA for stand alone or STL for sentinel>.");
 					System.out.println("-ra   : redis or sentinel addr. <host:port;host:port> ");
 					System.out.println("-zka  : zkaddr <host:port>.");
+					System.out.println("-rpcp : rpcp service port.");
 					
 					System.exit(0);
 				}
@@ -250,6 +256,14 @@ public class MsgConsumer {
 	                }
 	                zkaddr = o.opt;
 		        }
+				if (o.flag.equals("-rpcp")) {
+	                // set rpc service port
+	                if (o.opt == null) {
+	                        System.out.println("-rpcp rpc service port ");
+	                        System.exit(0);
+	                }
+	                rpcp = Integer.parseInt(o.flag);
+		        }
 			}
 			
 			if(mh == null || mp == null)
@@ -269,7 +283,7 @@ public class MsgConsumer {
 					sentinel = new HashSet<String>();
 					for(String s : ra.split(";"))
 						sentinel.add(s);
-					conf = new DatabakConf(sentinel, rm, zkaddr, mh, Integer.parseInt(mp));
+					conf = new DatabakConf(sentinel, rm, zkaddr, mh, Integer.parseInt(mp), rpcp);
 					break;
 				case STANDALONE:
 					ri = new ArrayList<RedisInstance>();
@@ -279,7 +293,7 @@ public class MsgConsumer {
 						String[] s = rp.split(":");
 						ri.add(new RedisInstance(s[0], Integer.parseInt(s[1])));
 					}
-					conf = new DatabakConf(ri, rm, zkaddr, mh, Integer.parseInt(mp));
+					conf = new DatabakConf(ri, rm, zkaddr, mh, Integer.parseInt(mp), rpcp);
 					break;
 				}
 			}
@@ -290,23 +304,70 @@ public class MsgConsumer {
 //			System.out.println("please provide arguments, use -h for help");
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
-			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101);
+			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101, 10101); 
 //			System.exit(0);
 		}
 		
 		try {
 //			System.setSecurityManager(new RMISecurityManager());
-			DatabakRPC dr = new DatabakRPC(conf);
-			Registry r = LocateRegistry.createRegistry(8111);
-			r.rebind("DatabakRPC", dr);
+//			DatabakRPC dr = new DatabakRPC(conf);
+//			Registry r = LocateRegistry.createRegistry(8111);
+//			r.rebind("DatabakRPC", dr);
+			new Thread(new RPCServer(conf)).start();
+			
 			new MsgConsumer(conf).consume();
-		} catch (RemoteException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
 		} catch (MetaClientException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} 
+	}
+	
+	static class RPCServer implements Runnable {
+		private int port;
+		private DatabakConf conf;
+		public RPCServer(DatabakConf conf) {
+			this.conf = conf;
+		}
+
+		@Override
+		public void run() {
+			// TODO Auto-generated method stub
+
+			System.out.println("RPCServer start at port:"+conf.getRpcport());
+//			  简单的单线程服务模型，一般用于测试
+//			TProcessor tprocessor = new ThriftHiveMetastore.Processor<ThriftHiveMetastore.Iface>(new ThriftRPC(conf));
+//			 TServerSocket serverTransport;
+//			try {
+//				serverTransport = new TServerSocket(conf.getRpcport());
+//				TServer.Args tArgs = new TServer.Args(serverTransport);
+//				tArgs.processor(tprocessor);
+//				tArgs.protocolFactory(new TBinaryProtocol.Factory());
+//				// tArgs.protocolFactory(new TCompactProtocol.Factory());
+//				// tArgs.protocolFactory(new TJSONProtocol.Factory());
+//				TServer server = new TSimpleServer(tArgs);
+//				server.serve();
+//			} catch (TTransportException e) {
+//				// TODO Auto-generated catch block
+//				e.printStackTrace();
+//			}
+
+			TProcessor tprocessor = new ThriftHiveMetastore.Processor<ThriftHiveMetastore.Iface>(new ThriftRPC(conf));
+			try {
+				TServerTransport tt = new TServerSocket(conf.getRpcport());
+				TThreadPoolServer.Args sargs = new TThreadPoolServer.Args(tt)
+				.transportFactory(new TTransportFactory())
+				.protocolFactory(new TBinaryProtocol.Factory())
+				.minWorkerThreads(5)
+				.processor(tprocessor)
+				.maxWorkerThreads(100);
+				TServer server = new TThreadPoolServer(sargs);
+				server.serve();
+			} catch (TTransportException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+
 	}
 
 }

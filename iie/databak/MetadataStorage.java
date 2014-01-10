@@ -13,10 +13,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.api.Database;
-import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.FileOperationException;
 import org.apache.hadoop.hive.metastore.api.GlobalSchema;
 import org.apache.hadoop.hive.metastore.api.Index;
+import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.NodeGroup;
@@ -24,7 +24,6 @@ import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.PrivilegeBag;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
-import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
 import org.apache.hadoop.hive.metastore.msg.MSGType;
@@ -35,7 +34,7 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class MetadataStorage {
 
-	public MetaStoreClient msClient;
+	private static MetaStoreClient msClient;
 	private Jedis jedis;
 	private RedisFactory rf;
 	private DatabakConf conf;
@@ -54,12 +53,36 @@ public class MetadataStorage {
 	public MetadataStorage(DatabakConf conf) {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
-		
+		if(msClient == null)
+		{
+			try {
+				//metastoreclient在初始化时要调get_local_attribution，get_all_attributions
+				msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
+				Database localdb = msClient.client.get_local_attribution();
+				writeObject(ObjectType.DATABASE, localdb.getName(), localdb);
+				conf.setLocalDbName(localdb.getName());
+				List<Database> dbs = msClient.client.get_all_attributions();
+				for(Database db : dbs)
+				{
+					writeObject(ObjectType.DATABASE, db.getName(), db);
+				}
+			} catch (MetaException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (TException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (JedisConnectionException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
 	}
 
 	public int handleMsg(DDLMsg msg) throws JedisConnectionException, IOException, NoSuchObjectException, TException, ClassNotFoundException {
-		if(msClient == null)
-			msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
 		
 		int eventid = (int) msg.getEvent_id();
 //		System.out.println("handler msg id:"+eventid);
@@ -358,7 +381,7 @@ public class MetadataStorage {
 //		if(key.equals(ObjectType.NODEGROUP))
 //			nodeGroupHm.put(field, (NodeGroup)o);
 //		if(key.equals(ObjectType.GLOBALSCHEMA))
-			globalSchemaHm.put(field, (GlobalSchema)o);
+//			globalSchemaHm.put(field, (GlobalSchema)o);
 		if(key.equals(ObjectType.PRIVILEGE))
 			privilegeBagHm.put(field, (PrivilegeBag)o);
 		if(key.equals(ObjectType.PARTITION))
@@ -408,9 +431,11 @@ public class MetadataStorage {
 			{
 				locations.add((SFileLocation)readObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i)));
 			}
-			return new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
+			SFile sf =  new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
 					sfi.getDigest(),sfi.getRecord_nr(),sfi.getAll_record_nr(),locations,sfi.getLength(),
 					sfi.getRef_files(),sfi.getValues(),sfi.getLoad_status());
+			sFileHm.put(field, sf);
+			return sf;
 		}
 		
 		byte[] buf = jedis.hget(key.getBytes(), field.getBytes());
@@ -457,4 +482,10 @@ public class MetadataStorage {
 		if (jedis == null)
 			throw new JedisConnectionException("Connection to redis Server failed.");
 	}
+
+	public static ConcurrentHashMap<String, Database> getDatabaseHm() {
+		return databaseHm;
+	}
+	
+	
 }

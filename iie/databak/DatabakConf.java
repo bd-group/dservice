@@ -25,23 +25,28 @@ public class DatabakConf {
 	private String zkaddr;
 	private String mshost;
 	private int msport;
+	private int rpcport;
 	
-	public DatabakConf(Set<String> sentinels, RedisMode redisMode, String zkaddr, String mshost, int msport)
+	private String localDbName;
+	
+	public DatabakConf(Set<String> sentinels, RedisMode redisMode, String zkaddr, String mshost, int msport, int rpcport)
 	{
 		this.sentinels = sentinels;
 		this.redisMode = redisMode;
 		this.zkaddr = zkaddr;
 		this.mshost = mshost;
 		this.msport = msport;
+		this.rpcport = rpcport;
 	}
 	
-	public DatabakConf(List<RedisInstance> redisIns, RedisMode redisMode, String zkaddr, String mshost, int msport)
+	public DatabakConf(List<RedisInstance> redisIns, RedisMode redisMode, String zkaddr, String mshost, int msport, int rpcport)
 	{
 		this.redisIns = redisIns;
 		this.redisMode = redisMode;
 		this.zkaddr = zkaddr;
 		this.mshost = mshost;
 		this.msport = msport;
+		this.rpcport = rpcport;
 	}
 
 	public RedisInstance getRedisInstance() {
@@ -94,6 +99,20 @@ public class DatabakConf {
 	public void setMsport(int msport) {
 		this.msport = msport;
 	}
+
+	public int getRpcport() {
+		return rpcport;
+	}
+
+	public void setRpcport(int rpcport) {
+		this.rpcport = rpcport;
+	}
 	
-	
+	public String getLocalDbName() {
+		return localDbName;
+	}
+
+	public void setLocalDbName(String localDbName) {
+		this.localDbName = localDbName;
+	}
 }
