@@ -8,8 +8,12 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.metastore.api.Database;
@@ -46,13 +50,15 @@ public class MetadataStorage {
 	private static ConcurrentHashMap<String, NodeGroup> nodeGroupHm = new ConcurrentHashMap<String, NodeGroup>();
 	private static ConcurrentHashMap<String, GlobalSchema> globalSchemaHm = new ConcurrentHashMap<String, GlobalSchema>();
 	private static ConcurrentHashMap<String, Table> tableHm = new ConcurrentHashMap<String, Table>();
-	private static Map<String, SFile> sFileHm = new LRUMap<String, SFile>(1000);
+	private static Map<String, SFile> sFileHm;
 	private static ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
 	private static ConcurrentHashMap<String, SFileLocation> sflHm = new ConcurrentHashMap<String, SFileLocation>();
 	
 	public MetadataStorage(DatabakConf conf) {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
+		//thread-safe, but need to be in a synchronized block during iteration
+		sFileHm = Collections.synchronizedMap(new LRUMap<String, SFile>(conf.getFcs()));
 		if(msClient == null)
 		{
 			try {
@@ -150,6 +156,7 @@ public class MetadataStorage {
 							List<NodeGroup> ngs = msClient.client.listNodeGroups(ngNames);
 							NodeGroup ng = ngs.get(0);
 							NodeGroupImage ngi = NodeGroupImage.generateNodeGroupImage(ng);
+							nodeGroupHm.put(ng.getNode_group_name(), ng);
 							writeObject(ObjectType.NODEGROUP, ng.getNode_group_name(), ngi);
 							for(int j = 0; j<ngi.getNodeKeys().size();j++){
 								if(!nodeHm.containsKey(ngi.getNodeKeys().get(j))){
@@ -168,7 +175,6 @@ public class MetadataStorage {
 				String tableName = (String) msg.getMsg_data().get("table_name");
 				String key = dbName + "." + tableName;
 				if(tableHm.remove(key) != null){
-					tableHm.remove(key);
 					removeObject(ObjectType.TABLE, key);
 				}
 				break;
@@ -376,12 +382,12 @@ public class MetadataStorage {
 			sflHm.put(field, (SFileLocation)o);
 		if(key.equals(ObjectType.INDEX))
 			indexHm.put(field, (Index)o);
-//		if(key.equals(ObjectType.NODE))
-//			nodeHm.put(field, (Node)o);
+		if(key.equals(ObjectType.NODE))
+			nodeHm.put(field, (Node)o);
 //		if(key.equals(ObjectType.NODEGROUP))
 //			nodeGroupHm.put(field, (NodeGroup)o);
-//		if(key.equals(ObjectType.GLOBALSCHEMA))
-//			globalSchemaHm.put(field, (GlobalSchema)o);
+		if(key.equals(ObjectType.GLOBALSCHEMA))
+			globalSchemaHm.put(field, (GlobalSchema)o);
 		if(key.equals(ObjectType.PRIVILEGE))
 			privilegeBagHm.put(field, (PrivilegeBag)o);
 		if(key.equals(ObjectType.PARTITION))
@@ -416,34 +422,66 @@ public class MetadataStorage {
 			System.out.println("in function readObject: read "+key+" from cache.");
 			return o;
 		}
-		//SFile 要特殊处理
 		reconnectJedis();
-		if(key.equals(ObjectType.SFILE))
-		{
-			byte[] buf = jedis.hget(key.getBytes(), field.getBytes());
-			if(buf == null)
-				return null;
-			ByteArrayInputStream bais = new ByteArrayInputStream(buf);
-			ObjectInputStream ois = new ObjectInputStream(bais);
-			SFileImage sfi = (SFileImage)ois.readObject();
-			List<SFileLocation> locations = new ArrayList<SFileLocation>();
-			for(int i = 0;i<sfi.getSflkeys().size();i++)
-			{
-				locations.add((SFileLocation)readObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i)));
-			}
-			SFile sf =  new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
-					sfi.getDigest(),sfi.getRecord_nr(),sfi.getAll_record_nr(),locations,sfi.getLength(),
-					sfi.getRef_files(),sfi.getValues(),sfi.getLoad_status());
-			sFileHm.put(field, sf);
-			return sf;
-		}
-		
+
 		byte[] buf = jedis.hget(key.getBytes(), field.getBytes());
 		if(buf == null)
 			return null;
 		ByteArrayInputStream bais = new ByteArrayInputStream(buf);
 		ObjectInputStream ois = new ObjectInputStream(bais);
 		o = ois.readObject();
+		//SFile 要特殊处理
+		if(key.equals(ObjectType.SFILE))
+		{
+			SFileImage sfi = (SFileImage)o;
+			List<SFileLocation> locations = new ArrayList<SFileLocation>();
+			for(int i = 0;i<sfi.getSflkeys().size();i++)
+			{
+				SFileLocation sfl = (SFileLocation)readObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i));
+				if(sfl != null)
+					locations.add(sfl);
+			}
+			SFile sf =  new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
+					sfi.getDigest(),sfi.getRecord_nr(),sfi.getAll_record_nr(),locations,sfi.getLength(),
+					sfi.getRef_files(),sfi.getValues(),sfi.getLoad_status());
+			sFileHm.put(field, sf);
+			o = sf;
+		}
+		
+		//table
+		if(key.equals(ObjectType.TABLE))
+		{
+			TableImage ti = (TableImage)o;
+			List<NodeGroup> ngs = new ArrayList<NodeGroup>();
+			for(int i = 0;i<ti.getNgKeys().size();i++)
+			{
+				NodeGroup ng = (NodeGroup)readObject(ObjectType.NODEGROUP, ti.getNgKeys().get(i));
+				if(ng != null)
+					ngs.add(ng);
+			}
+			Table t = new Table(ti.getTableName(),ti.getDbName(),ti.getSchemaName(),
+					ti.getOwner(),ti.getCreateTime(),ti.getLastAccessTime(),ti.getRetention(),
+					ti.getSd(),ti.getPartitionKeys(),ti.getParameters(),ti.getViewOriginalText(),
+					ti.getViewExpandedText(),ti.getTableType(),ngs,ti.getFileSplitKeys());
+			tableHm.put(ObjectType.TABLE, t);
+			o = t;
+		}
+		
+		//nodegroup
+		if(key.equals(ObjectType.NODEGROUP))
+		{
+			NodeGroupImage ngi = (NodeGroupImage)o;
+			Set<Node> nodes = new HashSet<Node>();
+			for(String s : ngi.getNodeKeys())
+			{
+				Node n = (Node)readObject(ObjectType.NODE, s);
+				if(n != null)
+					nodes.add(n);
+			}
+			NodeGroup ng = new NodeGroup(ngi.getNode_group_name(), ngi.getComment(), ngi.getStatus(), nodes);
+			nodeGroupHm.put(field, ng);
+			o = ng;
+		}
 		
 		System.out.println("in function readObject: read "+key+" from redis");
 		return o;
@@ -483,8 +521,61 @@ public class MetadataStorage {
 			throw new JedisConnectionException("Connection to redis Server failed.");
 	}
 
+	
 	public static ConcurrentHashMap<String, Database> getDatabaseHm() {
 		return databaseHm;
+	}
+
+	public static MetaStoreClient getMsClient() {
+		return msClient;
+	}
+
+	public Jedis getJedis() {
+		return jedis;
+	}
+
+	public RedisFactory getRf() {
+		return rf;
+	}
+
+	public DatabakConf getConf() {
+		return conf;
+	}
+
+	public static ConcurrentHashMap<String, PrivilegeBag> getPrivilegeBagHm() {
+		return privilegeBagHm;
+	}
+
+	public static ConcurrentHashMap<String, Partition> getPartitionHm() {
+		return partitionHm;
+	}
+
+	public static ConcurrentHashMap<String, Node> getNodeHm() {
+		return nodeHm;
+	}
+
+	public static ConcurrentHashMap<String, NodeGroup> getNodeGroupHm() {
+		return nodeGroupHm;
+	}
+
+	public static ConcurrentHashMap<String, GlobalSchema> getGlobalSchemaHm() {
+		return globalSchemaHm;
+	}
+
+	public static ConcurrentHashMap<String, Table> getTableHm() {
+		return tableHm;
+	}
+
+	public static Map<String, SFile> getsFileHm() {
+		return sFileHm;
+	}
+
+	public static ConcurrentHashMap<String, Index> getIndexHm() {
+		return indexHm;
+	}
+
+	public static ConcurrentHashMap<String, SFileLocation> getSflHm() {
+		return sflHm;
 	}
 	
 	

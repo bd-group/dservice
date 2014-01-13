@@ -778,6 +778,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 		// TODO Auto-generated method stub
 		try {
 			GlobalSchema gs = (GlobalSchema)ms.readObject(ObjectType.GLOBALSCHEMA, arg0);
+			return gs;
 		} catch (JedisConnectionException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -871,11 +872,24 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	public Database get_database(String arg0) throws NoSuchObjectException,
 			MetaException, TException {
 		// TODO Auto-generated method stub
+		try {
+			Database db = (Database) ms.readObject(ObjectType.DATABASE, arg0);
+			return db;
+		} catch (JedisConnectionException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		return null;
 	}
 
 	@Override
-	public List<String> get_databases(String arg0) throws MetaException,
+	public List<String> get_databases(String pattern) throws MetaException,
 			TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -919,7 +933,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public SFile get_file_by_name(String arg0, String arg1, String arg2)
+	public SFile get_file_by_name(String node, String devid, String location)
 			throws FileOperationException, MetaException, TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -950,24 +964,15 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	//MetaStoreClient 初始化时会调这个rpc
 	public Database get_local_attribution() throws MetaException, TException {
 		// TODO Auto-generated method stub
-		System.out.println("in get local attibu");
 		String dbname = conf.getLocalDbName();
 		try {
 			Database db = (Database) ms.readObject(ObjectType.DATABASE, dbname);
 			return db;
-		} catch (JedisConnectionException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (ClassNotFoundException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+		} catch (Exception e) {
+			throw new MetaException(e.getMessage());
 		}
 		//如果返回null会抛异常
 		//org.apache.thrift.TApplicationException: get_local_attribution failed: unknown result
-		return null;
 	}
 
 	@Override
@@ -978,9 +983,14 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Node get_node(String arg0) throws MetaException, TException {
+	public Node get_node(String node_name) throws MetaException, TException {
 		// TODO Auto-generated method stub
-		return null;
+		try {
+			Node n = (Node) ms.readObject(ObjectType.NODE, node_name);
+			return n;
+		} catch (Exception e) {
+			throw new MetaException(e.getMessage());
+		}
 	}
 
 	@Override
@@ -1120,8 +1130,22 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Table get_table(String arg0, String arg1) throws MetaException,
+	public Table get_table(String dbname, String tablename) throws MetaException,
 			NoSuchObjectException, TException {
+		try {
+			Table t = (Table) ms.readObject(ObjectType.TABLE, dbname+"."+tablename);
+			return t;
+		} catch (JedisConnectionException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
 		// TODO Auto-generated method stub
 		return null;
 	}
@@ -1224,10 +1248,29 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<NodeGroup> listNodeGroupByNames(List<String> arg0)
+	public List<NodeGroup> listNodeGroupByNames(List<String> ngNames)
 			throws MetaException, TException {
 		// TODO Auto-generated method stub
-		return null;
+		List<NodeGroup> ngs = new ArrayList<NodeGroup>();
+		for(int i = 0;i<ngNames.size();i++)
+		{
+			try {
+				NodeGroup ng = (NodeGroup) ms.readObject(ObjectType.NODEGROUP, ngNames.get(i));
+				if(ng != null)
+					ngs.add(ng);
+			} catch (JedisConnectionException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (ClassNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		
+		return ngs;
 	}
 
 	@Override
