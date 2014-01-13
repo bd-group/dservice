@@ -3,19 +3,9 @@ package iie.databak;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
-import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Node;
 import org.apache.hadoop.hive.metastore.api.NodeGroup;
-import org.apache.hadoop.hive.metastore.api.Order;
-import org.apache.hadoop.hive.metastore.api.SFile;
-import org.apache.hadoop.hive.metastore.api.SFileLocation;
-import org.apache.hadoop.hive.metastore.api.SerDeInfo;
-import org.apache.hadoop.hive.metastore.api.SkewedInfo;
-import org.apache.hadoop.hive.metastore.api.SplitValue;
-import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 
 public class NodeGroupImage implements Serializable{
 	/**

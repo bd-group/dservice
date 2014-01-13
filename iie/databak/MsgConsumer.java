@@ -188,6 +188,7 @@ public class MsgConsumer {
 		String addr = "192.168.1.13:3181";
 		DatabakConf conf = null;
 		int rpcp = 0;
+		int fcs = 1000;
 		if(args.length >= 1)
 		{
 			List<Option> ops = parseArgs(args);
@@ -207,6 +208,7 @@ public class MsgConsumer {
 					System.out.println("-ra   : redis or sentinel addr. <host:port;host:port> ");
 					System.out.println("-zka  : zkaddr <host:port>.");
 					System.out.println("-rpcp : rpcp service port.");
+					System.out.println("-fcs  : file cache size.");
 					
 					System.exit(0);
 				}
@@ -264,6 +266,16 @@ public class MsgConsumer {
 	                }
 	                rpcp = Integer.parseInt(o.flag);
 		        }
+				
+				if(o.flag.equals("-fcs"))
+				{
+					if(o.opt == null)
+					{
+						System.out.println("-fcs file cache size.");
+						System.exit(0);
+					}
+					fcs = Integer.parseInt(o.opt);
+				}
 			}
 			
 			if(mh == null || mp == null)
@@ -296,6 +308,7 @@ public class MsgConsumer {
 					conf = new DatabakConf(ri, rm, zkaddr, mh, Integer.parseInt(mp), rpcp);
 					break;
 				}
+				conf.setFcs(fcs);
 			}
 			
 		}
@@ -305,6 +318,7 @@ public class MsgConsumer {
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
 			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101, 10101); 
+			conf.setFcs(fcs);
 //			System.exit(0);
 		}
 		
@@ -323,7 +337,6 @@ public class MsgConsumer {
 	}
 	
 	static class RPCServer implements Runnable {
-		private int port;
 		private DatabakConf conf;
 		public RPCServer(DatabakConf conf) {
 			this.conf = conf;
@@ -334,22 +347,6 @@ public class MsgConsumer {
 			// TODO Auto-generated method stub
 
 			System.out.println("RPCServer start at port:"+conf.getRpcport());
-//			  简单的单线程服务模型，一般用于测试
-//			TProcessor tprocessor = new ThriftHiveMetastore.Processor<ThriftHiveMetastore.Iface>(new ThriftRPC(conf));
-//			 TServerSocket serverTransport;
-//			try {
-//				serverTransport = new TServerSocket(conf.getRpcport());
-//				TServer.Args tArgs = new TServer.Args(serverTransport);
-//				tArgs.processor(tprocessor);
-//				tArgs.protocolFactory(new TBinaryProtocol.Factory());
-//				// tArgs.protocolFactory(new TCompactProtocol.Factory());
-//				// tArgs.protocolFactory(new TJSONProtocol.Factory());
-//				TServer server = new TSimpleServer(tArgs);
-//				server.serve();
-//			} catch (TTransportException e) {
-//				// TODO Auto-generated catch block
-//				e.printStackTrace();
-//			}
 
 			TProcessor tprocessor = new ThriftHiveMetastore.Processor<ThriftHiveMetastore.Iface>(new ThriftRPC(conf));
 			try {

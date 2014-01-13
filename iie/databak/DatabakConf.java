@@ -26,6 +26,7 @@ public class DatabakConf {
 	private String mshost;
 	private int msport;
 	private int rpcport;
+	private int fcs;
 	
 	private String localDbName;
 	
@@ -115,4 +116,14 @@ public class DatabakConf {
 	public void setLocalDbName(String localDbName) {
 		this.localDbName = localDbName;
 	}
+
+	public int getFcs() {
+		return fcs;
+	}
+
+	public void setFcs(int fcs) {
+		this.fcs = fcs;
+	}
+	
+	
 }
