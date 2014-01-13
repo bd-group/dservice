@@ -58,7 +58,6 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
 
 import com.facebook.fb303.fb_status;
 
-
 public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiveMetastore.Iface{
 
 	private DatabakConf conf;
@@ -980,7 +979,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 			throws NoSuchObjectException, MetaException, TException {
 		List<Index> inds = new ArrayList<Index>();
 		for(String key : MetadataStorage.getIndexHm().keySet()){
-			String[] keys = key.split(".");
+			String[] keys = key.split("\\.");
 			if(dbName.equalsIgnoreCase(keys[0]) && tblName.equalsIgnoreCase(keys[1])){
 				inds.add(MetadataStorage.getIndexHm().get(key));
 			}
@@ -1649,12 +1648,12 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 		return false;
 	}
 	
-	@Override
-	public int del_fileLocation(SFileLocation arg0)
-			throws FileOperationException, MetaException, TException {
-		// TODO Auto-generated method stub
-		return 0;
-	}
-	
+//	@Override
+//	public int del_fileLocation(SFileLocation arg0)
+//			throws FileOperationException, MetaException, TException {
+//		// TODO Auto-generated method stub
+//		return 0;
+//	}
+//	
 
 }
