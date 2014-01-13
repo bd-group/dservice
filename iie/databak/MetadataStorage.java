@@ -143,7 +143,7 @@ public class MetadataStorage {
 				writeObject(ObjectType.TABLE, key, ti);
 				for(int i = 0; i < ti.getNgKeys().size();i++){
 					String action = (String) msg.getMsg_data().get("action");
-					if(!action.equals("delng")){
+					if((action != null && !action.equals("delng")) || action == null){
 						if(!nodeGroupHm.containsKey(ti.getNgKeys().get(i))){
 							List<String> ngNames = new ArrayList<String>();
 							ngNames.add(ti.getNgKeys().get(i));
