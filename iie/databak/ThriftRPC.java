@@ -773,19 +773,16 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public GlobalSchema getSchemaByName(String arg0)
+	public GlobalSchema getSchemaByName(String schName)
 			throws NoSuchObjectException, MetaException, TException {
-		// TODO Auto-generated method stub
 		try {
-			GlobalSchema gs = (GlobalSchema)ms.readObject(ObjectType.GLOBALSCHEMA, arg0);
+			GlobalSchema gs = (GlobalSchema)ms.readObject(ObjectType.GLOBALSCHEMA, schName);
+			return gs;
 		} catch (JedisConnectionException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (ClassNotFoundException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 		return null;
@@ -836,8 +833,21 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 
 	@Override
 	public List<String> get_all_databases() throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<String> dbNames = new ArrayList<String>();
+		dbNames.addAll(MetadataStorage.getDatabaseHm().keySet());
+//		for(String key : MetadataStorage.getDatabaseHm().keySet()){
+//			try {
+//				Database db = (Database)ms.readObject(ObjectType.DATABASE, key);
+//				dbNames.add(db.getName());
+//			} catch (JedisConnectionException e) {
+//				e.printStackTrace();
+//			} catch (IOException e) {
+//				e.printStackTrace();
+//			} catch (ClassNotFoundException e) {
+//				e.printStackTrace();
+//			}
+//		}
+		return dbNames;
 	}
 
 	@Override
@@ -868,14 +878,23 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Database get_database(String arg0) throws NoSuchObjectException,
+	public Database get_database(String dbName) throws NoSuchObjectException,
 			MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		Database db = new Database();
+		try {
+			db = (Database)ms.readObject(ObjectType.DATABASE, dbName);
+		} catch (JedisConnectionException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			e.printStackTrace();
+		}
+		return db;
 	}
 
 	@Override
-	public List<String> get_databases(String arg0) throws MetaException,
+	public List<String> get_databases(String pattern) throws MetaException,
 			TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -926,24 +945,47 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Index get_index_by_name(String node, String devid, String location)
+	public Index get_index_by_name(String dbName, String tableName, String indexName)
 			throws MetaException, NoSuchObjectException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		String key = dbName + "." + tableName + "." + indexName;
+		Index ind = MetadataStorage.getIndexHm().get(key);
+		return ind;
+//		try {
+//			ind = (Index)ms.readObject(ObjectType.INDEX, key);
+//		} catch (JedisConnectionException e) {
+//			e.printStackTrace();
+//		} catch (IOException e) {
+//			e.printStackTrace();
+//		} catch (ClassNotFoundException e) {
+//			e.printStackTrace();
+//		}
+//		return ind;
 	}
 
 	@Override
-	public List<String> get_index_names(String arg0, String arg1, short arg2)
+	public List<String> get_index_names(String dbName, String tblName, short arg2)
 			throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<String> indNames = new ArrayList<String>();
+		for(String key : MetadataStorage.getIndexHm().keySet()){
+			String[] keys = key.split(".");
+			if(dbName.equalsIgnoreCase(keys[0]) && tblName.equalsIgnoreCase(keys[1])){
+				indNames.add(keys[2]);
+			}
+		}
+		return indNames;
 	}
 
 	@Override
-	public List<Index> get_indexes(String arg0, String arg1, short arg2)
+	public List<Index> get_indexes(String dbName, String tblName, short arg2)
 			throws NoSuchObjectException, MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<Index> inds = new ArrayList<Index>();
+		for(String key : MetadataStorage.getIndexHm().keySet()){
+			String[] keys = key.split(".");
+			if(dbName.equalsIgnoreCase(keys[0]) && tblName.equalsIgnoreCase(keys[1])){
+				inds.add(MetadataStorage.getIndexHm().get(key));
+			}
+		}
+		return inds;
 	}
 
 	@Override
@@ -1250,8 +1292,11 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 
 	@Override
 	public List<GlobalSchema> listSchemas() throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<GlobalSchema> gss = new ArrayList<GlobalSchema>(); 
+		for(String gsName : MetadataStorage.getGlobalSchemaHm().keySet()){
+			gss.add(MetadataStorage.getGlobalSchemaHm().get(gsName));
+		}
+		return gss;
 	}
 
 	@Override
@@ -1574,5 +1619,13 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 		// TODO Auto-generated method stub
 		return false;
 	}
+	
+	@Override
+	public int del_fileLocation(SFileLocation arg0)
+			throws FileOperationException, MetaException, TException {
+		// TODO Auto-generated method stub
+		return 0;
+	}
+	
 
 }

@@ -445,7 +445,7 @@ public class MetadataStorage {
 		ObjectInputStream ois = new ObjectInputStream(bais);
 		o = ois.readObject();
 		
-		System.out.println("in function readObject: read "+key+" from redis");
+		System.out.println("in function readObject: read "+key+" from redis.");
 		return o;
 	}
 
@@ -485,6 +485,14 @@ public class MetadataStorage {
 
 	public static ConcurrentHashMap<String, Database> getDatabaseHm() {
 		return databaseHm;
+	}
+
+	public static ConcurrentHashMap<String, GlobalSchema> getGlobalSchemaHm() {
+		return globalSchemaHm;
+	}
+
+	public static ConcurrentHashMap<String, Index> getIndexHm() {
+		return indexHm;
 	}
 	
 	
