@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-01-09 21:26:00 macan>
+ * Time-stamp: <2014-01-13 16:36:46 macan>
  *
  */
 
@@ -24,6 +24,7 @@ struct dservice_conf
     int fl_interval; // fail interval
     int fl_max_retry;
     int max_keeping_days;
+    int enable_dscan;
     char *addr_filter;
     char *data_path;
 };
@@ -38,20 +39,22 @@ static struct dservice_conf g_ds_conf = {
         "/boot",
     },
     .mpfilter_len = 2,
-    .dscan_interval = 10,
+    .dscan_interval = 1800,
     .hb_interval = 5,
     .mr_interval = 10,
     .fl_interval = 3600,
     .fl_max_retry = 100,
     .max_keeping_days = 30,
+    .enable_dscan = 0,
     .addr_filter = NULL,
     /* FIXIME: change it to data */
-    .data_path = "tmp",
+    .data_path = "data",
 };
 
 struct dev_scan_context
 {
     char *devid;
+    char *mp;
     int level;
 
     int prob;
@@ -1173,8 +1176,8 @@ int handle_commands(char *recv)
                     char cmd[8192];
                     FILE *f;
 
-                    hvfs_info(lib, "Verify '%s' time range [OK], delete it\n",
-                              fpath);
+                    hvfs_info(lib, "Verify '%s' time range: [%d days], del it\n",
+                              fpath, (time(NULL) - buf.st_mtime) / 86400);
                     sprintf(cmd, "rm -rf %s", fpath);
                     f = popen(cmd, "r");
                     if (f == NULL) {
@@ -1477,7 +1480,9 @@ void do_help()
                "-d, --dev         Use this specified dev: DEVID:MOUNTPOINT.\n"
                "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
                "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
+               "-S, --dscan       Enable device scanning.\n"
                "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
+               "-M, --mkd         Set max keeping days for lingering dirs.\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -1902,8 +1907,9 @@ void __select_target(char *path, char *name, int depth, void *data)
             return;
         }
         INIT_LIST_HEAD(&va->list);
+
         va->target.devid = strdup(dsc->devid);
-        va->target.location = strdup(tname);
+        va->target.location = strdup(&tname[strlen(dsc->mp)]);
         va->level = dsc->level;
     
         xlock_lock(&g_verify_lock);
@@ -1999,6 +2005,7 @@ static int __device_scan(int prob, int level)
         char data_root[NAME_MAX];
 
         dsc.devid = dpi[i].dev_sn;
+        dsc.mp = dpi[i].mount_path;
         sprintf(data_root, "%s/%s", dpi[i].mount_path,
                 g_ds_conf.data_path);
         hvfs_info(lib, "Scanning DP '%s' on device %s\n",
@@ -2070,7 +2077,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:S";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -2083,6 +2090,7 @@ int main(int argc, char *argv[])
         {"timeo", required_argument, 0, 'o'},
         {"iph", required_argument, 0, 'I'},
         {"prob", required_argument, 0, 'b'},
+        {"dscan", no_argument, 0, 'S'},
         {"mkd", required_argument, 0, 'M'},
         {"help", no_argument, 0, 'h'},
     };
@@ -2129,6 +2137,9 @@ int main(int argc, char *argv[])
             break;
         case 'M':
             g_ds_conf.max_keeping_days = atoi(optarg);
+            break;
+        case 'S':
+            g_ds_conf.enable_dscan = 1;
             break;
         case 'f':
         {
@@ -2291,12 +2302,14 @@ int main(int argc, char *argv[])
     sem_post(&g_async_recv_sem);
 
     /* setup dscan thread */
-    err = pthread_create(&g_dscan_thread, NULL, &__dscan_thread_main,
-                         NULL);
-    if (err) {
-        hvfs_err(lib, "Create DSCAN thread failed w/ %s\n", strerror(errno));
-        err = -errno;
-        goto out_dscan;
+    if (g_ds_conf.enable_dscan) {
+        err = pthread_create(&g_dscan_thread, NULL, &__dscan_thread_main,
+                             NULL);
+        if (err) {
+            hvfs_err(lib, "Create DSCAN thread failed w/ %s\n", strerror(errno));
+            err = -errno;
+            goto out_dscan;
+        }
     }
 
     get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
@@ -2321,10 +2334,12 @@ int main(int argc, char *argv[])
     }
 
     /* exit other threads */
-    g_dscan_thread_stop = 1;
-    if (g_dscan_thread) {
-        sem_post(&g_dscan_sem);
-        pthread_join(g_dscan_thread, NULL);
+    if (g_ds_conf.enable_dscan) {
+        g_dscan_thread_stop = 1;
+        if (g_dscan_thread) {
+            sem_post(&g_dscan_sem);
+            pthread_join(g_dscan_thread, NULL);
+        }
     }
     g_async_recv_thread_stop = 1;
     if (g_async_recv_thread) {
