@@ -54,13 +54,19 @@ public class SFileImage implements Serializable{
 			for(int i = 0;i<sf.getLocations().size();i++)
 			{
 				SFileLocation sfl = sf.getLocations().get(i);
-				sflkeys.add(sfl.getLocation()+"_"+sfl.getDevid());
+				sflkeys.add(generateSflkey(sfl.getLocation(), sfl.getDevid()));
 			}
 		}
 		return new SFileImage(sf.getFid(),sf.getDbName(),sf.getTableName()
 				,sf.getStore_status(),sf.getRep_nr(),sf.getDigest(),sf.getRecord_nr()
 				,sf.getAll_record_nr(),sflkeys,sf.getLength()
 				,sf.getRef_files(),sf.getValues(),sf.getLoad_status());
+	}
+	
+	public static String generateSflkey(String location, String devid)
+	{
+		String s = location+"_"+devid;
+		return s.hashCode()+"";
 	}
 	
 	public long getFid() {

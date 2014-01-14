@@ -215,7 +215,7 @@ public class MetadataStorage {
 				{
 					for(SFileLocation sfl : sf.getLocations())
 					{
-						String key = sfl.getLocation()+"_"+sfl.getDevid();
+						String key = SFileImage.generateSflkey(sfl.getLocation(),sfl.getDevid());
 						removeObject(ObjectType.SFILELOCATION, key);
 					}
 					removeObject(ObjectType.SFILE, fid+"");
@@ -333,7 +333,6 @@ public class MetadataStorage {
 			//case MSGType.MSG_ALTER_NODEGROUP:
 			case MSGType.MSG_DEL_NODEGROUP:{
 				String nodeGroupName = (String)msg.getMsg_data().get("nodegroup_name");
-				nodeGroupHm.remove(nodeGroupName);
 				removeObject(ObjectType.NODEGROUP, nodeGroupName);
 				break;
 			}
@@ -359,7 +358,11 @@ public class MetadataStorage {
 //		    	msClient.client.
 		    	break;
 		    }
-			
+			default:
+			{
+				System.out.println("unhandled msg : "+msg.toJson());
+				break;
+			}
 		}
 		return 1;
 	}
@@ -419,7 +422,7 @@ public class MetadataStorage {
 		
 		if(o != null)
 		{
-			System.out.println("in function readObject: read "+key+" from cache.");
+			System.out.println("in function readObject: read "+key+":"+field+" from cache.");
 			return o;
 		}
 		reconnectJedis();
@@ -483,7 +486,7 @@ public class MetadataStorage {
 			o = ng;
 		}
 		
-		System.out.println("in function readObject: read "+key+" from redis.");
+		System.out.println("in function readObject: read "+key+":"+field+" from redis.");
 		return o;
 	}
 
@@ -491,8 +494,8 @@ public class MetadataStorage {
 	{
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
-//		if(key.equals(ObjectType.TABLE))
-//			tableHm.remove(field);
+		if(key.equals(ObjectType.TABLE))
+			tableHm.remove(field);
 		if(key.equals(ObjectType.SFILE))
 			sFileHm.remove(field);
 		if(key.equals(ObjectType.SFILELOCATION))
