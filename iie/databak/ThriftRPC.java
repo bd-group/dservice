@@ -851,8 +851,9 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 
 	@Override
 	public List<Node> get_all_nodes() throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<Node> ns = new ArrayList<Node>();
+		ns.addAll(MetadataStorage.getNodeHm().values());
+		return ns;
 	}
 
 	@Override
@@ -922,13 +923,13 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public SFile get_file_by_id(long arg0) throws FileOperationException,
+	public SFile get_file_by_id(long fid) throws FileOperationException,
 			MetaException, TException {
 		// TODO Auto-generated method stub
 		try {
-			SFile f =(SFile) ms.readObject(ObjectType.SFILE, arg0+"");
+			SFile f =(SFile) ms.readObject(ObjectType.SFILE, fid+"");
 			if(f == null)
-				throw new FileOperationException("File not found by id:"+arg0, FOFailReason.INVALID_FILE);
+				throw new FileOperationException("File not found by id:"+fid, FOFailReason.INVALID_FILE);
 			return f;
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -939,8 +940,16 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	@Override
 	public SFile get_file_by_name(String node, String devid, String location)
 			throws FileOperationException, MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		String sflkey = SFileImage.generateSflkey(location, devid);
+		try {
+			SFileLocation sfl = (SFileLocation) ms.readObject(ObjectType.SFILELOCATION, sflkey);
+			if(sfl == null)
+				throw new FileOperationException("File not found by location:"+location+", devid:"+devid, FOFailReason.INVALID_FILE);
+			return get_file_by_id(sfl.getFid());
+		} catch (Exception e) {
+			e.printStackTrace();
+			throw new MetaException(e.getMessage());
+		}
 	}
 
 	@Override

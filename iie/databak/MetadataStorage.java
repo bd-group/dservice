@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -42,7 +41,8 @@ public class MetadataStorage {
 	private Jedis jedis;
 	private RedisFactory rf;
 	private DatabakConf conf;
-
+	private static boolean initialized = false;
+	
 	private static ConcurrentHashMap<String, Database> databaseHm = new ConcurrentHashMap<String, Database>();
 	private static ConcurrentHashMap<String, PrivilegeBag> privilegeBagHm = new ConcurrentHashMap<String, PrivilegeBag>();
 	private static ConcurrentHashMap<String, Partition> partitionHm = new ConcurrentHashMap<String, Partition>();
@@ -57,41 +57,64 @@ public class MetadataStorage {
 	public MetadataStorage(DatabakConf conf) {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
-		//thread-safe, but need to be in a synchronized block during iteration
-		sFileHm = Collections.synchronizedMap(new LRUMap<String, SFile>(conf.getFcs()));
-		if(msClient == null)
-		{
-			try {
-				//metastoreclient在初始化时要调get_local_attribution，get_all_attributions
-				msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
-				Database localdb = msClient.client.get_local_attribution();
-				writeObject(ObjectType.DATABASE, localdb.getName(), localdb);
-				conf.setLocalDbName(localdb.getName());
-				List<Database> dbs = msClient.client.get_all_attributions();
-				for(Database db : dbs)
-				{
-					writeObject(ObjectType.DATABASE, db.getName(), db);
+		
+		initialize();
+	}
+	
+	//初始化与类相关的静态属性，为的是这些属性只初始化一次
+	private void initialize()
+	{
+		synchronized (this.getClass()) {
+			if(!initialized)
+			{
+				try {
+					//thread-safe, but need to be in a synchronized block during iteration
+					sFileHm = Collections.synchronizedMap(new LRUMap<String, SFile>(conf.getFcs()));
+					msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
+					
+					//metastoreclient在初始化时要调get_local_attribution，get_all_attributions
+					Database localdb = msClient.client.get_local_attribution();
+					writeObject(ObjectType.DATABASE, localdb.getName(), localdb);
+					conf.setLocalDbName(localdb.getName());
+					List<Database> dbs = msClient.client.get_all_attributions();
+					for(Database db : dbs)
+					{
+						writeObject(ObjectType.DATABASE, db.getName(), db);
+					}
+					
+					//每次系统启动时，从redis中读取已经持久化的对象到内存缓存中(SFile和SFileLocation除外)
+					readAll(ObjectType.DATABASE);
+					readAll(ObjectType.GLOBALSCHEMA);
+					readAll(ObjectType.INDEX);
+					readAll(ObjectType.NODE);
+					readAll(ObjectType.NODEGROUP);
+					readAll(ObjectType.PARTITION);
+					readAll(ObjectType.PRIVILEGE);
+					readAll(ObjectType.TABLE);
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (JedisConnectionException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (ClassNotFoundException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
-			} catch (MetaException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (TException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (JedisConnectionException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
 			}
+			initialized = true;
 		}
 	}
 
 	public int handleMsg(DDLMsg msg) throws JedisConnectionException, IOException, NoSuchObjectException, TException, ClassNotFoundException {
 		
 		int eventid = (int) msg.getEvent_id();
-//		System.out.println("handler msg id:"+eventid);
 		switch (eventid) {
 			case MSGType.MSG_NEW_DATABESE: 
 			case MSGType.MSG_ALTER_DATABESE:
@@ -121,11 +144,11 @@ public class MetadataStorage {
 				String oldKey = dbName + "." + oldTableName;
 				String newKey = dbName + "." + tableName;
 				if(tableHm.remove(oldKey) != null){
-					tableHm.remove(oldKey);
 					removeObject(ObjectType.TABLE, oldKey);
 				}
 				Table tbl = msClient.client.getTable(dbName, tableName);
 				TableImage ti = TableImage.generateTableImage(tbl);
+				tableHm.put(newKey, tbl);
 				writeObject(ObjectType.TABLE, newKey, ti);
 				break;
 			}
@@ -185,7 +208,12 @@ public class MetadataStorage {
 			case MSGType.MSG_REP_FILE_ONOFF:
 			case MSGType.MSG_CREATE_FILE:
 			{
-				long fid = Long.parseLong(msg.getMsg_data().get("f_id").toString());
+				Object id = msg.getMsg_data().get("f_id");
+				if(id == null)		//
+				{
+					break;
+				}
+				long fid = Long.parseLong(id.toString());
 				SFile sf = null;
 				try{
 					sf = msClient.client.get_file_by_id(fid);
@@ -213,10 +241,13 @@ public class MetadataStorage {
 				SFile sf = (SFile)readObject(ObjectType.SFILE, fid+"");
 				if(sf != null)
 				{
-					for(SFileLocation sfl : sf.getLocations())
+					if(sf.getLocations() != null)
 					{
-						String key = SFileImage.generateSflkey(sfl.getLocation(),sfl.getDevid());
-						removeObject(ObjectType.SFILELOCATION, key);
+						for(SFileLocation sfl : sf.getLocations())
+						{
+							String key = SFileImage.generateSflkey(sfl.getLocation(),sfl.getDevid());
+							removeObject(ObjectType.SFILELOCATION, key);
+						}
 					}
 					removeObject(ObjectType.SFILE, fid+"");
 				}
@@ -230,6 +261,8 @@ public class MetadataStorage {
 				String dbName = (String)msg.getMsg_data().get("db_name");
 				String tblName = (String)msg.getMsg_data().get("table_name");
 				String indexName = (String)msg.getMsg_data().get("index_name");
+				if(dbName == null || tblName == null || indexName == null)
+					break;
 				Index ind = msClient.client.getIndex(dbName, tblName, indexName);
 				String key = dbName + "." + tblName + "." + indexName;
 				writeObject(ObjectType.INDEX, key, ind);
@@ -486,6 +519,21 @@ public class MetadataStorage {
 			o = ng;
 		}
 		
+		if(key.equals(ObjectType.DATABASE))
+			databaseHm.put(field, (Database)o);
+		if(key.equals(ObjectType.SFILELOCATION))
+			sflHm.put(field, (SFileLocation)o);
+		if(key.equals(ObjectType.INDEX))
+			indexHm.put(field, (Index)o);
+		if(key.equals(ObjectType.NODE))
+			nodeHm.put(field, (Node)o);
+		if(key.equals(ObjectType.GLOBALSCHEMA))
+			globalSchemaHm.put(field, (GlobalSchema)o);
+		if(key.equals(ObjectType.PRIVILEGE))
+			privilegeBagHm.put(field, (PrivilegeBag)o);
+		if(key.equals(ObjectType.PARTITION))
+			partitionHm.put(field, (Partition)o);
+		
 		System.out.println("in function readObject: read "+key+":"+field+" from redis.");
 		return o;
 	}
@@ -516,6 +564,21 @@ public class MetadataStorage {
 		reconnectJedis();
 		jedis.hdel(key, field);
 	}
+	
+	private void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
+	{
+		reconnectJedis();
+		Set<String> fields = jedis.hkeys(key);		
+		if(fields != null)
+		{
+			System.out.println("read "+fields.size()+" "+key+" from redis into cache.");
+			for(String field : fields)
+			{
+				readObject(key, field);
+			}
+		}
+	}
+	
 	private void reconnectJedis() throws JedisConnectionException {
 		if (jedis == null) {
 			jedis = rf.getDefaultInstance();
@@ -531,10 +594,6 @@ public class MetadataStorage {
 
 	public static MetaStoreClient getMsClient() {
 		return msClient;
-	}
-
-	public Jedis getJedis() {
-		return jedis;
 	}
 
 	public RedisFactory getRf() {

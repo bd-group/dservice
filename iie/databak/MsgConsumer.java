@@ -264,7 +264,7 @@ public class MsgConsumer {
 	                        System.out.println("-rpcp rpc service port ");
 	                        System.exit(0);
 	                }
-	                rpcp = Integer.parseInt(o.flag);
+	                rpcp = Integer.parseInt(o.opt);
 		        }
 				
 				if(o.flag.equals("-fcs"))
