@@ -27,6 +27,7 @@ import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.PrivilegeBag;
 import org.apache.hadoop.hive.metastore.api.SFile;
 import org.apache.hadoop.hive.metastore.api.SFileLocation;
+import org.apache.hadoop.hive.metastore.api.SplitValue;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.msg.MSGFactory.DDLMsg;
 import org.apache.hadoop.hive.metastore.msg.MSGType;
@@ -42,6 +43,7 @@ public class MetadataStorage {
 	private RedisFactory rf;
 	private DatabakConf conf;
 	private static boolean initialized = false;
+	private static String sha = null;
 	
 	private static ConcurrentHashMap<String, Database> databaseHm = new ConcurrentHashMap<String, Database>();
 	private static ConcurrentHashMap<String, PrivilegeBag> privilegeBagHm = new ConcurrentHashMap<String, PrivilegeBag>();
@@ -52,7 +54,7 @@ public class MetadataStorage {
 	private static ConcurrentHashMap<String, Table> tableHm = new ConcurrentHashMap<String, Table>();
 	private static Map<String, SFile> sFileHm;
 	private static ConcurrentHashMap<String, Index> indexHm = new ConcurrentHashMap<String, Index>();
-	private static ConcurrentHashMap<String, SFileLocation> sflHm = new ConcurrentHashMap<String, SFileLocation>();
+	private static Map<String, SFileLocation> sflHm;
 	
 	public MetadataStorage(DatabakConf conf) {
 		this.conf = conf;
@@ -68,8 +70,17 @@ public class MetadataStorage {
 			if(!initialized)
 			{
 				try {
+					//向sorted set中加入一个元素，score是从0开始的整数(listtablefiles方法的from和to，zrange方法中的参数都是从0开始的，正好一致)，自动递增
+					//如果元素已经存在，不做任何操作
+					reconnectJedis();
+					String script = "local score = redis.call('zscore',KEYS[1],ARGV[1]);"	
+							+ "if not score then "				//lua里只有false和nil被认为是逻辑的非
+							+ "local size = redis.call('zcard',KEYS[1]);"
+							+ "return redis.call('zadd',KEYS[1],size,ARGV[1]); end";
+					sha = jedis.scriptLoad(script); 
 					//thread-safe, but need to be in a synchronized block during iteration
 					sFileHm = Collections.synchronizedMap(new LRUMap<String, SFile>(conf.getFcs()));
+					sflHm = Collections.synchronizedMap(new LRUMap<String, SFileLocation>(conf.getFcs()*2));
 					msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
 					
 					//metastoreclient在初始化时要调get_local_attribution，get_all_attributions
@@ -83,6 +94,7 @@ public class MetadataStorage {
 					}
 					
 					//每次系统启动时，从redis中读取已经持久化的对象到内存缓存中(SFile和SFileLocation除外)
+					long start = System.currentTimeMillis();
 					readAll(ObjectType.DATABASE);
 					readAll(ObjectType.GLOBALSCHEMA);
 					readAll(ObjectType.INDEX);
@@ -91,6 +103,10 @@ public class MetadataStorage {
 					readAll(ObjectType.PARTITION);
 					readAll(ObjectType.PRIVILEGE);
 					readAll(ObjectType.TABLE);
+					readAll(ObjectType.SFILE);
+					readAll(ObjectType.SFILELOCATION);
+					long end = System.currentTimeMillis();
+					System.out.println("loading objects from redis into cache takes "+(end-start)+" ms");
 				} catch (MetaException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -170,6 +186,7 @@ public class MetadataStorage {
 				TableImage ti = TableImage.generateTableImage(tbl);
 				tableHm.put(key, tbl);
 				writeObject(ObjectType.TABLE, key, ti);
+				//table里有nodegroup。。。。
 				for(int i = 0; i < ti.getNgKeys().size();i++){
 					String action = (String) msg.getMsg_data().get("action");
 					if((action != null && !action.equals("delng")) || action == null){
@@ -220,7 +237,8 @@ public class MetadataStorage {
 				}catch(FileOperationException e)
 				{
 					//Can not find SFile by FID ...
-					System.out.println(e.getMessage());
+//					System.out.println(e.getMessage());
+					e.printStackTrace();
 					if(sf == null)
 						break;
 				}
@@ -351,6 +369,8 @@ public class MetadataStorage {
 				List<String> ngNames = new ArrayList<String>();
 				ngNames.add(nodeGroupName);
 				List<NodeGroup> ngs = msClient.client.listNodeGroups(ngNames);
+				if(ngs == null || ngs.size() == 0)
+					break;
 				NodeGroup ng = ngs.get(0);
 				NodeGroupImage ngi = NodeGroupImage.generateNodeGroupImage(ng);
 				nodeGroupHm.put(ng.getNode_group_name(), ng);
@@ -411,9 +431,30 @@ public class MetadataStorage {
 			databaseHm.put(field, (Database)o);
 //		if(key.equals(ObjectType.TABLE))
 //			tableHm.put(field, (Table)o);
-		//对于sfile，函数参数是sfileimage
-//		if(key.equals(ObjectType.SFILE))
-//			sFileHm.put(field, (SFile)o);
+//		对于sfile，函数参数是sfileimage
+		if(key.equals(ObjectType.SFILE))
+		{
+			SFileImage sfi = (SFileImage)o;
+			//为listtablefiles
+			if(sfi.getDbName() != null && sfi.getTableName() != null)
+			{
+				String k = "sf."+sfi.getDbName()+"."+sfi.getTableName();
+				jedis.evalsha(sha, 1, k, sfi.getFid()+"");
+			}
+			//为filtertablefiles
+			if(sfi.getValues() != null && sfi.getValues().size() > 0)
+			{
+				String k2 = "sf."+sfi.getValues().hashCode();
+				jedis.sadd(k2, sfi.getFid()+"");
+			}
+			//listFilesByDegist
+			if(sfi.getDigest() != null)
+			{
+				String k = "sf."+sfi.getDigest();
+				jedis.sadd(k, sfi.getFid()+"");
+			}
+
+		}
 		if(key.equals(ObjectType.SFILELOCATION))
 			sflHm.put(field, (SFileLocation)o);
 		if(key.equals(ObjectType.INDEX))
@@ -499,7 +540,7 @@ public class MetadataStorage {
 					ti.getOwner(),ti.getCreateTime(),ti.getLastAccessTime(),ti.getRetention(),
 					ti.getSd(),ti.getPartitionKeys(),ti.getParameters(),ti.getViewOriginalText(),
 					ti.getViewExpandedText(),ti.getTableType(),ngs,ti.getFileSplitKeys());
-			tableHm.put(ObjectType.TABLE, t);
+			tableHm.put(field, t);
 			o = t;
 		}
 		
@@ -569,8 +610,14 @@ public class MetadataStorage {
 	{
 		reconnectJedis();
 		Set<String> fields = jedis.hkeys(key);		
+		
 		if(fields != null)
 		{
+			if(key.equalsIgnoreCase(ObjectType.SFILE) || key.equalsIgnoreCase(ObjectType.SFILELOCATION))
+			{
+				System.out.println(fields.size()+" "+key+" in redis.");
+				return;
+			}
 			System.out.println("read "+fields.size()+" "+key+" from redis into cache.");
 			for(String field : fields)
 			{
@@ -579,6 +626,52 @@ public class MetadataStorage {
 		}
 	}
 	
+	
+	public List<Long> listTableFiles(String dbName, String tabName, int from, int to)
+	{
+		reconnectJedis();
+		String k = "sf."+dbName+"."+tabName;
+		Set<String> ss = jedis.zrange(k, from, to);
+		List<Long> ids = new ArrayList<Long>();
+		if(ss != null)
+			for(String id : ss)
+				ids.add(Long.parseLong(id));
+		return ids;
+	}
+	
+	public List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values)
+	{
+		reconnectJedis();
+		String k = "sf."+values.hashCode();
+		Set<String> mem = jedis.smembers(k);
+		List<SFile> rls = new ArrayList<SFile>();
+		if(mem != null)
+		{
+			for(String id : mem)
+			{
+				SFile f = null;
+				try {
+					f = (SFile) readObject(ObjectType.SFILE, id);
+					if(f != null)
+						rls.add(f);
+				} catch(Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		return rls;
+	}
+	
+	public List<Long> listFilesByDegist(String degist)
+	{
+		reconnectJedis();
+		Set<String> ids = jedis.smembers("sf."+degist);
+		List<Long> rl = new ArrayList<Long>();
+		if(ids != null)
+			for(String s : ids)
+				rl.add(Long.parseLong(s));
+		return rl;
+	}
 	private void reconnectJedis() throws JedisConnectionException {
 		if (jedis == null) {
 			jedis = rf.getDefaultInstance();
@@ -636,7 +729,7 @@ public class MetadataStorage {
 		return indexHm;
 	}
 
-	public static ConcurrentHashMap<String, SFileLocation> getSflHm() {
+	public static Map<String, SFileLocation> getSflHm() {
 		return sflHm;
 	}
 	

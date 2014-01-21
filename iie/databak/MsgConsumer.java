@@ -113,12 +113,14 @@ public class MsgConsumer {
 				String data = new String(message.getData());
 				int time = 0;
 				System.out.println(data);
-//				try {
-//					Thread.sleep(10*1000);
-//				} catch (InterruptedException e) {
-//					// TODO Auto-generated catch block
-//					e.printStackTrace();
-//				}
+//				if(data != null)
+//					return;
+				try {
+					Thread.sleep(1*1000);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 				DDLMsg msg = DDLMsg.fromJson(data);
 				while(time < 3)
 				{
@@ -185,7 +187,6 @@ public class MsgConsumer {
 
 	
 	public static void main(String[] args) {
-		String addr = "192.168.1.13:3181";
 		DatabakConf conf = null;
 		int rpcp = 0;
 		int fcs = 1000;
@@ -314,10 +315,11 @@ public class MsgConsumer {
 		}
 		else
 		{
+			String addr = "192.168.1.13:3181";
 //			System.out.println("please provide arguments, use -h for help");
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
-			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101, 10101); 
+			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101, 8111); 
 			conf.setFcs(fcs);
 //			System.exit(0);
 		}

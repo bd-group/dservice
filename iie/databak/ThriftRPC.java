@@ -2,8 +2,10 @@ package iie.databak;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
 import org.apache.hadoop.hive.metastore.api.BusiTypeColumn;
@@ -86,9 +88,8 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public String getCpuProfile(int arg0) throws TException {
-		// TODO Auto-generated method stub
-		return null;
+	public String getCpuProfile(int profileDurationInSec) throws TException {
+		return "";
 	}
 
 	@Override
@@ -710,12 +711,9 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 		// TODO Auto-generated method stub
 		return false;
 	}
-
 	@Override
-	public List<SFile> filterTableFiles(String arg0, String arg1,
-			List<SplitValue> arg2) throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+	public List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values) throws MetaException, TException {
+		return ms.filterTableFiles(dbName, tabName, values);
 	}
 
 	@Override
@@ -915,11 +913,16 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<FieldSchema> get_fields(String arg0, String arg1)
-			throws MetaException, UnknownTableException, UnknownDBException,
-			TException {
-		// TODO Auto-generated method stub
-		return null;
+	public List<FieldSchema> get_fields(String dbname, String tablename)
+			throws MetaException, UnknownTableException, UnknownDBException, TException {
+		try {
+			Table t = (Table) ms.readObject(ObjectType.TABLE, dbname+"."+tablename);
+			if(t == null)
+				throw new UnknownTableException("Table not found by name:"+dbname+"."+tablename);
+			return t.getSd().getCols();
+		} catch (Exception e) {
+			throw new MetaException(e.getMessage());
+		}
 	}
 
 	@Override
@@ -955,19 +958,15 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	@Override
 	public Index get_index_by_name(String dbName, String tableName, String indexName)
 			throws MetaException, NoSuchObjectException, TException {
-		String key = dbName + "." + tableName + "." + indexName;
-		Index ind = MetadataStorage.getIndexHm().get(key);
-		return ind;
-//		try {
-//			ind = (Index)ms.readObject(ObjectType.INDEX, key);
-//		} catch (JedisConnectionException e) {
-//			e.printStackTrace();
-//		} catch (IOException e) {
-//			e.printStackTrace();
-//		} catch (ClassNotFoundException e) {
-//			e.printStackTrace();
-//		}
-//		return ind;
+		try {
+			String key = dbName + "." + tableName + "." + indexName;
+			Index ind = (Index)ms.readObject(ObjectType.INDEX, key);
+			if(ind == null)
+				throw new NoSuchObjectException("Index not found by name:"+key);
+			return ind;
+		} catch (Exception e) {
+			throw new MetaException(e.getMessage());
+		}
 	}
 
 	@Override
@@ -975,7 +974,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 			throws MetaException, TException {
 		List<String> indNames = new ArrayList<String>();
 		for(String key : MetadataStorage.getIndexHm().keySet()){
-			String[] keys = key.split(".");
+			String[] keys = key.split("\\.");
 			if(dbName.equalsIgnoreCase(keys[0]) && tblName.equalsIgnoreCase(keys[1])){
 				indNames.add(keys[2]);
 			}
@@ -1144,11 +1143,22 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<FieldSchema> get_schema(String arg0, String arg1)
-			throws MetaException, UnknownTableException, UnknownDBException,
-			TException {
-		// TODO Auto-generated method stub
-		return null;
+	//模仿HiveMetaStore中的方法写的
+	public List<FieldSchema> get_schema(String dbname, String tablename)
+			throws MetaException, UnknownTableException, UnknownDBException, TException {
+		try{
+			String baseTableName = tablename.split("\\.")[0];
+			Table baseTable = (Table) ms.readObject(ObjectType.TABLE, dbname+"."+tablename);
+			if(baseTable == null)
+				throw new UnknownTableException("Table not found by name:"+baseTableName);
+			List<FieldSchema> fss = baseTable.getSd().getCols();
+			if(baseTable.getPartitionKeys() != null)
+				fss.addAll(baseTable.getPartitionKeys());
+			
+			return fss;
+		}catch(Exception e){
+			throw new MetaException(e.getMessage());
+		}
 	}
 
 	@Override
@@ -1204,11 +1214,30 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<Table> get_table_objects_by_name(String arg0, List<String> arg1)
-			throws MetaException, InvalidOperationException,
-			UnknownDBException, TException {
-		// TODO Auto-generated method stub
-		return null;
+	public List<Table> get_table_objects_by_name(String dbname, List<String> names)
+			throws MetaException, InvalidOperationException, UnknownDBException, TException {
+		if (dbname == null || dbname.isEmpty()) {
+          throw new UnknownDBException("DB name is null or empty");
+        }
+        if (names == null)
+        {
+          throw new InvalidOperationException("table names are null");
+        }
+        try{
+        	Set<String> noDupNames = new HashSet<String>();
+        	noDupNames.addAll(names);
+        	List<Table> tables = new ArrayList<Table>();
+        	for(String s : noDupNames)
+        	{
+        		Table t = (Table) ms.readObject(ObjectType.TABLE, dbname+"."+s);
+        		if(t == null)
+        			throw new MetaException("Table not found by name:"+dbname+"."+s);
+        		tables.add(t);
+        	}
+        	return tables;
+        }catch(Exception e){
+        	throw new MetaException(e.getMessage());
+        }
 	}
 
 	@Override
@@ -1271,10 +1300,9 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<Long> listFilesByDigest(String arg0) throws MetaException,
+	public List<Long> listFilesByDigest(String digest) throws MetaException,
 			TException {
-		// TODO Auto-generated method stub
-		return null;
+		return ms.listFilesByDegist(digest);
 	}
 
 	@Override
@@ -1311,14 +1339,16 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 
 	@Override
 	public List<NodeGroup> listNodeGroups() throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<NodeGroup> ngs = new ArrayList<NodeGroup>();
+		ngs.addAll(MetadataStorage.getNodeGroupHm().values());
+		return ngs;
 	}
 
 	@Override
 	public List<Node> listNodes() throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		List<Node> ng = new ArrayList<Node>();
+		ng.addAll(MetadataStorage.getNodeHm().values());
+		return ng;
 	}
 
 	@Override
@@ -1330,24 +1360,39 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	@Override
 	public List<GlobalSchema> listSchemas() throws MetaException, TException {
 		List<GlobalSchema> gss = new ArrayList<GlobalSchema>(); 
-		for(String gsName : MetadataStorage.getGlobalSchemaHm().keySet()){
-			gss.add(MetadataStorage.getGlobalSchemaHm().get(gsName));
-		}
+		gss.addAll(MetadataStorage.getGlobalSchemaHm().values());
 		return gss;
 	}
 
+	/*
+	void setRange(long fromIncl, long toExcl)
+
+    Set the range of results to return. The execution of the query is modified to return only a 
+    subset of results. If the filter would normally return 100 instances, and fromIncl is set to 50, 
+    and toExcl is set to 70, then the first 50 results that would have been returned are skipped, 
+    the next 20 results are returned and the remaining 30 results are ignored. An implementation should 
+    execute the query such that the range algorithm is done at the data store.
+
+    Parameters:
+        fromIncl - 0-based inclusive start index
+        toExcl - 0-based exclusive end index, or Long.MAX_VALUE for no limit.
+    Since:
+        2.0
+	
+	返回的结果集中包含from，不包含to，一共返回from-to个元素
+	而zrange的两边是inclusive
+	 */
 	@Override
-	public List<Long> listTableFiles(String arg0, String arg1, int arg2,
-			int arg3) throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+	public List<Long> listTableFiles(String dbName, String tabName, int from, int to) 
+			throws MetaException, TException {
+		
+		return ms.listTableFiles(dbName, tabName, from, to-1);
 	}
 
 	@Override
-	public List<NodeGroup> listTableNodeDists(String arg0, String arg1)
+	public List<NodeGroup> listTableNodeDists(String dbName, String tabName)
 			throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		return this.get_table(dbName, tabName).getNodeGroups();
 	}
 
 	@Override
