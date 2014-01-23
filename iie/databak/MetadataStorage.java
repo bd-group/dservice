@@ -471,7 +471,7 @@ public class MetadataStorage {
 			partitionHm.put(field, (Partition)o);
 	}
 
-	public Object readObject(String key, String field)throws JedisConnectionException, IOException,ClassNotFoundException {
+	public synchronized Object readObject(String key, String field)throws JedisConnectionException, IOException,ClassNotFoundException {
 		Object o = null;
 		if(key.equals(ObjectType.DATABASE))
 			o = databaseHm.get(field);
@@ -579,7 +579,7 @@ public class MetadataStorage {
 		return o;
 	}
 
-	private void removeObject(String key, String field)
+	private synchronized void removeObject(String key, String field)
 	{
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
@@ -606,7 +606,7 @@ public class MetadataStorage {
 		jedis.hdel(key, field);
 	}
 	
-	private void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
+	private synchronized void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
 	{
 		reconnectJedis();
 		Set<String> fields = jedis.hkeys(key);		
@@ -627,7 +627,7 @@ public class MetadataStorage {
 	}
 	
 	
-	public List<Long> listTableFiles(String dbName, String tabName, int from, int to)
+	public synchronized List<Long> listTableFiles(String dbName, String tabName, int from, int to)
 	{
 		reconnectJedis();
 		String k = "sf."+dbName+"."+tabName;
@@ -639,7 +639,7 @@ public class MetadataStorage {
 		return ids;
 	}
 	
-	public List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values)
+	public synchronized List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values)
 	{
 		reconnectJedis();
 		String k = "sf."+values.hashCode();
@@ -662,7 +662,7 @@ public class MetadataStorage {
 		return rls;
 	}
 	
-	public List<Long> listFilesByDegist(String degist)
+	public synchronized List<Long> listFilesByDegist(String degist)
 	{
 		reconnectJedis();
 		Set<String> ids = jedis.smembers("sf."+degist);
@@ -673,7 +673,7 @@ public class MetadataStorage {
 		return rl;
 	}
 	
-	public List<String> get_all_tables(String dbname)
+	public synchronized List<String> get_all_tables(String dbname)
 	{
 		reconnectJedis();
 		Set<String> k = jedis.hkeys(ObjectType.TABLE);
@@ -685,7 +685,7 @@ public class MetadataStorage {
 		}
 		return rl;
 	}
-	private void reconnectJedis() throws JedisConnectionException {
+	private synchronized void reconnectJedis() throws JedisConnectionException {
 		if (jedis == null) {
 			jedis = rf.getDefaultInstance();
 		}
