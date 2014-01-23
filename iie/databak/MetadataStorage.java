@@ -672,6 +672,19 @@ public class MetadataStorage {
 				rl.add(Long.parseLong(s));
 		return rl;
 	}
+	
+	public List<String> get_all_tables(String dbname)
+	{
+		reconnectJedis();
+		Set<String> k = jedis.hkeys(ObjectType.TABLE);
+		List<String> rl = new ArrayList<String>();
+		for(String dt : k)
+		{
+			if(dt.startsWith(dbname))
+				rl.add(dt.split("\\.")[1]);
+		}
+		return rl;
+	}
 	private void reconnectJedis() throws JedisConnectionException {
 		if (jedis == null) {
 			jedis = rf.getDefaultInstance();

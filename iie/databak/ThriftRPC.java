@@ -60,6 +60,11 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
 
 import com.facebook.fb303.fb_status;
 
+/*
+ * 没缓存的对象，但是rpc里要得到的
+ * BusiTypeColumn，Device,ColumnStatistics,Type,role,User,HiveObjectPrivilege
+ */
+
 public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiveMetastore.Iface{
 
 	private DatabakConf conf;
@@ -792,17 +797,16 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<SFile> getTableNodeFiles(String arg0, String arg1, String arg2)
+	public List<SFile> getTableNodeFiles(String dbName, String tabName, String nodeName)
 			throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		throw new MetaException("Not implemented yet!");
 	}
 
 	@Override
-	public List<NodeGroup> getTableNodeGroups(String arg0, String arg1)
+	public List<NodeGroup> getTableNodeGroups(String dbName, String tabName)
 			throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		Table tbl = get_table(dbName, tabName);
+	    return tbl.getNodeGroups();
 	}
 
 	//把所有本地缓存的database返回
@@ -855,17 +859,15 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<String> get_all_tables(String arg0) throws MetaException,
+	public List<String> get_all_tables(String dbname) throws MetaException,
 			TException {
-		// TODO Auto-generated method stub
-		return null;
+		return ms.get_all_tables(dbname);
 	}
 
 	@Override
-	public Database get_attribution(String arg0) throws NoSuchObjectException,
+	public Database get_attribution(String name) throws NoSuchObjectException,
 			MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+		return get_database(name);
 	}
 
 	@Override
@@ -906,7 +908,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Device get_device(String arg0) throws MetaException,
+	public Device get_device(String devid) throws MetaException,
 			NoSuchObjectException, TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -1029,7 +1031,8 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public Partition get_partition(String arg0, String arg1, List<String> arg2)
+	public Partition get_partition(final String dbname, final String tabname,
+	        final List<String> partVals)
 			throws MetaException, NoSuchObjectException, TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -1191,8 +1194,6 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		
-		// TODO Auto-generated method stub
 		return null;
 	}
 
@@ -1206,9 +1207,8 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<String> get_table_names_by_filter(String arg0, String arg1,
-			short arg2) throws MetaException, InvalidOperationException,
-			UnknownDBException, TException {
+	public List<String> get_table_names_by_filter(String dbName, String filter, short maxTables) 
+			throws MetaException, InvalidOperationException, UnknownDBException, TException {
 		// TODO Auto-generated method stub
 		return null;
 	}
@@ -1287,7 +1287,7 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public List<NodeGroup> listDBNodeGroups(String arg0) throws MetaException,
+	public List<NodeGroup> listDBNodeGroups(String dbName) throws MetaException,
 			TException {
 		// TODO Auto-generated method stub
 		return null;
@@ -1392,7 +1392,10 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	@Override
 	public List<NodeGroup> listTableNodeDists(String dbName, String tabName)
 			throws MetaException, TException {
-		return this.get_table(dbName, tabName).getNodeGroups();
+		Table t = get_table(dbName, tabName);
+		if(t == null)
+			throw new MetaException("No table found by dbname:"+dbName+", tableName:"+tabName);
+		return t.getNodeGroups();
 	}
 
 	@Override
@@ -1562,9 +1565,8 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 	}
 
 	@Override
-	public String pingPong(String arg0) throws MetaException, TException {
-		// TODO Auto-generated method stub
-		return null;
+	public String pingPong(String str) throws MetaException, TException {
+		return str;
 	}
 
 	@Override
