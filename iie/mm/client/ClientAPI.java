@@ -10,14 +10,11 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-
-import org.eclipse.jetty.server.session.HashSessionIdManager;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Tuple;
@@ -25,7 +22,6 @@ import redis.clients.jedis.Tuple;
 public class ClientAPI {
 	private PhotoClient pc;
 	private int index;				
-	private long id = 0;
 	private List<String> keyList = new ArrayList<String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, SocketHashEntry> socketHash;
@@ -131,7 +127,7 @@ public class ClientAPI {
 	 * @param url redis的主机名:端口
 	 * @return 
 	 */
-	public int init(String urls) throws Exception {//urls为多个redis地址链接成的字符串
+	public int init(String urls) throws Exception {
 		//与jedis建立连接
 		if (urls == null) {
 			throw new Exception("The url can not be null.");

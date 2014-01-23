@@ -1176,7 +1176,7 @@ int handle_commands(char *recv)
                     char cmd[8192];
                     FILE *f;
 
-                    hvfs_info(lib, "Verify '%s' time range: [%d days], del it\n",
+                    hvfs_info(lib, "Verify '%s' time range: [%ld days], del it\n",
                               fpath, (time(NULL) - buf.st_mtime) / 86400);
                     sprintf(cmd, "rm -rf %s", fpath);
                     f = popen(cmd, "r");

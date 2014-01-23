@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.HashSet;
 import java.net.SocketException;
 import java.util.Map;
 import java.util.HashMap;
@@ -194,9 +193,7 @@ public class PhotoClient {
 		}
 	};
 	
-	//private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
-	private HashMap<Long, byte[]> ls= new HashMap<Long, byte[]>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 	private final ThreadLocal<Jedis> jedis =
          new ThreadLocal<Jedis>() {
@@ -235,14 +232,6 @@ public class PhotoClient {
 	public void setSocketHash(Map<String, SocketHashEntry> socketHash) {
 		this.socketHash = socketHash;
 	}
-	
-	/*public Map<Long, String> getSocketKeyHash() {
-		return socketKeyHash;
-	}
-
-	public void setSocketKeyHash(Map<Long, String> socketKeyHash) {
-		this.socketKeyHash = socketKeyHash;
-	}*/
 
 	public Jedis getJedis() {
 		return jedis.get();
