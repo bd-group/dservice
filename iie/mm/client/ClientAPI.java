@@ -25,9 +25,8 @@ import redis.clients.jedis.Tuple;
 public class ClientAPI {
 	private PhotoClient pc;
 	private int index;				
-	private long id;
+	private long id = 0;
 	private List<String> keyList = new ArrayList<String>();
-	private Map<Long, String> socketKeyHash = new HashMap<Long, String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private Map<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
@@ -132,7 +131,7 @@ public class ClientAPI {
 	 * @param url redis的主机名:端口
 	 * @return 
 	 */
-	public int init(String urls) throws Exception {
+	public int init(String urls) throws Exception {//urls为多个redis地址链接成的字符串
 		//与jedis建立连接
 		if (urls == null) {
 			throw new Exception("The url can not be null.");
@@ -239,6 +238,29 @@ public class ClientAPI {
 	}
 	
 	/**
+	 * 异步写,对外提供的接口
+	 * @param set
+	 * @param md5
+	 * @param content
+	 * @return		
+	 */
+	public void iPut(String key, byte[] content)  throws IOException, Exception{
+		/*if(key == null)
+			throw new Exception("key can not be null.");
+		String[] keys = key.split("@");
+		if(keys.length != 2)
+			throw new Exception("wrong format of key:"+key);
+		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+		//	Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+		//	pc.asyncStorePhoto(keys[0], keys[1], content, sock);
+		}
+		index++;
+		if(index >= socketHash.size()){
+			index = 0;
+		}*/
+	}
+	
+	/**
 	 * 批量同步写,对外提供的接口
 	 * @param set
 	 * @param md5
@@ -253,6 +275,8 @@ public class ClientAPI {
 			throw new  Exception("arguments length mismatch.");
 		String[] r = null;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+//			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
+//			r = pc.mPut(set, md5s, content, sock);
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			r = pc.mPut(set, md5s, content, she);
 		}
@@ -264,32 +288,23 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * 异步写,对外提供的接口
-	 * @param set
-	 * @param md5
-	 * @param content
-	 * @return		
+	 * 批量异步写，对外提供的接口
+	 * @param key	redis中的键以set开头+#+md5的字符串形成key
+	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
-	/*
-	public void iPut(String key, byte[] content)  throws IOException, Exception{
-		if(key == null)
-			throw new Exception("key can not be null.");
-		String[] keys = key.split("@");
-		if(keys.length != 2)
-			throw new Exception("wrong format of key:"+key);
-		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-			pc.asyncStorePhoto(keys[0], keys[1], content, sock);
+	
+	public void imPut(String[] keys, byte[][] contents) throws Exception {
+		/*if(keys.length != contents.length){
+			throw new Exception("keys's length is not the same as contents'slength.");
 		}
-		index++;
-		if(index >= socketHash.size()){
-			index = 0;
-		}
+		for(int i = 0;i<keys.length;i++){
+			iPut(keys[i],contents[i]);
+		}*/
 	}
-	*/
+	
 	/**
-	 * 
 	 * It is thread-safe
+	 * 同步取，对外提供的接口
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */

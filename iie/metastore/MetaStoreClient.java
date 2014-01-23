@@ -762,6 +762,7 @@ public class MetaStoreClient {
 	    		tunnel_in = null, tunnel_out = null, tunnel_node = null, tunnel_user = null;
 	    int prop = 0, pplen = 0, ppnr = 1, ppthread = 1, lfdc_thread = 1;
 	    String devid = null;
+	    long balanceNum = 0l;
 	    String node_name = null;
 	    String sap_key = null, sap_value = null;
 	    String flt_l1_key = null, flt_l1_value = null, flt_l2_key = null, flt_l2_value = null;
@@ -845,7 +846,9 @@ public class MetaStoreClient {
 	    		System.out.println("-fro : reopen a file.");
 	    		System.out.println("-srep: (re)set file repnr.");
 	    		System.out.println("-cvt : convert date to timestamp.");
-
+	    		System.out.println("-bdnu : need to data balance 's quantities.");
+	    		System.out.println("-dabal : data balance operation.");
+	    		
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
 	    		System.out.println("");
@@ -857,6 +860,15 @@ public class MetaStoreClient {
 	    		
 	    		System.exit(0);
 	    	}
+	    	
+	    	if(o.flag.equals("-bdnu")){
+				// set balanceNum
+					if (o.opt == null) {
+		    			System.out.println("-bdna : need to data balance 's quantities.");
+		    			System.exit(0);
+		    		}
+					balanceNum = Long.parseLong(o.opt);
+			}
 	    	if (o.flag.equals("-r")) {
 	    		// set servername;
 	    		serverName = o.opt;
@@ -2921,6 +2933,61 @@ public class MetaStoreClient {
 							break;
 					}
 					System.out.println("Total " + size + " file(s) listed, record # " + recordnr + ", length " + (length / 1000000.0) + "MB.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-dabal")) {
+				// data balance
+				if (devid == null || balanceNum == 0l) {
+					System.out.println("please set -db and -bdnu.");
+					System.exit(0);
+				}
+				try {
+					List<SFileLocation> locatsDel = new ArrayList<SFileLocation>();
+					boolean isBreak = false;
+					long maxFid = cli.client.getMaxFid();
+					for (int i = 0; i < maxFid; i += 1000) {
+						List<Long> ids = new ArrayList<Long>();
+						for (long j = i; j < j + 1000; j++){
+							ids.add(j);
+						}
+						List<SFile> files = cli.client.get_files_by_ids(ids);
+						if (files.size() > 0) {
+							for(SFile sf : files){
+								List<SFileLocation> locations = sf.getLocations();
+								if(locations.size()<2){
+									continue;
+								}else{								
+									for(SFileLocation sl : locations) {
+										if(sl.getDevid().equalsIgnoreCase(devid) && sl.getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.ONLINE){
+											balanceNum -= sf.getLength();
+											locatsDel.add(sl);
+											if(balanceNum <= 0){
+												isBreak = true;
+												break;
+											}
+										}else{
+											continue;
+										}
+									}
+								}
+								if(isBreak){												
+									break;
+								}
+							}
+						}else{
+							break;
+						}					
+					}
+					for (SFileLocation sln : locatsDel){
+//						cli.client.del_fileLocation(sln);
+					}
+					System.out.println("Delete  " + balanceNum + " M files on device " + devid);
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
