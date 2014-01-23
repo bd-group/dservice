@@ -21,6 +21,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class PhotoServer {
+	public static long upts = System.currentTimeMillis();
 	private ServerConf conf;
 	private ServerSocket ss;
 	private int serverport;
@@ -86,6 +87,20 @@ public class PhotoServer {
 		r += "</tt>";
 		RedisFactory.putInstance(jedis);
 		
+		return r;
+	}
+	
+	public static String getSpaceInfoHtml(ServerConf conf) {
+		String r = "";
+		long free = 0;
+		
+		r += "<H2> Free Spaces (B): </H2><tt>";
+		for (String dev : conf.getStoreArray()) {
+			File f = new File(dev);
+			r += "<p>" + dev + " -> " + "Total " + f.getTotalSpace() + ", Free " + f.getUsableSpace();
+			free += f.getUsableSpace();
+		}
+		r += "<p> [Total Free] " + free + " (B)</tt>";
 		return r;
 	}
 	

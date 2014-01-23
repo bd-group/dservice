@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-10-31 20:15:26 macan>
+ * Time-stamp: <2014-01-08 21:29:55 macan>
  *
  */
 
@@ -34,6 +34,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <limits.h>
+#include <ifaddrs.h>
+#include <dirent.h>
 
 HVFS_TRACING_INIT();
 
@@ -102,6 +104,16 @@ struct del_args
 #define DEL_STATE_ERROR         3
 #define DEL_STATE_ERROR_DONE    4
     int status;
+};
+
+struct verify_args
+{
+    struct list_head list;
+    struct floc_desc target;
+#define VERIFY_LEVEL_EXIST      0
+#define VERIFY_LEVEL_META       1
+#define VERIFY_LEVEL_MD5        2
+    int level;
 };
 
 #define DEV_MAPPING           "/DEV_MAPPING"
