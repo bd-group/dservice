@@ -1,0 +1,45 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gbk">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="cache-control" content="no-cache">
+<meta http-equiv="expires" content="0">    
+<meta http-equiv="description" content="6# node picture">
+<script language="JavaScript" type="text/javascript"> 
+function init()
+{
+	var name,value,i;
+	var str=window.location.search;
+	
+	var num=str.indexOf("?")
+	str=str.substr(num+1);
+	var arrtmp=str.split("&");
+	var result;
+	for(i=0;i < arrtmp.length;i++){
+		num=arrtmp[i].indexOf("=");
+		if(num==2){
+			name=arrtmp[i].substring(0,num);
+			//alert(name);
+			value=arrtmp[i].substr(num+1);
+			this[name]=value;
+			document.getElementById('back').innerHTML='<center><img src="'+value+'/node.png"/></center>';
+//			var url = document.getElementById("url");
+//			alert(url);
+//			document.getElementById("url").src =value + url ;
+			//alert(document.getElementById("url").href);
+		}		
+	}
+	
+}
+</script>
+<title>Query Picture</title>
+
+<link rel="stylesheet" type="text/css" href="main.css">
+</head>
+<body onload = "init();">
+<div id="back">
+</div>
+
+</body>
+</html>
