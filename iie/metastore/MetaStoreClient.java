@@ -281,6 +281,9 @@ public class MetaStoreClient {
 	}
 	
 	public void stop() {
+		if (client != null) {
+			client.close();
+		}
 		for (Map.Entry<String, IMetaStoreClient> e : climap.entrySet()) {
 			e.getValue().close();
 		}
@@ -2206,6 +2209,8 @@ public class MetaStoreClient {
 							}
 						}
 						tables = new_tables;
+					}  else {
+						tables = new ArrayList<String>();
 					}
 					for (; end >= begin_time; end -= 3600) {
 						List<SplitValue> lsv = new ArrayList<SplitValue>();
