@@ -27,5 +27,7 @@ sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" 
 gnuplot .tmp_plot_file
 sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" report/node.plot > .tmp_plot_file
 gnuplot .tmp_plot_file
+sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" report/fops.plot > .tmp_plot_file
+gnuplot .tmp_plot_file
 
 rm -rf .tmp_plot_file

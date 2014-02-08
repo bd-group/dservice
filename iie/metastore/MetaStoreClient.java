@@ -1574,6 +1574,40 @@ public class MetaStoreClient {
 					break;
 				}
 	    	}
+	    	if (o.flag.equals("-ofd")) {
+	    		// offline Device
+	    		if (devid == null) {
+	    			System.out.println("Please set -devid.");
+	    			System.exit(0);
+	    		}
+	    		try {
+					cli.client.offlineDevice(devid);
+					System.out.println("Offline Device '" + devid + "' done.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-ond")) {
+	    		// offline Device
+	    		if (devid == null) {
+	    			System.out.println("Please set -devid.");
+	    			System.exit(0);
+	    		}
+	    		try {
+					cli.client.onlineDevice(devid);
+					System.out.println("Online Device '" + devid + "' done.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
 	    	if (o.flag.equals("-cd")) {
 	    		// add Device
 	    		if (node_name == null) {

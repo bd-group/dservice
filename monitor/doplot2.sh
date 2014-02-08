@@ -36,6 +36,8 @@ sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" 
 gnuplot .tmp_plot_file2
 sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" report/sfl.plot > .tmp_plot_file2
 gnuplot .tmp_plot_file2
+sed -e "s|FIXME_LOCATION|$2|g;s|FIXME_REPORT_DAY|$1|g;s|FIXME_REPORT_FILE|$1|g" report/node.plot > .tmp_plot_file2
+gnuplot .tmp_plot_file2
 
 echo "Plot DISK Info ..."
 if [ "x$MODE" == "xSINGLE" ]; then
