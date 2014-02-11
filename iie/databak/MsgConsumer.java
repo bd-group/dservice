@@ -94,7 +94,7 @@ public class MsgConsumer {
 		// New session factory,强烈建议使用单例
 		MessageSessionFactory sessionFactory = new MetaMessageSessionFactory(metaClientConfig);
 		final String topic = "meta-test";
-		final String group = "meta-databak";
+		final String group = "meta-databak1";
 		// create consumer,强烈建议使用单例
 
 		// 生成处理线程
@@ -320,7 +320,11 @@ public class MsgConsumer {
 			List<RedisInstance> lr = new ArrayList<RedisInstance>();
 			lr.add(new RedisInstance("localhost", 6379));
 			conf = new DatabakConf(lr, RedisMode.STANDALONE, addr, "node13", 10101, 8111); 
-			conf.setFcs(fcs);
+			
+//			Set<String> s = new HashSet<String>();
+//			s.add("localhost:26379");
+//			conf = new DatabakConf(s,RedisMode.SENTINEL,addr,"node13",10101,8111);
+			conf.setFcs(40000);
 //			System.exit(0);
 		}
 		

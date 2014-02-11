@@ -39,7 +39,7 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
 public class MetadataStorage {
 
 	private static MetaStoreClient msClient;
-	private Jedis jedis;
+//	private Jedis jedis;
 	private RedisFactory rf;
 	private DatabakConf conf;
 	private static boolean initialized = false;
@@ -69,10 +69,12 @@ public class MetadataStorage {
 		synchronized (this.getClass()) {
 			if(!initialized)
 			{
+				Jedis jedis = null;
 				try {
 					//向sorted set中加入一个元素，score是从0开始的整数(listtablefiles方法的from和to，zrange方法中的参数都是从0开始的，正好一致)，自动递增
 					//如果元素已经存在，不做任何操作
-					reconnectJedis();
+//					reconnectJedis();
+					jedis = rf.getDefaultInstance();
 					String script = "local score = redis.call('zscore',KEYS[1],ARGV[1]);"	
 							+ "if not score then "				//lua里只有false和nil被认为是逻辑的非
 							+ "local size = redis.call('zcard',KEYS[1]);"
@@ -116,12 +118,16 @@ public class MetadataStorage {
 				} catch (JedisConnectionException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
+					RedisFactory.putBrokenInstance(jedis);
+					jedis = null;
 				} catch (IOException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
 				} catch (ClassNotFoundException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
+				}finally{
+					RedisFactory.putInstance(jedis);
 				}
 			}
 			initialized = true;
@@ -421,57 +427,67 @@ public class MetadataStorage {
 	}
 
 	private void writeObject(String key, String field, Object o)throws JedisConnectionException, IOException {
-		reconnectJedis();
-		ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		ObjectOutputStream oos = new ObjectOutputStream(baos);
-		oos.writeObject(o);
-		jedis.hset(key.getBytes(), field.getBytes(), baos.toByteArray());
-		
-		if(key.equals(ObjectType.DATABASE))
-			databaseHm.put(field, (Database)o);
-//		if(key.equals(ObjectType.TABLE))
-//			tableHm.put(field, (Table)o);
-//		对于sfile，函数参数是sfileimage
-		if(key.equals(ObjectType.SFILE))
-		{
-			SFileImage sfi = (SFileImage)o;
-			//为listtablefiles
-			if(sfi.getDbName() != null && sfi.getTableName() != null)
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			ObjectOutputStream oos = new ObjectOutputStream(baos);
+			oos.writeObject(o);
+			jedis.hset(key.getBytes(), field.getBytes(), baos.toByteArray());
+			
+			if(key.equals(ObjectType.DATABASE))
+				databaseHm.put(field, (Database)o);
+	//		if(key.equals(ObjectType.TABLE))
+	//			tableHm.put(field, (Table)o);
+	//		对于sfile，函数参数是sfileimage
+			if(key.equals(ObjectType.SFILE))
 			{
-				String k = "sf."+sfi.getDbName()+"."+sfi.getTableName();
-				jedis.evalsha(sha, 1, k, sfi.getFid()+"");
+				SFileImage sfi = (SFileImage)o;
+				//为listtablefiles
+				if(sfi.getDbName() != null && sfi.getTableName() != null)
+				{
+					String k = "sf."+sfi.getDbName()+"."+sfi.getTableName();
+					jedis.evalsha(sha, 1, k, sfi.getFid()+"");
+				}
+				//为filtertablefiles
+				if(sfi.getValues() != null && sfi.getValues().size() > 0)
+				{
+					String k2 = "sf."+sfi.getValues().hashCode();
+					jedis.sadd(k2, sfi.getFid()+"");
+				}
+				//listFilesByDegist
+				if(sfi.getDigest() != null)
+				{
+					String k = "sf."+sfi.getDigest();
+					jedis.sadd(k, sfi.getFid()+"");
+				}
+	
 			}
-			//为filtertablefiles
-			if(sfi.getValues() != null && sfi.getValues().size() > 0)
-			{
-				String k2 = "sf."+sfi.getValues().hashCode();
-				jedis.sadd(k2, sfi.getFid()+"");
-			}
-			//listFilesByDegist
-			if(sfi.getDigest() != null)
-			{
-				String k = "sf."+sfi.getDigest();
-				jedis.sadd(k, sfi.getFid()+"");
-			}
-
+			if(key.equals(ObjectType.SFILELOCATION))
+				sflHm.put(field, (SFileLocation)o);
+			if(key.equals(ObjectType.INDEX))
+				indexHm.put(field, (Index)o);
+			if(key.equals(ObjectType.NODE))
+				nodeHm.put(field, (Node)o);
+	//		if(key.equals(ObjectType.NODEGROUP))
+	//			nodeGroupHm.put(field, (NodeGroup)o);
+			if(key.equals(ObjectType.GLOBALSCHEMA))
+				globalSchemaHm.put(field, (GlobalSchema)o);
+			if(key.equals(ObjectType.PRIVILEGE))
+				privilegeBagHm.put(field, (PrivilegeBag)o);
+			if(key.equals(ObjectType.PARTITION))
+				partitionHm.put(field, (Partition)o);
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
 		}
-		if(key.equals(ObjectType.SFILELOCATION))
-			sflHm.put(field, (SFileLocation)o);
-		if(key.equals(ObjectType.INDEX))
-			indexHm.put(field, (Index)o);
-		if(key.equals(ObjectType.NODE))
-			nodeHm.put(field, (Node)o);
-//		if(key.equals(ObjectType.NODEGROUP))
-//			nodeGroupHm.put(field, (NodeGroup)o);
-		if(key.equals(ObjectType.GLOBALSCHEMA))
-			globalSchemaHm.put(field, (GlobalSchema)o);
-		if(key.equals(ObjectType.PRIVILEGE))
-			privilegeBagHm.put(field, (PrivilegeBag)o);
-		if(key.equals(ObjectType.PARTITION))
-			partitionHm.put(field, (Partition)o);
 	}
 
-	public synchronized Object readObject(String key, String field)throws JedisConnectionException, IOException,ClassNotFoundException {
+	public Object readObject(String key, String field)throws JedisConnectionException, IOException,ClassNotFoundException {
 		Object o = null;
 		if(key.equals(ObjectType.DATABASE))
 			o = databaseHm.get(field);
@@ -499,87 +515,98 @@ public class MetadataStorage {
 			System.out.println("in function readObject: read "+key+":"+field+" from cache.");
 			return o;
 		}
-		reconnectJedis();
-
-		byte[] buf = jedis.hget(key.getBytes(), field.getBytes());
-		if(buf == null)
-			return null;
-		ByteArrayInputStream bais = new ByteArrayInputStream(buf);
-		ObjectInputStream ois = new ObjectInputStream(bais);
-		o = ois.readObject();
-		//SFile 要特殊处理
-		if(key.equals(ObjectType.SFILE))
-		{
-			SFileImage sfi = (SFileImage)o;
-			List<SFileLocation> locations = new ArrayList<SFileLocation>();
-			for(int i = 0;i<sfi.getSflkeys().size();i++)
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			byte[] buf = jedis.hget(key.getBytes(), field.getBytes());
+			if(buf == null)
+				return null;
+			ByteArrayInputStream bais = new ByteArrayInputStream(buf);
+			ObjectInputStream ois = new ObjectInputStream(bais);
+			o = ois.readObject();
+			//SFile 要特殊处理
+			if(key.equals(ObjectType.SFILE))
 			{
-				SFileLocation sfl = (SFileLocation)readObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i));
-				if(sfl != null)
-					locations.add(sfl);
+				SFileImage sfi = (SFileImage)o;
+				List<SFileLocation> locations = new ArrayList<SFileLocation>();
+				for(int i = 0;i<sfi.getSflkeys().size();i++)
+				{
+					SFileLocation sfl = (SFileLocation)readObject(ObjectType.SFILELOCATION, sfi.getSflkeys().get(i));
+					if(sfl != null)
+						locations.add(sfl);
+				}
+				SFile sf =  new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
+						sfi.getDigest(),sfi.getRecord_nr(),sfi.getAll_record_nr(),locations,sfi.getLength(),
+						sfi.getRef_files(),sfi.getValues(),sfi.getLoad_status());
+				sFileHm.put(field, sf);
+				o = sf;
 			}
-			SFile sf =  new SFile(sfi.getFid(),sfi.getDbName(),sfi.getTableName(),sfi.getStore_status(),sfi.getRep_nr(),
-					sfi.getDigest(),sfi.getRecord_nr(),sfi.getAll_record_nr(),locations,sfi.getLength(),
-					sfi.getRef_files(),sfi.getValues(),sfi.getLoad_status());
-			sFileHm.put(field, sf);
-			o = sf;
-		}
-		
-		//table
-		if(key.equals(ObjectType.TABLE))
-		{
-			TableImage ti = (TableImage)o;
-			List<NodeGroup> ngs = new ArrayList<NodeGroup>();
-			for(int i = 0;i<ti.getNgKeys().size();i++)
+			
+			//table
+			if(key.equals(ObjectType.TABLE))
 			{
-				NodeGroup ng = (NodeGroup)readObject(ObjectType.NODEGROUP, ti.getNgKeys().get(i));
-				if(ng != null)
-					ngs.add(ng);
+				TableImage ti = (TableImage)o;
+				List<NodeGroup> ngs = new ArrayList<NodeGroup>();
+				for(int i = 0;i<ti.getNgKeys().size();i++)
+				{
+					NodeGroup ng = (NodeGroup)readObject(ObjectType.NODEGROUP, ti.getNgKeys().get(i));
+					if(ng != null)
+						ngs.add(ng);
+				}
+				Table t = new Table(ti.getTableName(),ti.getDbName(),ti.getSchemaName(),
+						ti.getOwner(),ti.getCreateTime(),ti.getLastAccessTime(),ti.getRetention(),
+						ti.getSd(),ti.getPartitionKeys(),ti.getParameters(),ti.getViewOriginalText(),
+						ti.getViewExpandedText(),ti.getTableType(),ngs,ti.getFileSplitKeys());
+				tableHm.put(field, t);
+				o = t;
 			}
-			Table t = new Table(ti.getTableName(),ti.getDbName(),ti.getSchemaName(),
-					ti.getOwner(),ti.getCreateTime(),ti.getLastAccessTime(),ti.getRetention(),
-					ti.getSd(),ti.getPartitionKeys(),ti.getParameters(),ti.getViewOriginalText(),
-					ti.getViewExpandedText(),ti.getTableType(),ngs,ti.getFileSplitKeys());
-			tableHm.put(field, t);
-			o = t;
-		}
-		
-		//nodegroup
-		if(key.equals(ObjectType.NODEGROUP))
-		{
-			NodeGroupImage ngi = (NodeGroupImage)o;
-			Set<Node> nodes = new HashSet<Node>();
-			for(String s : ngi.getNodeKeys())
+			
+			//nodegroup
+			if(key.equals(ObjectType.NODEGROUP))
 			{
-				Node n = (Node)readObject(ObjectType.NODE, s);
-				if(n != null)
-					nodes.add(n);
+				NodeGroupImage ngi = (NodeGroupImage)o;
+				Set<Node> nodes = new HashSet<Node>();
+				for(String s : ngi.getNodeKeys())
+				{
+					Node n = (Node)readObject(ObjectType.NODE, s);
+					if(n != null)
+						nodes.add(n);
+				}
+				NodeGroup ng = new NodeGroup(ngi.getNode_group_name(), ngi.getComment(), ngi.getStatus(), nodes);
+				nodeGroupHm.put(field, ng);
+				o = ng;
 			}
-			NodeGroup ng = new NodeGroup(ngi.getNode_group_name(), ngi.getComment(), ngi.getStatus(), nodes);
-			nodeGroupHm.put(field, ng);
-			o = ng;
+			
+			if(key.equals(ObjectType.DATABASE))
+				databaseHm.put(field, (Database)o);
+			if(key.equals(ObjectType.SFILELOCATION))
+				sflHm.put(field, (SFileLocation)o);
+			if(key.equals(ObjectType.INDEX))
+				indexHm.put(field, (Index)o);
+			if(key.equals(ObjectType.NODE))
+				nodeHm.put(field, (Node)o);
+			if(key.equals(ObjectType.GLOBALSCHEMA))
+				globalSchemaHm.put(field, (GlobalSchema)o);
+			if(key.equals(ObjectType.PRIVILEGE))
+				privilegeBagHm.put(field, (PrivilegeBag)o);
+			if(key.equals(ObjectType.PARTITION))
+				partitionHm.put(field, (Partition)o);
+			
+			System.out.println("in function readObject: read "+key+":"+field+" from redis.");
+			
+			
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
 		}
-		
-		if(key.equals(ObjectType.DATABASE))
-			databaseHm.put(field, (Database)o);
-		if(key.equals(ObjectType.SFILELOCATION))
-			sflHm.put(field, (SFileLocation)o);
-		if(key.equals(ObjectType.INDEX))
-			indexHm.put(field, (Index)o);
-		if(key.equals(ObjectType.NODE))
-			nodeHm.put(field, (Node)o);
-		if(key.equals(ObjectType.GLOBALSCHEMA))
-			globalSchemaHm.put(field, (GlobalSchema)o);
-		if(key.equals(ObjectType.PRIVILEGE))
-			privilegeBagHm.put(field, (PrivilegeBag)o);
-		if(key.equals(ObjectType.PARTITION))
-			partitionHm.put(field, (Partition)o);
-		
-		System.out.println("in function readObject: read "+key+":"+field+" from redis.");
 		return o;
 	}
 
-	private synchronized void removeObject(String key, String field)
+	private void removeObject(String key, String field)
 	{
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
@@ -602,96 +629,160 @@ public class MetadataStorage {
 		if(key.equals(ObjectType.PARTITION))
 			partitionHm.remove(field);
 		
-		reconnectJedis();
-		jedis.hdel(key, field);
-	}
-	
-	private synchronized void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
-	{
-		reconnectJedis();
-		Set<String> fields = jedis.hkeys(key);		
-		
-		if(fields != null)
-		{
-			if(key.equalsIgnoreCase(ObjectType.SFILE) || key.equalsIgnoreCase(ObjectType.SFILELOCATION))
-			{
-				System.out.println(fields.size()+" "+key+" in redis.");
-				return;
-			}
-			System.out.println("read "+fields.size()+" "+key+" from redis into cache.");
-			for(String field : fields)
-			{
-				readObject(key, field);
-			}
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			jedis.hdel(key, field);
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
 		}
 	}
 	
-	
-	public synchronized List<Long> listTableFiles(String dbName, String tabName, int from, int to)
+	private void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
 	{
-		reconnectJedis();
-		String k = "sf."+dbName+"."+tabName;
-		Set<String> ss = jedis.zrange(k, from, to);
-		List<Long> ids = new ArrayList<Long>();
-		if(ss != null)
-			for(String id : ss)
-				ids.add(Long.parseLong(id));
-		return ids;
-	}
-	
-	public synchronized List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values)
-	{
-		reconnectJedis();
-		String k = "sf."+values.hashCode();
-		Set<String> mem = jedis.smembers(k);
-		List<SFile> rls = new ArrayList<SFile>();
-		if(mem != null)
-		{
-			for(String id : mem)
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			Set<String> fields = jedis.hkeys(key);		
+			
+			if(fields != null)
 			{
-				SFile f = null;
-				try {
-					f = (SFile) readObject(ObjectType.SFILE, id);
-					if(f != null)
-						rls.add(f);
-				} catch(Exception e) {
-					e.printStackTrace();
+				if(key.equalsIgnoreCase(ObjectType.SFILE) || key.equalsIgnoreCase(ObjectType.SFILELOCATION))
+				{
+					System.out.println(fields.size()+" "+key+" in redis.");
+					return;
+				}
+				System.out.println("read "+fields.size()+" "+key+" from redis into cache.");
+				for(String field : fields)
+				{
+					readObject(key, field);
 				}
 			}
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
 		}
-		return rls;
 	}
 	
-	public synchronized List<Long> listFilesByDegist(String degist)
-	{
-		reconnectJedis();
-		Set<String> ids = jedis.smembers("sf."+degist);
-		List<Long> rl = new ArrayList<Long>();
-		if(ids != null)
-			for(String s : ids)
-				rl.add(Long.parseLong(s));
-		return rl;
-	}
 	
-	public synchronized List<String> get_all_tables(String dbname)
+	public List<Long> listTableFiles(String dbName, String tabName, int from, int to)
 	{
-		reconnectJedis();
-		Set<String> k = jedis.hkeys(ObjectType.TABLE);
-		List<String> rl = new ArrayList<String>();
-		for(String dt : k)
-		{
-			if(dt.startsWith(dbname))
-				rl.add(dt.split("\\.")[1]);
-		}
-		return rl;
-	}
-	private synchronized void reconnectJedis() throws JedisConnectionException {
-		if (jedis == null) {
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
 			jedis = rf.getDefaultInstance();
+			String k = "sf."+dbName+"."+tabName;
+			Set<String> ss = jedis.zrange(k, from, to);
+			List<Long> ids = new ArrayList<Long>();
+			if(ss != null)
+				for(String id : ss)
+					ids.add(Long.parseLong(id));
+			return ids;
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
 		}
-		if (jedis == null)
-			throw new JedisConnectionException("Connection to redis Server failed.");
+		
+		
 	}
+	
+	public List<SFile> filterTableFiles(String dbName, String tabName, List<SplitValue> values)
+	{
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			String k = "sf."+values.hashCode();
+			Set<String> mem = jedis.smembers(k);
+			List<SFile> rls = new ArrayList<SFile>();
+			if(mem != null)
+			{
+				for(String id : mem)
+				{
+					SFile f = null;
+					try {
+						f = (SFile) readObject(ObjectType.SFILE, id);
+						if(f != null)
+							rls.add(f);
+					} catch(Exception e) {
+						e.printStackTrace();
+					}
+				}
+			}
+			return rls;
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
+		}
+		
+	}
+	
+	public List<Long> listFilesByDegist(String degist)
+	{
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			Set<String> ids = jedis.smembers("sf."+degist);
+			List<Long> rl = new ArrayList<Long>();
+			if(ids != null)
+				for(String s : ids)
+					rl.add(Long.parseLong(s));
+			return rl;
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
+		}
+		
+	}
+	
+	public List<String> get_all_tables(String dbname)
+	{
+//		reconnectJedis();
+		Jedis jedis = null;
+		try{
+			jedis = rf.getDefaultInstance();
+			Set<String> k = jedis.hkeys(ObjectType.TABLE);
+			List<String> rl = new ArrayList<String>();
+			for(String dt : k)
+			{
+				if(dt.startsWith(dbname))
+					rl.add(dt.split("\\.")[1]);
+			}
+			return rl;
+		}catch(JedisConnectionException e){
+			RedisFactory.putBrokenInstance(jedis);
+			jedis = null;
+			throw e;
+		}finally{
+			RedisFactory.putInstance(jedis);
+		}
+	}
+//	private synchronized void reconnectJedis() throws JedisConnectionException {
+//		if (jedis == null) {
+//			jedis = rf.getDefaultInstance();
+//		}
+//		if (jedis == null)
+//			throw new JedisConnectionException("Connection to redis Server failed.");
+//	}
 
 	
 	public static ConcurrentHashMap<String, Database> getDatabaseHm() {
