@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -624,11 +625,21 @@ public class StorePhoto {
 		return r;
 	}
 	
+	public static class SetStats {
+		public long rnr; // record nr
+		public long fnr; // file nr
+		
+		public SetStats(long rnr, long fnr) {
+			this.rnr = rnr;
+			this.fnr = fnr;
+		}
+	}
+	
 	/**
 	 * 获得redis中每个set的块数，存在hash表里，键是[集合名，该集合内的文件数]，值是块数
 	 * @return
 	 */
-	public Map<String, Integer> getSetBlks() {
+	public TreeMap<String, SetStats> getSetBlks() {
 		int err = 0;
 		
 		try {
@@ -636,8 +647,7 @@ public class StorePhoto {
 		} catch (IOException e2) {
 			return null;
 		}
-		HashMap<String, Integer> re = new HashMap<String,Integer>();
-		HashMap<String, Integer> temp = new HashMap<String,Integer>();
+		TreeMap<String, SetStats> temp = new TreeMap<String, SetStats>();
 		try {
 			Set<String> keys = jedis.keys("*.blk.*");
 			
@@ -647,10 +657,7 @@ public class StorePhoto {
 				
 				for (int i = 0; i < keya.length; i++) {
 					String set = keya[i].split("\\.")[0];
-					re.put(set, re.containsKey(set) ? re.get(set) + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 );
-				}
-				for (String s : re.keySet()) {
-					temp.put(s + ", " + jedis.hlen(s), re.get(s));
+					temp.put(set, new SetStats(jedis.hlen(set), temp.containsKey(set) ? temp.get(set).fnr + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 ));
 				}
 			}
 		} catch (JedisConnectionException e) {

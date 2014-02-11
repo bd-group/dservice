@@ -39,8 +39,8 @@ function init1(){
 			
 
 		}
-	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png"];
-	for(var i = 0;i<7;i++)
+	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png","node.png"];
+	for(var i = 0;i<8;i++)
 	{
 		var url = document.getElementById("url"+i).href;
 		document.getElementById("url"+i).href =url + window.location.search;

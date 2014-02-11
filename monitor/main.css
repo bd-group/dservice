@@ -107,6 +107,16 @@
 	height: 20%;
 	z-index: 1000;
 }
+
+.context4right{
+	position:absolute;
+	left:53%;
+	top:80%;
+	width: 55%;
+	height: 20%;
+	z-index: 1000;
+}
+
 .links{
 	position:absolute;
 	left:17%;

@@ -1,12 +1,14 @@
 package iie.mm.server;
 
 import iie.mm.server.StorePhoto.RedirectException;
+import iie.mm.server.StorePhoto.SetStats;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -155,7 +157,7 @@ public class HTTPHandler extends AbstractHandler {
 	
 	private void doData(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
-		Map<String,Integer> m = sp.getSetBlks();
+		TreeMap<String, SetStats> m = sp.getSetBlks();
 		if (m == null) {
 			badResponse(baseRequest, response, "#FAIL:read from redis failed.");
 			return;
@@ -166,10 +168,10 @@ public class HTTPHandler extends AbstractHandler {
 		PrintWriter pw = response.getWriter();
 		pw.println("#Data Count(Set_Name, Number, Length(MB)):");
 		int totallen = 0, totalnr = 0;
-		for (Map.Entry<String, Integer> en : m.entrySet()) {
-			totallen += en.getValue();
-			totalnr += Integer.parseInt(en.getKey().split(",")[1].trim());
-			pw.println(" " + en.getKey() + ", " + (en.getValue() * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
+		for (String set : m.descendingKeySet()) {
+			totallen += m.get(set).fnr;
+			totalnr += m.get(set).rnr;
+			pw.println(" " + set + ", " + m.get(set).rnr + ", " + (m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
 		}
 		pw.println(" [TOTAL], " + totalnr + ", " + totallen * ((double)conf.getBlockSize() / 1024.0 / 1024.0));
 	}
