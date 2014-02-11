@@ -58,7 +58,7 @@ public class PhotoServer {
 				pool.execute(new Handler(conf, ss.accept(), sq));
 			} catch (IOException e) {
 				e.printStackTrace();
-				pool.shutdown();
+//				pool.shutdown();
 			}
 		}
 	}
