@@ -6,7 +6,7 @@ import iie.mm.server.StorePhoto.SetStats;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
-import java.util.Map;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -168,7 +168,10 @@ public class HTTPHandler extends AbstractHandler {
 		PrintWriter pw = response.getWriter();
 		pw.println("#Data Count(Set_Name, Number, Length(MB)):");
 		int totallen = 0, totalnr = 0;
-		for (String set : m.descendingKeySet()) {
+		Iterator<String> ir = m.navigableKeySet().descendingIterator();
+		while(ir.hasNext())
+		{
+			String set = ir.next();
 			totallen += m.get(set).fnr;
 			totalnr += m.get(set).rnr;
 			pw.println(" " + set + ", " + m.get(set).rnr + ", " + (m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
