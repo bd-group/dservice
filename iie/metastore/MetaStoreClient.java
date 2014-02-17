@@ -776,6 +776,7 @@ public class MetaStoreClient {
 	    long ofl_fid = -1, srep_fid = -1, fsck_begin = -1, fsck_end = -1;
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
+	    boolean ofl_del = false;
 	    int flt_version = 0;
 	    String ng_name = null;
 	    boolean statfs2_xj = false, statfs2_del = false, statfs2_getlen = true;
@@ -783,6 +784,7 @@ public class MetaStoreClient {
 	    long statfs2_bday = -1, statfs2_days = -1;
 	    String scrub_rule = null;
 	    long scrub_max = -1;
+	    String dfl_dev = null, dfl_location = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -1173,6 +1175,10 @@ public class MetaStoreClient {
 	    		}
 	    		ofl_sfl_dev = o.opt;
 	    	}
+	    	if (o.flag.equals("-ofl_del")) {
+	    		// set delete flag for the local file
+	    		ofl_del = true;
+	    	}
 	    	if (o.flag.equals("-srep_fid")) {
 	    		// set rep file id
 	    		if (o.opt == null) {
@@ -1212,6 +1218,22 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		ng_name = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_dev")) {
+	    		// device ID
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_dev devid");
+	    			System.exit(0);
+	    		}
+	    		dfl_dev = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_location")) {
+	    		// location
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_location loc");
+	    			System.exit(0);
+	    		}
+	    		dfl_location = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -2407,6 +2429,32 @@ public class MetaStoreClient {
 					break;
 				}
 			}
+			if (o.flag.equals("-dfl")) {
+				// delete a file location, and remove the physical data
+				if (node == null || dfl_dev == null || dfl_location == null) {
+					System.out.println("Please set -node -dfl_dev and -dfl_location");
+					System.exit(0);
+				}
+				String mp, cmd = null;
+
+				try {
+					cli.client.del_filelocation(dfl_dev, dfl_location);
+					mp = cli.client.getMP(node, dfl_dev);
+					if (mp != null)
+						cmd = "ssh " + node + " rm -rf " + mp + "/" + dfl_location;
+					System.out.println("CMD: {" + cmd + "}");
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+				if (mp != null)
+					runRemoteCmd(cmd);
+			}
 			if (o.flag.equals("-ofl")) {
 				// offline a file location
 				if (ofl_fid < 0 || ofl_sfl_dev == null) {
@@ -2427,7 +2475,15 @@ public class MetaStoreClient {
 						}
 					}
 					if (sfl != null)
-						cli.client.offline_filelocation(sfl);
+						ofl_del = ofl_del && cli.client.offline_filelocation(sfl);
+					if (ofl_del) {
+						String mp, cmd = null;
+						mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+						if (mp != null)
+							cmd = "ssh " + sfl.getNode_name() + " rm -rf " + mp + "/" + sfl.getLocation();
+						System.out.println("CMD: {" + cmd + "}");
+						// runRemoteCmd(cmd);
+					}
 				} catch (FileOperationException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
