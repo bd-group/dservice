@@ -2431,7 +2431,7 @@ public class MetaStoreClient {
 			}
 			if (o.flag.equals("-dfl")) {
 				// delete a file location, and remove the physical data
-				if (node == null || dfl_dev == null || dfl_location == null) {
+				if (node_name == null || dfl_dev == null || dfl_location == null) {
 					System.out.println("Please set -node -dfl_dev and -dfl_location");
 					System.exit(0);
 				}
@@ -2439,9 +2439,9 @@ public class MetaStoreClient {
 
 				try {
 					cli.client.del_filelocation(dfl_dev, dfl_location);
-					mp = cli.client.getMP(node, dfl_dev);
+					mp = cli.client.getMP(node_name, dfl_dev);
 					if (mp != null)
-						cmd = "ssh " + node + " rm -rf " + mp + "/" + dfl_location;
+						cmd = "ssh " + node_name + " rm -rf " + mp + "/" + dfl_location;
 					System.out.println("CMD: {" + cmd + "}");
 				} catch (MetaException e) {
 					// TODO Auto-generated catch block
