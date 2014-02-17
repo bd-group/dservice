@@ -58,7 +58,8 @@ public class PhotoServer {
 				pool.execute(new Handler(conf, ss.accept(), sq));
 			} catch (IOException e) {
 				e.printStackTrace();
-//				pool.shutdown();
+				// BUG-XXX: do not shutdown the pool on any IOException.
+				//pool.shutdown();
 			}
 		}
 	}

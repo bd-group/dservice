@@ -169,8 +169,7 @@ public class HTTPHandler extends AbstractHandler {
 		pw.println("#Data Count(Set_Name, Number, Length(MB)):");
 		int totallen = 0, totalnr = 0;
 		Iterator<String> ir = m.navigableKeySet().descendingIterator();
-		while(ir.hasNext())
-		{
+		while (ir.hasNext()) {
 			String set = ir.next();
 			totallen += m.get(set).fnr;
 			totalnr += m.get(set).rnr;
