@@ -1,6 +1,5 @@
 package iie.mm.server;
 
-import org.apache.commons.pool.impl.GenericObjectPool;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPoolConfig;

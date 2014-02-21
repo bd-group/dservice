@@ -1,14 +1,15 @@
 package iie.mm.server;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
@@ -16,8 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Response;
-import redis.clients.jedis.Transaction;
+import redis.clients.jedis.ScanResult;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
@@ -238,6 +238,15 @@ public class StorePhoto {
 		try {
 			returnStr = rVal.toString();
 			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
+			BufferedImage bi = ImageMatch.readImage(content,coff,clen);
+			if(bi == null)
+			{
+				System.out.println("the content of key:"+set+"@"+md5+" is not a image");
+			}
+			else{
+//				jedis.hset("imagematch", ImageMatch.getPHashcode(bi), set+"@"+md5);
+				jedis.hset("imagematch", new ImagePHash().getHash(bi), set+"@"+md5);
+			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -428,6 +437,15 @@ public class StorePhoto {
 		try {
 			for (int i = 0; i < content.length; i++) {
 				returnVal[i] = jedis.evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
+				BufferedImage bi = ImageMatch.readImage(content[i]);
+				if(bi == null)
+				{
+					System.out.println("the content of key:"+set+"@"+md5+" is not a image");
+				}
+				else{
+//					jedis.hset("imagematch", ImageMatch.getPHashcode(bi), set+"@"+md5);
+					jedis.hset("imagematch", new ImagePHash().getHash(bi), set+"@"+md5);
+				}
 			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in mstoreObject.");
@@ -679,6 +697,39 @@ public class StorePhoto {
 		}
 		
 		return temp;
+	}
+	
+	/**
+	 * 和phcode汉明距离小于等于d的认为图片相似,phcode是十六进制的，要转换成二进制再比
+	 * 返回汉明距离与图片的key对应的TreeMap
+	 * @param phcode
+	 * @param d
+	 * @return
+	 */
+	public TreeMap<Integer,String> imageMatch(String phcode, int d)
+	{
+		try {
+			reconnectJedis();
+		} catch (IOException e) {
+			e.printStackTrace();
+			return null;
+		}
+		TreeMap<Integer,String> tm = new TreeMap<Integer,String>();
+		ScanResult<Map.Entry<String, String>> re = null;
+		String cursor = "0";
+		do{
+			re = jedis.hscan("imagematch", cursor);
+			cursor = re.getStringCursor();
+			for(Map.Entry<String, String> en : re.getResult())
+			{
+				int dis = ImageMatch.distance(ImageMatch.hexToBin(en.getKey()), ImageMatch.hexToBin(phcode));
+//				System.out.println(dis +"   "+d);
+				if(dis <= d)
+					tm.put(dis, en.getValue());
+			}
+		}while(!cursor.equals("0"));
+
+		return tm;
 	}
 	
 	//关闭jedis连接,关闭文件访问流

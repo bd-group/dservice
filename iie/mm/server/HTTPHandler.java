@@ -3,19 +3,28 @@ package iie.mm.server;
 import iie.mm.server.StorePhoto.RedirectException;
 import iie.mm.server.StorePhoto.SetStats;
 
+import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeMap;
 
+import javax.servlet.Servlet;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.fileupload.FileItem;
+import org.apache.commons.fileupload.FileUploadException;
+import org.apache.commons.fileupload.disk.DiskFileItemFactory;
+import org.apache.commons.fileupload.servlet.ServletFileUpload;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.server.handler.ResourceHandler;
 
 import redis.clients.jedis.Jedis;
 
@@ -204,10 +213,81 @@ public class HTTPHandler extends AbstractHandler {
 			response.getWriter().flush();
 		}
 	}
+	
+	private void doImageMatch(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+			throws IOException, ServletException {
+		if (target.equalsIgnoreCase("/im/index.html")) {
+			ResourceHandler rh = new ResourceHandler();
+			rh.setResourceBase(".");
+			rh.handle(target, baseRequest, request, response);
+		} else {
+			DiskFileItemFactory factory = new DiskFileItemFactory();
+			ServletFileUpload upload = new ServletFileUpload(factory);
+			List<FileItem> items;
+			try {
+				items = upload.parseRequest(request);
+				// 解析request请求
+				Iterator<FileItem> iter = items.iterator();
+				int distance = 0;
+				BufferedImage img = null;
+				while (iter.hasNext()) {
+					FileItem item = (FileItem) iter.next();
+					if (item.isFormField()) { 				// 如果是表单域 ，就是非文件上传元素
+						String name = item.getFieldName(); // 获取name属性的值
+						String value = item.getString(); // 获取value属性的值
+						// System.out.println(name+"   "+value);
+						if (name.equals("distance"))
+							distance = Integer.parseInt(value);
+					} else {
+						String fieldName = item.getFieldName(); // 文件域中name属性的值
+						String fileName = item.getName(); // 文件的全路径，绝对路径名加文件名
+						// okResponse(baseRequest, response, item.get());
+						try {
+							img = ImageMatch.readImage(item.get());
+						} catch (IOException e) {
+							badResponse(baseRequest, response,"#FAIL:" + e.getMessage());
+							e.printStackTrace();
+							return;
+						}
+						if (img == null) {
+							badResponse(baseRequest, response,"#FAIL:the file uploaded probably is not an image.");
+							return;
+						}
+
+					}
+				}
+				// String hc = ImageMatch.getPHashcode(img);
+				String hc = new ImagePHash().getHash(img);
+				TreeMap<Integer, String> dk = sp.imageMatch(hc, distance);
+				String page = "<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>"
+						+ "<BODY><H1> match result </H1><UL>";
+				Iterator<Integer> iter2 = dk.navigableKeySet().iterator();
+				while (iter2.hasNext()) {
+					Integer dis = iter2.next();
+					page += "<li>" + dk.get(dis) + "<br><img src=\"http://"
+							+ request.getLocalAddr() + ":"
+							+ request.getLocalPort() + "/get?key="
+							+ dk.get(dis) + "\"> </li>";
+				}
+				page += "</UL></BODY> </HTML>";
+				response.setContentType("text/html;charset=utf-8");
+				response.setStatus(HttpServletResponse.SC_OK);
+				baseRequest.setHandled(true);
+				response.getWriter().write(page);
+				response.getWriter().flush();
+			} catch (FileUploadException e) {
+				e.printStackTrace();
+				badResponse(baseRequest, response, e.getMessage());
+			}
+		}
+
+	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
 //		System.out.println(target);
+//		System.out.println(request.getRequestURL().toString());
+//		System.out.println(request.getLocalAddr());
 		if (target == null) {
 			// bad response
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
@@ -221,6 +301,8 @@ public class HTTPHandler extends AbstractHandler {
 			doData(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/b")) {
 			doBrowse(target, baseRequest, request, response);
+		} else if (target.startsWith("/im/")){
+			doImageMatch(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}
