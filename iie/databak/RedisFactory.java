@@ -1,6 +1,5 @@
 package iie.databak;
 
-import org.apache.commons.pool.impl.GenericObjectPool;
 
 import iie.databak.DatabakConf.RedisInstance;
 import redis.clients.jedis.Jedis;
@@ -18,11 +17,11 @@ public class RedisFactory {
 		RedisFactory.conf = conf;
 		config = new JedisPoolConfig();
 		
-		config.setMaxActive(1000);
+		config.setMaxTotal(1000);
 		config.setMaxIdle(50);
 		config.setTestOnBorrow(false);
 		config.setTestOnReturn(false);
-		config.setWhenExhaustedAction(GenericObjectPool.WHEN_EXHAUSTED_BLOCK);
+		config.setBlockWhenExhausted(true);
 	}
 	
 	// 从配置文件中读取redis的地址和端口,以此创建jedis对象

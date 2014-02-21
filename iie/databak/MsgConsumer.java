@@ -94,7 +94,7 @@ public class MsgConsumer {
 		// New session factory,强烈建议使用单例
 		MessageSessionFactory sessionFactory = new MetaMessageSessionFactory(metaClientConfig);
 		final String topic = "meta-test";
-		final String group = "meta-databak1";
+		final String group = "meta-databak2";
 		// create consumer,强烈建议使用单例
 
 		// 生成处理线程

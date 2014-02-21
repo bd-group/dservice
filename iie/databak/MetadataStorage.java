@@ -34,6 +34,7 @@ import org.apache.hadoop.hive.metastore.msg.MSGType;
 import org.apache.thrift.TException;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class MetadataStorage {
@@ -447,19 +448,19 @@ public class MetadataStorage {
 				//为listtablefiles
 				if(sfi.getDbName() != null && sfi.getTableName() != null)
 				{
-					String k = "sf."+sfi.getDbName()+"."+sfi.getTableName();
+					String k = generateLtfKey(sfi.getTableName(), sfi.getDbName());
 					jedis.evalsha(sha, 1, k, sfi.getFid()+"");
 				}
 				//为filtertablefiles
 				if(sfi.getValues() != null && sfi.getValues().size() > 0)
 				{
-					String k2 = "sf."+sfi.getValues().hashCode();
+					String k2 = generateFtlKey(sfi.getValues());
 					jedis.sadd(k2, sfi.getFid()+"");
 				}
 				//listFilesByDegist
 				if(sfi.getDigest() != null)
 				{
-					String k = "sf."+sfi.getDigest();
+					String k = generateLfbdKey(sfi.getDigest());
 					jedis.sadd(k, sfi.getFid()+"");
 				}
 	
@@ -608,6 +609,42 @@ public class MetadataStorage {
 
 	private void removeObject(String key, String field)
 	{
+		//删除一个sfile时要把预先建立的一些信息也删掉
+		if(key.equals(ObjectType.SFILE))
+		{
+			try {
+				SFile sf = (SFile) readObject(key, field);
+				if(sf != null)
+				{
+					Jedis jedis = null;
+					try{
+						jedis = rf.getDefaultInstance();
+						Pipeline p = jedis.pipelined();
+						p.srem(generateLfbdKey(sf.getDigest()), field);
+						p.srem(generateFtlKey(sf.getValues()), field);
+						p.zrem(generateLtfKey(sf.getTableName(), sf.getDbName()), field);
+						p.hdel(key, field);
+						p.sync();
+					}catch(JedisConnectionException e){
+						RedisFactory.putBrokenInstance(jedis);
+						jedis = null;
+						throw e;
+					}finally{
+						RedisFactory.putInstance(jedis);
+					}
+				}
+			} catch (JedisConnectionException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (ClassNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
 		if(key.equals(ObjectType.TABLE))
@@ -629,18 +666,6 @@ public class MetadataStorage {
 		if(key.equals(ObjectType.PARTITION))
 			partitionHm.remove(field);
 		
-//		reconnectJedis();
-		Jedis jedis = null;
-		try{
-			jedis = rf.getDefaultInstance();
-			jedis.hdel(key, field);
-		}catch(JedisConnectionException e){
-			RedisFactory.putBrokenInstance(jedis);
-			jedis = null;
-			throw e;
-		}finally{
-			RedisFactory.putInstance(jedis);
-		}
 	}
 	
 	private void readAll(String key) throws JedisConnectionException, IOException, ClassNotFoundException
@@ -680,7 +705,7 @@ public class MetadataStorage {
 		Jedis jedis = null;
 		try{
 			jedis = rf.getDefaultInstance();
-			String k = "sf."+dbName+"."+tabName;
+			String k = generateLtfKey(tabName, dbName);
 			Set<String> ss = jedis.zrange(k, from, to);
 			List<Long> ids = new ArrayList<Long>();
 			if(ss != null)
@@ -704,7 +729,7 @@ public class MetadataStorage {
 		Jedis jedis = null;
 		try{
 			jedis = rf.getDefaultInstance();
-			String k = "sf."+values.hashCode();
+			String k = generateFtlKey(values);
 			Set<String> mem = jedis.smembers(k);
 			List<SFile> rls = new ArrayList<SFile>();
 			if(mem != null)
@@ -738,7 +763,8 @@ public class MetadataStorage {
 		Jedis jedis = null;
 		try{
 			jedis = rf.getDefaultInstance();
-			Set<String> ids = jedis.smembers("sf."+degist);
+			String k = generateLfbdKey(degist);
+			Set<String> ids = jedis.smembers(k);
 			List<Long> rl = new ArrayList<Long>();
 			if(ids != null)
 				for(String s : ids)
@@ -783,6 +809,29 @@ public class MetadataStorage {
 //		if (jedis == null)
 //			throw new JedisConnectionException("Connection to redis Server failed.");
 //	}
+	
+	private String generateLtfKey(String tablename, String dbname)
+	{
+		String p = "sf.ltf.";
+		if(tablename == null || dbname == null)
+			return p;
+		return p+dbname+"."+tablename;
+	}
+	
+	private String generateFtlKey(List<SplitValue> value )
+	{
+		String p = "sf.ftf.";
+		if(value == null)
+			return p;
+		return p+value.hashCode();
+	}
+	private String generateLfbdKey(String digest)
+	{
+		String p = "sf.lfbd.";
+		if(digest == null)
+			return p;
+		return p+digest;
+	}
 
 	
 	public static ConcurrentHashMap<String, Database> getDatabaseHm() {
