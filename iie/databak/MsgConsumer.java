@@ -122,7 +122,7 @@ public class MsgConsumer {
 //					e.printStackTrace();
 //				}
 				DDLMsg msg = DDLMsg.fromJson(data);
-				while(time < 3)
+				while(time <= 3)
 				{
 					if(time >= 3)
 					{
@@ -132,7 +132,7 @@ public class MsgConsumer {
 					}
 					try{
 						ms.handleMsg(msg);
-						if(failedq.size() > 0)
+						if(!failedq.isEmpty())
 						{
 							msg = failedq.poll();
 							System.out.println("handle msg in failed queue: "+msg.getMsg_id());

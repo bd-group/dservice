@@ -3,7 +3,6 @@ package iie.databak;
 
 import iie.databak.DatabakConf.RedisInstance;
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.JedisPool;
 
@@ -12,16 +11,8 @@ public class RedisFactory {
 	private static JedisSentinelPool jsp = null;
 	private static JedisPool jp = null;
 	private static RedisInstance ri = null;
-	private JedisPoolConfig config = null;
 	public RedisFactory(DatabakConf conf) {
 		RedisFactory.conf = conf;
-		config = new JedisPoolConfig();
-		
-		config.setMaxTotal(1000);
-		config.setMaxIdle(50);
-		config.setTestOnBorrow(false);
-		config.setTestOnReturn(false);
-		config.setBlockWhenExhausted(true);
 	}
 	
 	// 从配置文件中读取redis的地址和端口,以此创建jedis对象
@@ -32,7 +23,7 @@ public class RedisFactory {
 			if(ri == null)
 			{
 				ri = conf.getRedisInstance();
-				jp = new JedisPool(config,ri.hostname,ri.port);
+				jp = new JedisPool(ri.hostname,ri.port);
 			}
 			return jp.getResource();
 		case SENTINEL:
@@ -42,7 +33,7 @@ public class RedisFactory {
 				r = jsp.getResource();
 			else {
 				
-				jsp = new JedisSentinelPool("mymaster", conf.getSentinels(), config);
+				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
 				r = jsp.getResource();
 			}
 			return r;
