@@ -9,7 +9,6 @@ import java.io.RandomAccessFile;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
@@ -17,7 +16,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.ScanResult;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
@@ -239,13 +237,9 @@ public class StorePhoto {
 			returnStr = rVal.toString();
 			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
 			BufferedImage bi = ImageMatch.readImage(content,coff,clen);
-			if(bi == null)
+			if(bi != null)
 			{
-				System.out.println("the content of key:"+set+"@"+md5+" is not a image");
-			}
-			else{
-//				jedis.hset("imagematch", ImageMatch.getPHashcode(bi), set+"@"+md5);
-				jedis.hset("imagematch", new ImagePHash().getHash(bi), set+"@"+md5);
+				ImageMatch.add(new ImageMatch.ImgKeyEntry(bi, set, md5));
 			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
@@ -438,13 +432,9 @@ public class StorePhoto {
 			for (int i = 0; i < content.length; i++) {
 				returnVal[i] = jedis.evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
 				BufferedImage bi = ImageMatch.readImage(content[i]);
-				if(bi == null)
+				if(bi != null)
 				{
-					System.out.println("the content of key:"+set+"@"+md5+" is not a image");
-				}
-				else{
-//					jedis.hset("imagematch", ImageMatch.getPHashcode(bi), set+"@"+md5);
-					jedis.hset("imagematch", new ImagePHash().getHash(bi), set+"@"+md5);
+					ImageMatch.add(new ImageMatch.ImgKeyEntry(bi, set, md5[i]));
 				}
 			}
 		} catch (JedisConnectionException e) {
@@ -706,15 +696,11 @@ public class StorePhoto {
 	 * @param d
 	 * @return
 	 */
-	public TreeMap<Integer,String> imageMatch(String phcode, int d)
+	public TreeMap<String,String> imageMatch(String phcode, int d)
 	{
-		try {
-			reconnectJedis();
-		} catch (IOException e) {
-			e.printStackTrace();
-			return null;
-		}
-		TreeMap<Integer,String> tm = new TreeMap<Integer,String>();
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		TreeMap<String,String> tm = new TreeMap<String,String>();
+		/*
 		ScanResult<Map.Entry<String, String>> re = null;
 		String cursor = "0";
 		do{
@@ -728,7 +714,33 @@ public class StorePhoto {
 					tm.put(dis, en.getValue());
 			}
 		}while(!cursor.equals("0"));
-
+		*/
+		try{
+			for(String key : jedis.keys("*.imagematch"))
+			{
+//				System.out.println(key);
+				for(Map.Entry<String, String> en : jedis.hgetAll(key).entrySet())
+				{
+					int dis = ImageMatch.distance(ImageMatch.hexToBin(en.getKey()), ImageMatch.hexToBin(phcode));
+//					System.out.println(dis);
+					if(dis <= d)
+					{
+						//为了后续能按键的值排序，并能够保留不同集合里相同dis的图片
+						if(dis < 10)
+							tm.put("0"+dis+key.split("\\.")[0], en.getValue());
+						else
+							tm.put(dis+key.split("\\.")[0], en.getValue());						
+					}
+				}
+			}
+			
+		} catch (JedisConnectionException e) {
+			e.printStackTrace();
+			jedis = RedisFactory.putBrokenInstance(jedis);
+		} finally {
+			jedis = RedisFactory.putInstance(jedis);
+		}
+		
 		return tm;
 	}
 	

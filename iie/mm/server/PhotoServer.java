@@ -48,6 +48,10 @@ public class PhotoServer {
 		server.setHandler(new HTTPHandler(conf));
 		server.start();
 		
+		//计算图片hash值的线程
+		ImageMatch im = new ImageMatch(conf);
+		im.startWork(3);
+		
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();

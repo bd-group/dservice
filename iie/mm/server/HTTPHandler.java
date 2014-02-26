@@ -258,12 +258,12 @@ public class HTTPHandler extends AbstractHandler {
 				}
 				// String hc = ImageMatch.getPHashcode(img);
 				String hc = new ImagePHash().getHash(img);
-				TreeMap<Integer, String> dk = sp.imageMatch(hc, distance);
+				TreeMap<String, String> dk = sp.imageMatch(hc, distance);
 				String page = "<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>"
 						+ "<BODY><H1> match result </H1><UL>";
-				Iterator<Integer> iter2 = dk.navigableKeySet().iterator();
+				Iterator<String> iter2 = dk.navigableKeySet().iterator();
 				while (iter2.hasNext()) {
-					Integer dis = iter2.next();
+					String dis = iter2.next();
 					page += "<li>" + dk.get(dis) + "<br><img src=\"http://"
 							+ request.getLocalAddr() + ":"
 							+ request.getLocalPort() + "/get?key="

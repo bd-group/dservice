@@ -77,7 +77,7 @@ public class ImagePHash {
         * and scalars. While JPEG uses an 8x8 DCT, this algorithm uses 
         * a 32x32 DCT.
         */
-       long start = System.currentTimeMillis();
+//       long start = System.currentTimeMillis();
        double[][] dctVals = applyDCT(vals);
 //       System.out.println("DCT: " + (System.currentTimeMillis() - start));
        
