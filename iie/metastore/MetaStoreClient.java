@@ -5,6 +5,7 @@ import iie.metastore.MetaStoreClient.ScrubRule.ScrubAction;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -463,6 +464,9 @@ public class MetaStoreClient {
 
 			int exitVal = p.waitFor();
 			System.out.println(" -> exit w/ " + exitVal);
+			br.close();
+			isr.close();
+			err.close();
 			if (exitVal > 0)
 				return false;
 		} catch (InterruptedException e) {
@@ -492,6 +496,9 @@ public class MetaStoreClient {
 				if (verbose) System.out.println(line);
 			}
 			if (verbose) System.out.println("</ERROR>");
+			br.close();
+			isr.close();
+			err.close();
 			
 			InputStream out = p.getInputStream();
 			isr = new InputStreamReader(out);
@@ -507,6 +514,9 @@ public class MetaStoreClient {
 
 			int exitVal = p.waitFor();
 			if (verbose) System.out.println(" -> exit w/ " + exitVal);
+			br.close();
+			isr.close();
+			out.close();
 			if (exitVal > 0)
 				return result;
 		} catch (InterruptedException e) {
@@ -554,9 +564,9 @@ public class MetaStoreClient {
 		FreeSpace fs = new FreeSpace();
 		
 		while ((line = bufReader.readLine()) != null) {
-			if (line.startsWith("Total space")) {
+			if (line.startsWith("True  space")) {
 				String[] ls = line.split(" ");
-				fs.total = Long.parseLong(ls[2].substring(0, ls[2].length() - 2)) * 1000000;
+				fs.total = Long.parseLong(ls[3].substring(0, ls[3].length() - 2)) * 1000000;
 				fs.ratio = Double.parseDouble(ls[ls.length - 1]);
 				break;
 			}
@@ -785,6 +795,7 @@ public class MetaStoreClient {
 	    String scrub_rule = null;
 	    long scrub_max = -1;
 	    String dfl_dev = null, dfl_location = null;
+	    String dfl_file = null;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -1234,6 +1245,14 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		dfl_location = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_file")) {
+	    		// dfl file
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_file FILEPATH");
+	    			System.exit(0);
+	    		}
+	    		dfl_file = o.opt;
 	    	}
 	    }
 	    if (cli == null) {
@@ -1800,6 +1819,13 @@ public class MetaStoreClient {
 					sr.soft = 30 * 24;
 					sr.hard = 30 * 24;
 					sr.action = ScrubRule.ScrubAction.DOWNREP;
+					srl.add(sr);
+					sr = new ScrubRule();
+					sr.type = "all";
+					sr.soft = 400000; // year before unix ZERO year
+					sr.hard = 400000;
+					sr.action = ScrubRule.ScrubAction.DELETE;
+					srl.add(sr);
 				}
 				System.out.println("Target Ratio " + target_ratio);
 				for (ScrubRule sr : srl) {
@@ -1872,7 +1898,7 @@ public class MetaStoreClient {
 						BufferedReader bufReader = new BufferedReader(new StringReader(dms));
 						String line = null;
 						while ((line = bufReader.readLine()) != null) {
-							if (line.startsWith("Total space")) {
+							if (line.startsWith("True  space")) {
 								String[] ls = line.split(" ");
 								ratio = Double.parseDouble(ls[ls.length - 1]);
 								break;
@@ -1891,7 +1917,7 @@ public class MetaStoreClient {
 						long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
 						List<Long> fsmapToDel = new ArrayList<Long>();
 						
-						for (Long k : fmap.descendingKeySet()) {
+						for (Long k : fmap.keySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
 							long hours = (cur_hour - k) / 3600;
 							long total_free = 0;
@@ -1899,7 +1925,7 @@ public class MetaStoreClient {
 							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
 							// iterate on each rule
 							for (ScrubRule sr : srl) {
-								if (hours > sr.soft) {
+								if (hours > sr.soft || hours < -10000) {
 									// act on each table
 									List<String> toDel = new ArrayList<String>();
 									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2066,7 +2092,7 @@ public class MetaStoreClient {
 					Long total_size = 0L;
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2122,7 +2148,7 @@ public class MetaStoreClient {
 				Long total_size = 0L;
 				Map<String, Long> sizeMap = new TreeMap<String, Long>();
 				Map<String, Long> fnrMap = new TreeMap<String, Long>();
-				for (Long k : fmap.descendingKeySet()) {
+				for (Long k : fmap.keySet()) {
 					Map<String, FileStat> fsmap = fmap.get(k);
 					System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 					for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2178,7 +2204,7 @@ public class MetaStoreClient {
 					BufferedReader bufReader = new BufferedReader(new StringReader(dms));
 					String line = null;
 					while ((line = bufReader.readLine()) != null) {
-						if (line.startsWith("Total space")) {
+						if (line.startsWith("True  space")) {
 							String[] ls = line.split(" ");
 							if (Double.parseDouble(ls[ls.length - 1]) <= 0.05) {
 								// emergency mode, automatically delete
@@ -2321,7 +2347,7 @@ public class MetaStoreClient {
 					Long total_size = 0L;
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2348,7 +2374,7 @@ public class MetaStoreClient {
 						System.err.print("Do you really want to DOWN-REP these files? (Y or N) ");
 					
 					if ((System.in.read() == 'Y') || isEmergency) {
-						for (Long k : fmap.descendingKeySet()) {
+						for (Long k : fmap.keySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
 							System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 							for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2432,12 +2458,42 @@ public class MetaStoreClient {
 			if (o.flag.equals("-dfl")) {
 				// delete a file location, and remove the physical data
 				if (dfl_dev == null || dfl_location == null) {
-					System.out.println("Please set -node -dfl_dev and -dfl_location");
+					System.out.println("Please set -dfl_dev and -dfl_location");
 					System.exit(0);
 				}
 
 				try {
 					cli.client.del_filelocation(dfl_dev, dfl_location);
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-dflf")) {
+				// delete a file location (read from a file), and remove the physical data
+				if (dfl_file == null) {
+					System.out.println("Please set -dfl_file");
+					System.exit(0);
+				}
+
+				try {
+					File tf = new File(dfl_file);
+					FileReader fr = new FileReader(tf.getAbsoluteFile());
+					BufferedReader br = new BufferedReader(fr);
+					String line = null;
+					
+					while ((line = br.readLine()) != null) {
+						String[] ln = line.split(",");
+						if (ln.length == 2) {
+							System.out.println("Got DEVID " + ln[0] + " LOC " + ln[1]);
+							cli.client.del_filelocation(ln[0], ln[1]);
+						}
+					}
 				} catch (MetaException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -2616,7 +2672,7 @@ public class MetaStoreClient {
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
 					Map<String, List<Long>> fidMap = new TreeMap<String, List<Long>>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2643,6 +2699,7 @@ public class MetaStoreClient {
 					System.out.println("Total Size " + total_size + " KB");
 					
 					String command = "ssh %s 'cd sotstore/dservice ; java -cp build/devmap.jar:build/iie.jar:lib/lucene-core-4.2.1.jar -Djava.library.path=build/ iie.metastore.LuceneStat %s %s'";
+					TreeSet<Long> fs = new TreeSet<Long>();
 					for (Map.Entry<String, List<Long>> e : fidMap.entrySet()) {
 						long totalRecord = 0;
 						long totalSize = 0;
@@ -2655,6 +2712,7 @@ public class MetaStoreClient {
 							
 							freps = 0;
 							fnrs++;
+							fs.add(fid);
 							List<Long> tr = new ArrayList<Long>(f.getLocationsSize());
 							List<Long> ts = new ArrayList<Long>(f.getLocationsSize());
 							for (SFileLocation loc : f.getLocations()) {
@@ -2697,6 +2755,7 @@ public class MetaStoreClient {
 						}
 						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
 								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " KB");
+						System.out.println(fs);
 					}
 				} catch (MetaException e) {
 					e.printStackTrace();
@@ -2933,7 +2992,7 @@ public class MetaStoreClient {
 						}
 					}
 					// ok, dump the file stats
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
