@@ -593,18 +593,27 @@ public class MetaStoreClient {
 					// calculate space now
 					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
 						if (getlen) {
-							SFileLocation sfl = f.getLocations().get(0);
-							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-							String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
-							String result = runRemoteCmdWithResult(cmd);
-							if (!result.equals("")) {
-								String[] res = result.split("\t");
+							for (int i = 0; i < f.getLocationsSize(); i++) {
+								SFileLocation sfl = f.getLocations().get(i);
 								try {
-									fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
-									fs.addRecordnr(f.getRecord_nr());
-								} catch (NumberFormatException nfe) {
-									nfe.printStackTrace();
+									String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+									String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+									String result = runRemoteCmdWithResult(cmd);
+									if (!result.equals("")) {
+										String[] res = result.split("\t");
+										try {
+											fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
+											fs.addRecordnr(f.getRecord_nr());
+										} catch (NumberFormatException nfe) {
+											nfe.printStackTrace();
+											continue;
+										}
+									}
+								} catch (MetaException mee) {
+									mee.printStackTrace();
+									continue;
 								}
+								break;
 							}
 						}
 					} else if (f.getLength() > 0) {
@@ -796,6 +805,7 @@ public class MetaStoreClient {
 	    long scrub_max = -1;
 	    String dfl_dev = null, dfl_location = null;
 	    String dfl_file = null;
+	    int fls_op = -1;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -1254,6 +1264,14 @@ public class MetaStoreClient {
 	    		}
 	    		dfl_file = o.opt;
 	    	}
+	    	if (o.flag.equals("-fls_op")) {
+	    		// set fls_op
+	    		if (o.opt == null) {
+	    			System.out.println("-fls_op 0/1/2");
+	    			System.exit(0);
+	    		}
+	    		fls_op = Integer.parseInt(o.opt);
+	    	}
 	    }
 	    if (cli == null) {
 	    	try {
@@ -1624,6 +1642,41 @@ public class MetaStoreClient {
 	    		try {
 					cli.client.offlineDevice(devid);
 					System.out.println("Offline Device '" + devid + "' done.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-ofdp")) {
+	    		// physically offline a device
+	    		if (devid == null) {
+	    			System.out.println("Please set -devid");
+	    			System.exit(0);
+	    		}
+	    		try {
+					cli.client.offlineDevicePhysically(devid);
+					System.out.println("Offline Device '" + devid + "' done physically.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-fls")) {
+	    		// control FLSelector watch list
+	    		if (dbName == null || tableName == null || fls_op == -1) {
+	    			System.out.println("Please set -db and -table");
+	    			System.exit(0);
+	    		}
+	    		try {
+					boolean res = cli.client.flSelectorWatch(dbName + "." + tableName, fls_op);
+					System.out.println("Control FLSelector OP=" + (fls_op == 0 ? "ADD" :
+						(fls_op == 1 ? "DEL" : "FLUSH")) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -2705,6 +2758,7 @@ public class MetaStoreClient {
 						long totalSize = 0;
 						long fnrs = 0, freps = 0, ignore = 0;
 						
+						fs.clear();
 						for (Long fid : e.getValue()) {
 							SFile f = cli.client.get_file_by_id(fid);
 							String result = "";
@@ -2715,33 +2769,35 @@ public class MetaStoreClient {
 							fs.add(fid);
 							List<Long> tr = new ArrayList<Long>(f.getLocationsSize());
 							List<Long> ts = new ArrayList<Long>(f.getLocationsSize());
-							for (SFileLocation loc : f.getLocations()) {
-								if (loc.getVisit_status() != MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
-									ignore++;
-									continue;
-								}
-								freps++;
-								result = runRemoteCmdWithResultVerbose(String.format(command, 
-										loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
-
-								if (!"".equals(result) && result.indexOf("$") >= 0){
-									int start = result.indexOf("$");
-									int stop = result.indexOf(")");
-									result = result.substring(start+2,stop);	
-									String[] dres = result.split(",");
-									long drecord = Long.parseLong(dres[0]);
-									long dsize = Long.parseLong(dres[1]);
-									if (!isCalc) {
-										isCalc = true;
-										totalRecord += drecord;
-										totalSize += dsize;
+							if (f.getLocationsSize() > 0) {
+								for (SFileLocation loc : f.getLocations()) {
+									if (loc.getVisit_status() != MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
+										ignore++;
+										continue;
 									}
-									//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
-									tr.add(drecord);
-									ts.add(dsize);
-								} else {
-									tr.add(0L);
-									tr.add(0L);
+									freps++;
+									result = runRemoteCmdWithResultVerbose(String.format(command, 
+											loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
+
+									if (!"".equals(result) && result.indexOf("$") >= 0){
+										int start = result.indexOf("$");
+										int stop = result.indexOf(")");
+										result = result.substring(start+2,stop);	
+										String[] dres = result.split(",");
+										long drecord = Long.parseLong(dres[0]);
+										long dsize = Long.parseLong(dres[1]);
+										if (!isCalc) {
+											isCalc = true;
+											totalRecord += drecord;
+											totalSize += dsize;
+										}
+										//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
+										tr.add(drecord);
+										ts.add(dsize);
+									} else {
+										tr.add(0L);
+										tr.add(0L);
+									}
 								}
 							}
 							long xtr = -1;
