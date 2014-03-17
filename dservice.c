@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-02-26 17:09:07 macan>
+ * Time-stamp: <2014-03-12 11:48:55 macan>
  *
  */
 
@@ -138,8 +138,11 @@ static int g_dev_scan_prob = 100;
 static int __get_sysinfo()
 {
     struct sysinfo s;
+    static time_t last = 0;
     int err, i;
 
+    if (last == 0) last = time(NULL);
+    
     memset(&s, 0, sizeof(s));
     err = sysinfo(&s);
     if (err) {
@@ -163,6 +166,8 @@ static int __get_sysinfo()
     } else if (atomic_read(&g_di.updated)) {
         atomic_set(&g_di.updated, 0);
         return 1;
+    } else if (time(NULL) - last >= 60) {
+        return 1;
     } else
         return 0;
 }
@@ -181,7 +186,7 @@ static void __sigaction_default(int signo, siginfo_t *info, void *arg)
                   HVFS_COLOR_END,
                   SIGCODES(info->si_code));
         lib_segv(signo, info, arg);
-    } else if (signo == SIGHUP || signo == SIGINT) {
+    } else if (signo == SIGHUP || signo == SIGINT || signo == SIGTERM) {
         if (!g_main_thread_stop) {
             hvfs_info(lib, "Exit DService ...\n");
             g_main_thread_stop = 1;
@@ -1337,19 +1342,19 @@ int __do_heartbeat()
     len += sprintf(query + len, "+CMD\n");
     /* Add new INFO cmd: collect this node's load, queued rep/del */
     if (__get_sysinfo()) {
-    len += sprintf(query + len, "+INFO:%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,"
-                   "%ld,%0.2f\n",
-                   atomic64_read(&g_di.qrep),
-                   atomic64_read(&g_di.hrep),
-                   atomic64_read(&g_di.drep),
-                   atomic64_read(&g_di.qdel),
-                   atomic64_read(&g_di.hdel),
-                   atomic64_read(&g_di.ddel),
-                   atomic64_read(&g_di.tver),
-                   atomic64_read(&g_di.tvyr),
-                   g_di.uptime,
-                   g_di.loadavg[0]
-        );
+        len += sprintf(query + len, "+INFO:%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,"
+                       "%ld,%0.2f\n",
+                       atomic64_read(&g_di.qrep),
+                       atomic64_read(&g_di.hrep),
+                       atomic64_read(&g_di.drep),
+                       atomic64_read(&g_di.qdel),
+                       atomic64_read(&g_di.hdel),
+                       atomic64_read(&g_di.ddel),
+                       atomic64_read(&g_di.tver),
+                       atomic64_read(&g_di.tvyr),
+                       g_di.uptime,
+                       g_di.loadavg[0]
+            );
     }
 
     xlock_lock(&g_rep_lock);
@@ -1607,22 +1612,27 @@ static void *__async_recv_thread_main(void *args)
 
         while (!g_async_recv_thread_stop) {
             memset(reply, 0, sizeof(reply));
-            if ((br == recvfrom(g_sockfd, reply, sizeof(reply), 0,
-                                (struct sockaddr*) &g_server, &serverSize)) == -1) {
+            if ((br = recvfrom(g_sockfd, reply, sizeof(reply), 0,
+                               (struct sockaddr*) &g_server, &serverSize)) == -1) {
                 if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                     hvfs_err(lib, "Recv TIMEOUT!\n");
                 } else {
                     hvfs_err(lib, "Recv from Server reply failed w/ %s\n", strerror(errno));
                 }
             } else {
-                /* ok, get the reply */
-                if (strncmp(reply, "+OK", 3) != 0) {
-                    hvfs_err(lib, "Invalid reply (or request) from server: %s(%d)\n",
-                             reply, br);
+                if (br == 0) {
+                    /* target ordered shutdown? (in UDP?) */
+                    hvfs_err(lib, "Recv from Server failed? w/ %s\n", strerror(errno));
                 } else {
-                    /* handle any piggyback commands */
-                    if (handle_commands(reply))
-                        __do_heartbeat();
+                    /* ok, get the reply */
+                    if (strncmp(reply, "+OK", 3) != 0) {
+                        hvfs_err(lib, "Invalid reply (or request) from server: %s(%d)\n",
+                                 reply, br);
+                    } else {
+                        /* handle any piggyback commands */
+                        if (handle_commands(reply))
+                            __do_heartbeat();
+                    }
                 }
             }
         }
