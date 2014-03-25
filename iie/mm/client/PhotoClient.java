@@ -3,6 +3,7 @@ package iie.mm.client;
 import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry.SEntry;
 
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -10,9 +11,16 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Random;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -24,9 +32,90 @@ import redis.clients.jedis.exceptions.JedisException;
 public class PhotoClient {
 	private ClientConf conf;
 	private RedisFactory rf;
+	private static AtomicInteger curgrpno = new AtomicInteger(0);
+	private static AtomicInteger curseqno = new AtomicInteger(0);
+	private Map<Integer, XRefGroup> wmap = new ConcurrentHashMap<Integer, XRefGroup>();
 	
 	public RedisFactory getRf() {
 		return rf;
+	}
+	
+	public static class XRef {
+		int idx;	// orignal index in keys list
+		int seqno;
+		String key;
+		byte[] value = null;
+		
+		public XRef() {
+			seqno = -1;
+			key = null;
+		}
+
+		public XRef(int idx, String key) {
+			this.idx = idx;
+			this.key = key;
+			this.seqno = curseqno.incrementAndGet();
+		}
+	}
+	
+	public class XRefGroup {
+		private int gid;
+		private long bts = 0;
+		private AtomicInteger nr = new AtomicInteger(0);
+		private ConcurrentHashMap<Integer, XRef> toWait = new ConcurrentHashMap<Integer, XRef>();
+		private ConcurrentHashMap<Integer, XRef> fina = new ConcurrentHashMap<Integer, XRef>();
+		
+		public XRefGroup() {
+			gid = curgrpno.incrementAndGet();
+			wmap.put(gid, this);
+		}
+		
+		public void addToGroup(XRef xref) {
+			bts = System.currentTimeMillis();
+			toWait.put(xref.seqno, xref);
+			nr.incrementAndGet();
+		}
+		
+		public boolean isTimedout() {
+			if (System.currentTimeMillis() - bts >= 60 * 1000) {
+				return true;
+			} else
+				return false;
+		}
+		
+		public void doneXRef(Integer seqno, byte[] value) {
+			XRef x = toWait.remove(seqno);
+			if (x != null) {
+				x.value = value;
+				fina.put(seqno, x);
+			}
+		}
+		
+		public boolean waitAll() {
+			return toWait.isEmpty();
+		}
+		
+		public boolean waitAny() {
+			return !fina.isEmpty();
+		}
+		
+		public Collection<XRef> getAll() {
+			Collection<XRef> tmp = null;
+			
+			if (fina.size() == nr.get()) {
+				tmp = fina.values();
+				fina.clear();
+			}
+			return tmp;
+		}
+		
+		public long getGroupSize() {
+			return nr.get();
+		}
+		
+		public long getAvailableSize() {
+			return fina.size();
+		}
 	}
 	
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
@@ -107,8 +196,11 @@ public class PhotoClient {
 						try {
 							socket.connect(new InetSocketAddress(this.hostname, this.port));
 							socket.setTcpNoDelay(true);
-							id = this.addToSocketsAsUsed(socket, new DataInputStream(socket.getInputStream()), 
-										new DataOutputStream(socket.getOutputStream()));
+							id = this.addToSocketsAsUsed(socket, 
+									new DataInputStream(socket.getInputStream()), 
+									new DataOutputStream(socket.getOutputStream()));
+									//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
+									//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
 							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
 						} catch (SocketException e) {
 							xnr.getAndDecrement();
@@ -194,6 +286,7 @@ public class PhotoClient {
 	};
 	
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
+	private Map<String, SocketHashEntry> igetSH = new HashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 	private final ThreadLocal<Jedis> jedis =
          new ThreadLocal<Jedis>() {
@@ -250,6 +343,14 @@ public class PhotoClient {
 		}
 		if (jedis.get() == null)
 			throw new IOException("Invalid Jedis connection.");
+	}
+	
+	public void recycleJedis() {
+		synchronized (this) {
+			if (jedis.get() != null) {
+				jedis.set(rf.putInstance(jedis.get()));
+			}
+		}
 	}
 	
 	private byte[] __handleInput(DataInputStream dis) throws IOException {
@@ -578,9 +679,12 @@ public class PhotoClient {
 				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 				socket.setTcpNoDelay(true);
 				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
-				searchSocket.addToSocketsAsUsed(socket, 
-						new DataInputStream(socket.getInputStream()), 
+				searchSocket.addToSocketsAsUsed(socket,
+						new DataInputStream(socket.getInputStream()),
 						new DataOutputStream(socket.getOutputStream()));
+						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
+						//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
+						
 				socketHash.put(server, searchSocket);
 			} else 
 				throw new IOException("Invalid server name or port.");
@@ -674,4 +778,363 @@ public class PhotoClient {
 		throw new IOException("Jedis Connection broken.");
 	}
 	
+	public XRefGroup createXRefGroup() {
+		return new XRefGroup();
+	}
+	
+	public void removeXRefGroup(XRefGroup g) {
+		wmap.remove(g.gid);
+	}
+	
+	public int __iget(int gid, int seqno, String set, String md5, long alen) throws IOException, StopException {
+		String info = null;
+		int err = 0;
+		
+		refreshJedis();
+		try {
+			info = jedis.get().hget(set, md5);
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken, wait in getObject ...");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (JedisException e) {
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+		
+		if (info == null) {
+			throw new IOException(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
+		} else {
+			return __igetInfo(gid, seqno, info, alen);
+		}
+	}
+	
+	public int __igetInfo(int gid, int seqno, String infos, long alen) throws IOException, StopException {
+		boolean r = false;
+		int len = 0;
+
+		for (String info : infos.split("#")) {
+			try {
+				String[] si = info.split("@");
+
+				len = Integer.parseInt(si[5]);
+				alen -= len;
+				if (alen <= 0) {
+					throw new StopException();
+				}
+				r = __igetMMObject(gid, seqno, info, si);
+				if (r) break;
+			} catch(IOException e){
+				e.printStackTrace();
+				continue;
+			}
+		}
+		if (r)
+			return len;
+		else
+			return -1;
+	}
+	
+	public boolean __igetMMObject(int gid, int seqno, String info, String[] infos) throws IOException {
+		if (infos.length != 7) {
+			throw new IOException("Invalid INFO string, info length is " + infos.length);
+		}
+		
+		SocketHashEntry igetSocket = null;
+		String server = servers.get(Long.parseLong(infos[2]));
+		if (server == null)
+			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
+		if (igetSH.containsKey(server)) {
+			igetSocket = igetSH.get(server);
+		} else {
+			String[] s = server.split(":");
+			if (s.length == 2) {
+				Socket socket = new Socket(); 
+				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
+				socket.setTcpNoDelay(true);
+				igetSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				igetSocket.addToSocketsAsUsed(socket, 
+						new DataInputStream(socket.getInputStream()), 
+						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
+						new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
+				igetSH.put(server, igetSocket);
+			} else 
+				throw new IOException("Invalid server name or port.");
+		}
+
+		//action,info的length写过去
+		byte[] header = new byte[4];
+		header[0] = ActionType.IGET;
+		header[1] = (byte) info.getBytes().length;
+		long id = igetSocket.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not get free socket for server " + server);
+
+		boolean r = true;
+		try {
+			// do some recv here
+			if (igetSocket.map.get(id).dis.available() > 0) {
+				try { 
+					__doProgress(igetSocket.map.get(id));
+				} catch (IOException e1) {
+				}
+			}
+			
+			igetSocket.map.get(id).dos.write(header);
+			igetSocket.map.get(id).dos.writeInt(gid);
+			igetSocket.map.get(id).dos.writeInt(seqno);
+			
+			//info的实际内容写过去
+			igetSocket.map.get(id).dos.writeBytes(info);
+			igetSocket.map.get(id).dos.flush();
+
+			// try to get a new socket
+			if (igetSocket.xnr.get() < igetSocket.cnr) {
+				long xid = igetSocket.getFreeSocket();
+				igetSocket.setFreeSocket(xid);
+			}
+			igetSocket.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			try { 
+				__doProgress(igetSocket.map.get(id));
+			} catch (IOException e1) {
+			}
+			igetSocket.delFromSockets(id);
+			r = false;
+		}
+
+		return r;
+	}
+	
+	public long iGet(XRefGroup g, int idx, String set, String md5, long alen) throws IOException, StopException {
+		XRef x = new XRef(idx, set + "@" + md5);
+		
+		// send it to server
+		int len = __iget(g.gid, x.seqno, set, md5, alen);
+		// put it to group
+		if (len >= 0) {
+			g.addToGroup(x);
+			return x.seqno;
+		} else
+			throw new IOException("__iget(" + set + "@" + md5 + ") failed.");
+	}
+	
+	public boolean __doProgress(SEntry se) throws IOException {
+		int gid;
+		int seqno;
+		boolean r = false;
+		
+		synchronized (se) {
+			if (se.dis.available() > 0) {
+				gid = se.dis.readInt();
+				if (gid != -1) {
+					seqno = se.dis.readInt();
+					int len = se.dis.readInt();
+					byte[] b = readBytes(len, se.dis);
+					XRefGroup g = wmap.get(gid);
+					if (g != null) {
+						g.doneXRef(seqno, b);
+						r = true;
+					}
+				}
+			}
+		}
+		return r;
+	}
+	
+	public boolean iWaitAll(XRefGroup g) throws IOException {
+		do {
+			if (g.waitAll() || g.nr.get() == g.fina.size())
+				return true;
+
+			// progress inputs
+			for (String server : servers.values()) {
+				SocketHashEntry she = igetSH.get(server);
+				if (she != null) {
+					synchronized (she) {
+						for (SEntry se : she.map.values()) {
+							try {
+								if (__doProgress(se))
+									g.bts = System.currentTimeMillis();
+							} catch (IOException e1) {
+								e1.printStackTrace();
+								she.delFromSockets(se.id);
+							}
+						}
+					}
+				}
+			}
+			if (g.isTimedout())
+				return false;
+		} while (true);
+	}
+	
+	public class StopException extends Exception {
+		private static final long serialVersionUID = -7120649613556817964L;
+	}
+	
+	public List<byte[]> mget(List<String> keys, Map<String, String> cookies) throws IOException {
+		String bidx_s = cookies.get("idx");
+		String alen_s = cookies.get("accept_len");
+		int bi = 0, i;
+		long alen = 128 * 1024 * 1024;
+		
+		if (bidx_s != null) 
+			bi = Integer.parseInt(bidx_s);
+		if (alen_s != null)
+			alen = Integer.parseInt(alen_s);
+		ArrayList<byte[]> r = new ArrayList<byte[]>(Collections.nCopies(keys.size() - bi, (byte[])null));
+		XRefGroup g = createXRefGroup();
+		
+		// do info get here
+		long begin, end;
+		begin = System.nanoTime();
+		for (i = bi; i < keys.size(); i++) {
+			String key = keys.get(i);
+			XRef x = new XRef(i, key);
+			try {
+				for (String info : key.split("#")) {
+					try {
+						String[] si = info.split("@");
+
+						if (si.length == 7) {
+							alen -= Integer.parseInt(si[5]);
+							if (alen <= 0) {
+								throw new StopException();
+							}
+							if (__igetMMObject(g.gid, x.seqno, info, si)) {
+								g.addToGroup(x);
+								break;
+							}
+						} else {
+							int len = __iget(g.gid, x.seqno, si[0], si[1], alen);
+							alen -= len;
+							if (len >= 0) {
+								g.addToGroup(x);
+								break;
+							}
+						}
+					} catch (IOException e) {
+						e.printStackTrace();
+						continue;
+					}
+				}
+			} catch (StopException e) {
+				break;
+			}
+		}
+		end = System.nanoTime();
+		System.out.println(" -> SEND nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + " us.");
+		cookies.put("idx", i + "");
+		
+		begin = System.nanoTime();
+		if (!iWaitAll(g)) {
+			System.out.println("Wait XRefGroup " + g.gid + " timed out: " + g.nr.get() + " " + g.toWait);
+		}
+		end = System.nanoTime();
+		System.out.println(" -> RECV nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + " us.");
+		
+		removeXRefGroup(g);
+		
+		for (XRef x : g.fina.values()) {
+			r.set(x.idx - bi, x.value);
+		}
+		
+		return r.subList(0, i - bi);
+	}
+	
+		
+	public TreeSet<Long> getSets(String prefix) throws IOException {
+		TreeSet<Long> tranges = new TreeSet<Long>();
+		int err = 0;
+		refreshJedis();
+		
+		try {
+			Set<String> keys = jedis.get().keys(prefix + "*.srvs");
+
+			if (keys != null && keys.size() > 0) {
+				for (String key : keys) {
+					key = key.replaceFirst(".srvs", "");
+					key = key.replaceFirst(prefix, "");
+					try {
+						tranges.add(Long.parseLong(key));
+					} catch (NumberFormatException e) {
+					}
+				}
+			}
+		} catch (JedisException e) {
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+		
+		return tranges;
+	}
+
+	public List<String> getSetElements(String set) {
+		List<String> r = null;
+		int err = 0;
+		
+		try {
+			refreshJedis();
+		} catch (IOException e) { 
+			return null;
+		}
+		
+		try {
+			if (conf.isGetkeys_do_sort()) {
+				Map<String, String> kvs = jedis.get().hgetAll(set);
+				TreeMap<String, String> t = new TreeMap<String, String>();
+				r = new ArrayList<String>();
+
+				for (Map.Entry<String, String> e : kvs.entrySet()) {
+					String[] v = e.getValue().split("@");
+					if (v.length >= 7) {
+						t.put(v[6] + "." + v[3] + "." + (String.format("%015d", Long.parseLong(v[4])) + "." + v[2]),
+								set + "@" + e.getKey());
+					} else {
+						r.add(set + "@" + e.getKey());
+					}
+				}
+				r.addAll(t.values());
+				kvs.clear();
+				t.clear();
+			} else {
+				Set<String> t = jedis.get().hkeys(set);
+				r = new ArrayList<String>();
+				
+				for (String v : t) {
+					r.add(set + "@" + v);
+				}
+				t.clear();
+			}
+		} catch (JedisConnectionException e) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+		return r;
+	}
 }

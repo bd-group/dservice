@@ -88,6 +88,13 @@ public class MonitorHandler extends AbstractHandler {
 					badResponse(baseRequest, response, "#FAIL: "+error);
 					return;
 				}
+				cmd = "cd monitor; ./doplot2.sh " + id + "/ " + "../log/sysinfo-" + date;
+				System.out.println(cmd);
+				error = runCmd(cmd);
+				if(error != null) {
+					badResponse(baseRequest, response, "#FAIL: "+error);
+					return;
+				}
 			}
 		}
 		ResourceHandler rh = new ResourceHandler();

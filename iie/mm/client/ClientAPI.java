@@ -10,10 +10,13 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 import redis.clients.jedis.Jedis;
@@ -33,6 +36,30 @@ public class ClientAPI {
 
 	public ClientAPI() {
 		pc = new PhotoClient();
+	}
+	
+	public enum MMType {
+		TEXT, IMAGE, AUDIO, VIDEO, APPLICATION, THUMBNAIL, OTHER,
+	}
+	
+	public static String getMMTypeSymbol(MMType type) {
+		switch (type) {
+		case TEXT:
+			return "t";
+		case IMAGE:
+			return "i";
+		case AUDIO:
+			return "a";
+		case VIDEO:
+			return "v";
+		case APPLICATION:
+			return "o";
+		case THUMBNAIL:
+			return "s";
+		case OTHER:
+		default:
+			return "";
+		}
 	}
 	
 	/**
@@ -317,7 +344,71 @@ public class ClientAPI {
 		else 
 			throw new Exception("wrong format of key:" + key);
 	}
-
+	
+	/**
+	 * It is thread-safe
+	 * 批量读取某个集合的所有key
+	 */
+	public List<String> getkeys(String type, long begin_time) throws IOException, Exception {
+		String prefix;
+		
+		if (type == null)
+			throw new Exception("type can not be null");
+		if (type.equalsIgnoreCase("image")) {
+			prefix = getMMTypeSymbol(MMType.IMAGE);
+		} else if (type.equalsIgnoreCase("thumbnail")) {
+			prefix = getMMTypeSymbol(MMType.THUMBNAIL);
+		} else if (type.equalsIgnoreCase("text")) {
+			prefix = getMMTypeSymbol(MMType.TEXT);
+		} else if (type.equalsIgnoreCase("audio")) {
+			prefix = getMMTypeSymbol(MMType.AUDIO);
+		} else if (type.equalsIgnoreCase("video")) {
+			prefix = getMMTypeSymbol(MMType.VIDEO);
+		} else if (type.equalsIgnoreCase("application")) {
+			prefix = getMMTypeSymbol(MMType.APPLICATION);
+		} else if (type.equalsIgnoreCase("other")) {
+			prefix = getMMTypeSymbol(MMType.OTHER);
+		} else {
+			throw new Exception("type '" + type + "' is invalid.");
+		}
+		
+		// query on redis
+		TreeSet<Long> tranges = pc.getSets(prefix);
+		try {
+			long setTs = tranges.tailSet(begin_time).first();
+			return pc.getSetElements(prefix + setTs);
+		} catch (NoSuchElementException e) {
+			throw new Exception("Can not find any keys larger or equal to " + begin_time);
+		}
+	}
+	
+	/**
+	 * it is thread safe.
+	 * 批量获取keys对应的所有多媒体对象内容
+	 * 
+	 * @param keys
+	 * @param cookies
+	 * @return
+	 * @throws IOException
+	 * @throws Exception
+	 */
+	public List<byte[]> mget(List<String> keys, Map<String, String> cookies) throws IOException, Exception {
+		if (keys == null || cookies == null)
+			throw new Exception("keys or cookies list can not be null.");
+		if (keys.size() > 0) {
+			String key = keys.get(keys.size() - 1);
+			if (key != null) {
+				long ts = -1;
+				try {
+					ts = Long.parseLong(key.split("@")[0].substring(1));
+				} catch (Exception e) {
+				}
+				cookies.put("ts", Long.toString(ts));
+			}
+		}
+		return pc.mget(keys, cookies);
+	}
+	
 	public void quit() {
 		if (pc.getRf() != null) {
 			pc.getRf().putInstance(jedis);

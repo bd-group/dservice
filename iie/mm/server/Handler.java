@@ -2,12 +2,15 @@ package iie.mm.server;
 
 import iie.mm.server.StorePhoto.RedirectException;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -34,6 +37,8 @@ public class Handler implements Runnable{
 		this.sq = sq;
 		dis = new DataInputStream(this.s.getInputStream());
 		dos = new DataOutputStream(this.s.getOutputStream());
+		//dis = new DataInputStream(new BufferedInputStream(this.s.getInputStream()));
+		//dos = new DataOutputStream(new BufferedOutputStream(this.s.getOutputStream()));
 		sp = new StorePhoto(conf);
 	}
 	
@@ -146,27 +151,30 @@ public class Handler implements Runnable{
 					}
 					dos.flush();
 				} else if(header[0] == ActionType.IGET){
-					int infolen = header[1]&0xff;
-					long id = dis.readLong();
-					if(infolen > 0)
-					{
-						String info = new String( readBytes(infolen, dis));
+					int infolen = header[1] & 0xff;
+					int gid = dis.readInt();
+					int seqno = dis.readInt();
+					
+					if (infolen > 0) {
+						String info = new String(readBytes(infolen, dis));
 						byte[] content = null;
 						try {
 							content = sp.searchPhoto(info, null);
 						} catch (RedirectException e) {
 						}
 						if (content != null) {
-							dos.writeLong(id);
+							dos.writeInt(gid);
+							dos.writeInt(seqno);
 							dos.writeInt(content.length);
 							dos.write(content);
 						} else {
-							dos.writeLong(-1);
+							dos.writeInt(-1);
 						}
 					}
 					else {
-						dos.writeLong(-1);
+						dos.writeInt(-1);
 					}
+					dos.flush();
 				} else if (header[0] == ActionType.DELSET) {
 					String set = new String(readBytes(header[1], dis));
 

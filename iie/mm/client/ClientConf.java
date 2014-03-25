@@ -36,6 +36,8 @@ public class ClientConf {
 	private MODE mode;
 	private RedisMode redisMode;
 	
+	private boolean getkeys_do_sort = true;
+	
 	public ClientConf(String serverName, int serverPort, String redisHost, int redisPort, MODE mode, 
 			int dupNum) throws UnknownHostException {
 		if (serverName != null)
@@ -151,5 +153,13 @@ public class ClientConf {
 
 	public void setAutoConf(boolean autoConf) {
 		this.autoConf = autoConf;
+	}
+
+	public boolean isGetkeys_do_sort() {
+		return getkeys_do_sort;
+	}
+
+	public void setGetkeys_do_sort(boolean getkeys_do_sort) {
+		this.getkeys_do_sort = getkeys_do_sort;
 	}
 }
