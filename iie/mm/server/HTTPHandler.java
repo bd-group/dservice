@@ -146,6 +146,9 @@ public class HTTPHandler extends AbstractHandler {
 							"dupmode = " + jedis.hget("mm.client.conf", "dupmode") + "<p>" +
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
 							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + "</tt>" +
+							"<H1> #Useful Links:</H1><tt>" +
+							"<a href=/data>Sets</a>" +
+							"</tt>" +
 							"</BODY>" +
 							"</HTML>";
 			response.getWriter().print(page);
@@ -157,6 +160,29 @@ public class HTTPHandler extends AbstractHandler {
 	
 	private void doData(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
+		String type = request.getParameter("type");
+		String prefix = null;
+		
+		if (type == null)
+			prefix = "";
+		else {
+			if (type.equalsIgnoreCase("image")) {
+				prefix = "i";
+			} else if (type.equalsIgnoreCase("text")) {
+				prefix = "t";
+			} else if (type.equalsIgnoreCase("audio")) {
+				prefix = "a";
+			} else if (type.equalsIgnoreCase("video")) {
+				prefix = "v";
+			} else if (type.equalsIgnoreCase("application")) {
+				prefix = "o";
+			} else if (type.equalsIgnoreCase("thumbnail")) {
+				prefix = "s";
+			} else if (type.equalsIgnoreCase("other")) {
+				prefix = "";
+			}
+		}
+		
 		TreeMap<String, SetStats> m = sp.getSetBlks();
 		if (m == null) {
 			badResponse(baseRequest, response, "#FAIL:read from redis failed.");
@@ -166,14 +192,21 @@ public class HTTPHandler extends AbstractHandler {
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
 		PrintWriter pw = response.getWriter();
-		pw.println("#Data Count(Set_Name, Number, Length(MB)):");
+
+		pw.println("# Avaliable type contains: text/image/audio/video/application/thumbnail/other");
+		if (prefix == null) 
+			return;
+		pw.println("# Data Count (Set_Name, Number, Length(MB)):");
+
 		int totallen = 0, totalnr = 0;
 		Iterator<String> ir = m.navigableKeySet().descendingIterator();
 		while (ir.hasNext()) {
 			String set = ir.next();
-			totallen += m.get(set).fnr;
-			totalnr += m.get(set).rnr;
-			pw.println(" " + set + ", " + m.get(set).rnr + ", " + (m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
+			if (set.startsWith(prefix)) {
+				totallen += m.get(set).fnr;
+				totalnr += m.get(set).rnr;
+				pw.println(" " + set + ", " + m.get(set).rnr + ", " + (m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
+			}
 		}
 		pw.println(" [TOTAL], " + totalnr + ", " + totallen * ((double)conf.getBlockSize() / 1024.0 / 1024.0));
 	}
