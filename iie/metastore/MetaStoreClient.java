@@ -21,6 +21,7 @@ import java.net.UnknownHostException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -844,42 +845,76 @@ public class MetaStoreClient {
 	    		System.out.println("-h   : print this help.");
 	    		System.out.println("-r   : server name.");
 	    		System.out.println("-p   : server port.");
+	    		
+	    		System.out.println("\n[Node]");
 	    		System.out.println("-n   : add current machine as a new node.");
+	    		System.out.println("-nn  : add node with specified name.");
+	    		System.out.println("-dn  : delete node.");
+	    		System.out.println("-ln  : list existing node.");
+	    		
+	    		System.out.println("\n[File and FileLocation]");
 	    		System.out.println("-f   : auto test file operations, from create to delete.");
-	    		System.out.println("-sd  : show device");
+	    		System.out.println("-frr : read the file object by fid.");
+	    		System.out.println("-fro : reopen a file.");
+	    		System.out.println("-srep: (re)set file repnr.");
+	    		System.out.println("-fcr : create a new file and return the fid.");
+	    		System.out.println("-fcl : close the file.");
+	    		System.out.println("-fcd : delete the file.");
+	    		System.out.println("-ofl : offline a file location.");
+	    		System.out.println("-dfl : delete a file location and remove the physical data.");
+	    		System.out.println("-dflf: delete a file location (read from a file).");
+	    		System.out.println("-lfbd: list FID by devices.");
+	    		
+	    		System.out.println("\n[Device]");
+	    		System.out.println("-sd  : show device.");
 	    		System.out.println("-md  : modify device: change prop or attached node.");
 	    		System.out.println("-cd  : add new device.");
 	    		System.out.println("-dd  : delete device.");
 	    		System.out.println("-ld  : list existing devices.");
-	    		System.out.println("-nn  : add node with specified name.");
-	    		System.out.println("-dn  : delete node.");
-	    		System.out.println("-ln  : list existing node.");
+	    		System.out.println("-ond : online device.");
+	    		System.out.println("-ofd : offline device.");
+	    		System.out.println("-ofdp: offline device physically.");
+	    		System.out.println("-lbdn: list device by node.");
+	    		
+	    		System.out.println("\n[DM Info]");
 	    		System.out.println("-gni : get current active Node Info from DM.");
 	    		System.out.println("-dms : get current DM status.");
-	    		System.out.println("-frr : read the file object by fid.");
+	    		
+	    		System.out.println("\n[DB and Table]");
 	    		System.out.println("-sap : set attribution parameters.");
 	    		System.out.println("-lst : list table files.");
 	    		System.out.println("-lfd : list files by digest.");
 	    		System.out.println("-flt : filter table files.");
-                        System.out.println("-flc : count stats of the filter table files.");
+                System.out.println("-flc : count stats of the filter table files.");
 	    		System.out.println("-tct : truncate table files.");
-	    		System.out.println("-pp  : ping pong latency test.");
-	    		System.out.println("-flctc : lots of file createtion test.");
-	    		System.out.println("-lfdc: concurrent list files by digest test.");
-	    		System.out.println("-fro : reopen a file.");
-	    		System.out.println("-srep: (re)set file repnr.");
-	    		System.out.println("-cvt : convert date to timestamp.");
-	    		System.out.println("-bdnu : need to data balance 's quantities.");
-	    		System.out.println("-dabal : data balance operation.");
+	    		System.out.println("-ltg : list table's nodegroups.");
+	    		System.out.println("-trunc: trunc table files FAST.");
 	    		
+	    		System.out.println("\n[Tools]");
+	    		System.out.println("-FSCK   : do system checking: check md5sum of files' locations.");
+	    		System.out.println("-cvt    : convert date to timestamp.");
+	    		System.out.println("-tsm    : toggle safe mode of DM.");
+	    		System.out.println("-alz    : analyze the system to report file nr and space.");
+	    		System.out.println("-statfs : stat the file system and report file state.");
+	    		System.out.println("-statfs2: scan files to REMOVE/DELETE.");
+	    		System.out.println("-statfs3: scan files to get record/size info.");
+	    		System.out.println("-scrub_fast: use multi-thread to get files.");
+	    		System.out.println("-avglen : get avg len by table split value.");
+	    		System.out.println("-scrub  : into scrub mode, do auto clean.");
+	    		System.out.println("-fls    : control FLSelector watch list.");
+	    		
+	    		System.out.println("\n[Test]");
+	    		System.out.println("-pp    : ping pong latency test.");
+	    		System.out.println("-lst_test: list table files' test (single thread).");
+	    		System.out.println("-flctc : lots of file createtion test.");
+	    		System.out.println("-lfdc  : concurrent list files by digest test.");
+	    			    		
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
 	    		System.out.println("");
-	    		
-	    		System.out.println("-tsm : toggle safe mode of DM.");
-	    		System.out.println("-fcr : create a new file and return the fid.");
-	    		System.out.println("-fcl : close the file.");
-	    		System.out.println("-fcd : delete the file.");
+	    			    		
+	    		System.out.println("-bdnu : need to data balance 's quantities.");
+	    		System.out.println("-dabal : data balance operation.");
 	    		
 	    		System.exit(0);
 	    	}
@@ -1567,6 +1602,28 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				}
 	    	}
+	    	if (o.flag.equals("-ldbn")) {
+	    		// list device by node
+	    		if (node_name == null) {
+	    			System.out.println("Please set -node");
+	    			System.exit(0);
+	    		}
+	    		List<String> devids;
+	    		try {
+	    			devids = cli.client.listDevsByNode(node_name);
+	    			if (devids.size() > 0) {
+	    				for (String d : devids) {
+	    					System.out.println("DEVID: " + d);
+	    				}
+	    			}
+	    		} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
 	    	if (o.flag.equals("-sd")) {
 	    		// show device
 	    		if (devid == null) {
@@ -1667,6 +1724,33 @@ public class MetaStoreClient {
 					break;
 				}
 	    	}
+	    	if (o.flag.equals("-lfbd")) {
+	    		// list FID by devices
+	    		if (o.opt == null) {
+	    			System.out.println("Please set -lfbd <DEVID,DEVID,...>");
+	    			System.exit(0);
+	    		}
+	    		List<Long> fids = null;
+	    		String[] devids = o.opt.split(",");
+	    		
+	    		if (devids.length > 0) {
+	    			try {
+	    				fids = cli.client.listFilesByDevs(Arrays.asList(devids));
+					} catch (MetaException e) {
+						e.printStackTrace();
+						break;
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+	    		}
+	    		if (fids != null && fids.size() > 0) {
+	    			for (Long _fid : fids) {
+	    				System.out.println(_fid);
+	    			}
+	    			System.out.println("-> Total " + fids.size() + " FIDs.");
+	    		}
+	    	}
 	    	if (o.flag.equals("-fls")) {
 	    		// control FLSelector watch list
 	    		if (dbName == null || tableName == null || fls_op == -1) {
@@ -1686,7 +1770,7 @@ public class MetaStoreClient {
 				}
 	    	}
 	    	if (o.flag.equals("-ond")) {
-	    		// offline Device
+	    		// online Device
 	    		if (devid == null) {
 	    			System.out.println("Please set -devid.");
 	    			System.exit(0);
@@ -2630,7 +2714,7 @@ public class MetaStoreClient {
 					break;
 				}
 			}
-			if(o.flag.equals("-statfs3")){
+			if (o.flag.equals("-statfs3")){
 				long end = 0;
 				
 				if ((dbName == null) ||
