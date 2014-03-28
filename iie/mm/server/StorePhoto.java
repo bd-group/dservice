@@ -221,9 +221,11 @@ public class StorePhoto {
 				err = -1;
 				returnStr = "#FAIL:" + e.getMessage();
 			} catch (JedisException e) {
+				e.printStackTrace();
 				err = -1;
 				returnStr = "#FAIL:" + e.getMessage();
 			} catch (Exception e) {
+				e.printStackTrace();
 				err = -1;
 				returnStr = "#FAIL:" + e.getMessage();
 			} finally {

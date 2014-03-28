@@ -283,6 +283,17 @@ public class PhotoClient {
 				}
 			}
 		}
+		
+		public void clear() {
+			synchronized (this) {
+				for (Map.Entry<Long, SEntry> e : map.entrySet()) {
+					try {
+						e.getValue().sock.close();
+					} catch (IOException e1) {
+					}
+				}
+			}
+		}
 	};
 	
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
@@ -831,8 +842,8 @@ public class PhotoClient {
 				}
 				r = __igetMMObject(gid, seqno, info, si);
 				if (r) break;
-			} catch(IOException e){
-				e.printStackTrace();
+			} catch (IOException e){
+				System.err.println("GID " + gid + " seqno " + seqno + " infos " + infos + " -> Got IOExcpetion : " + e.getMessage());
 				continue;
 			}
 		}

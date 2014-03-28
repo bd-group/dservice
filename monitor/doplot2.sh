@@ -93,6 +93,12 @@ sed -e "s|FIXME_LOCATION|$1|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s
 gnuplot .tmp_plot_file2
 sed -e "s|FIXME_LOCATION|$1|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" report/mms2.plot > .tmp_plot_file2
 gnuplot .tmp_plot_file2
+sed -e "s|FIXME_LOCATION|$1|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" report/mms3.plot > .tmp_plot_file2
+gnuplot .tmp_plot_file2
+sed -e "s|FIXME_LOCATION|$1|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" report/mms4.plot > .tmp_plot_file2
+gnuplot .tmp_plot_file2
+sed -e "s|FIXME_LOCATION|$1|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" report/mms5.plot > .tmp_plot_file2
+gnuplot .tmp_plot_file2
 for n in $NODES; do
         rm -rf $n
 done

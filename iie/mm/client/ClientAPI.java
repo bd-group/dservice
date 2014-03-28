@@ -27,8 +27,9 @@ public class ClientAPI {
 	private int index;				
 	private List<String> keyList = new ArrayList<String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, SocketHashEntry> socketHash;
+	private ConcurrentHashMap<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
+	private long last_refresh_ts = 0;
 	
 	public ClientAPI(ClientConf conf) {
 		pc = new PhotoClient(conf);
@@ -146,6 +147,42 @@ public class ClientAPI {
 		
 		return 0;
 	}
+	
+	private boolean refreshActiveMMS() {
+		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
+		if (active != null && active.size() > 0) {
+			for (Tuple t : active) {
+				// update server ID->Name map
+				pc.addToServers((long)t.getScore(), t.getElement());
+			}
+			for (Tuple t : active) {
+				String[] c = t.getElement().split(":");
+				if (c.length == 2 && socketHash.get(t.getElement()) == null) {
+					Socket sock = new Socket();
+					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+					try {
+						sock.setTcpNoDelay(true);
+						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
+						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+								new DataOutputStream(sock.getOutputStream()));
+						if (socketHash.putIfAbsent(t.getElement(), she) != null) {
+							she.clear();
+						}
+					} catch (SocketException e) {
+						e.printStackTrace();
+						continue;
+					} catch (NumberFormatException e) {
+						e.printStackTrace();
+						continue;
+					} catch (IOException e) {
+						e.printStackTrace();
+						continue;
+					}
+				}
+			}
+		}
+		return true;
+	}
 
 	/**
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
@@ -182,35 +219,8 @@ public class ClientAPI {
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
-		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
-		if (active != null && active.size() > 0) {
-			for (Tuple t : active) {
-				pc.addToServers((long)t.getScore(), t.getElement());
-			}
-			for (Tuple t : active) {
-				String[] c = t.getElement().split(":");
-				if (c.length == 2) {
-					Socket sock = new Socket();
-					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
-					try {
-						sock.setTcpNoDelay(true);
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
-						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
-								new DataOutputStream(sock.getOutputStream()));
-						socketHash.put(t.getElement(), she);
-					} catch (SocketException e) {
-						e.printStackTrace();
-						continue;
-					} catch (NumberFormatException e) {
-						e.printStackTrace();
-						continue;
-					} catch (IOException e) {
-						e.printStackTrace();
-						continue;
-					}
-				}
-			}
-		}
+		refreshActiveMMS();
+		
 		System.out.println("Got active server size=" + socketHash.size());
 		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
@@ -226,13 +236,14 @@ public class ClientAPI {
 	 * @return		
 	 */
 	public String put(String key, byte[] content) throws IOException, Exception {
-		if (key == null || keyList.size() ==0)
+		if (key == null || keyList.size() == 0)
 			throw new Exception("key can not be null or MetaError.");
 		String[] keys = key.split("@");
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);
 		String r = null;
-		boolean nodedup = false;
+		boolean nodedup = false, isSaved = false;
+		boolean isMMServerFailed = false;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			if (she.probSelected())
@@ -244,9 +255,19 @@ public class ClientAPI {
 						nodedup = true;
 					} else 
 						nodedup = false;
+					isSaved = true;
 				} catch (SocketException e) {
 					i--;
 					index++;
+				} catch (IOException e) {
+					// BUG-XXX: ignore this exception at first time, try another MM server;
+					// if every MMServer failed, 
+					if (!isMMServerFailed) {
+						i--;
+						index++;
+						isMMServerFailed = true;
+					}
+					e.printStackTrace();
 				}
 			else {
 				i--;
@@ -257,6 +278,8 @@ public class ClientAPI {
 		if (index >= keyList.size()) {
 			index = 0;
 		}
+		if (!isSaved)
+			throw new Exception("Error in saving Key:" + key);
 		return r;
 	}
 	
