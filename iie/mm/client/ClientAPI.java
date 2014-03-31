@@ -10,12 +10,15 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,11 +28,11 @@ import redis.clients.jedis.Tuple;
 public class ClientAPI {
 	private PhotoClient pc;
 	private int index;				
-	private List<String> keyList = new ArrayList<String>();
+	private List<String> keyList = Collections.synchronizedList(new ArrayList<String>());
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private ConcurrentHashMap<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
-	private long last_refresh_ts = 0;
+	private final Timer timer = new Timer("ActiveMMSRefresher");
 	
 	public ClientAPI(ClientConf conf) {
 		pc = new PhotoClient(conf);
@@ -148,8 +151,64 @@ public class ClientAPI {
 		return 0;
 	}
 	
-	private boolean refreshActiveMMS() {
+	private boolean refreshActiveMMS(boolean isInit) {
+		if (isInit) {
+			return getActiveMMS();
+		} else {
+			try {
+				List<String> active = pc.getActiveMMSByHB();
+				Set<String> activeMMS = new TreeSet<String>();
+				
+				if (active.size() > 0) {
+					for (String a : active) {
+						String[] c = a.split(":");
+
+						if (c.length == 2) {
+							if (socketHash.get(a) == null) {
+								// new MMS?
+								Socket sock = new Socket();
+								SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+								try {
+									sock.setTcpNoDelay(true);
+									sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
+									she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+											new DataOutputStream(sock.getOutputStream()));
+									if (socketHash.putIfAbsent(a, she) != null) {
+										she.clear();
+									}
+								} catch (SocketException e) {
+									e.printStackTrace();
+									continue;
+								} catch (NumberFormatException e) {
+									e.printStackTrace();
+									continue;
+								} catch (IOException e) {
+									e.printStackTrace();
+									continue;
+								}
+							}
+							activeMMS.add(a);
+						}
+					}
+					synchronized (keyList) {
+						keyList.clear();
+						keyList.addAll(activeMMS);
+						keyList.retainAll(socketHash.keySet());
+					}
+				} else {
+					keyList.clear();
+				}
+				System.out.println("Refresh active servers: " + keyList);
+			} catch (IOException e) {
+			}
+		}
+		return true;
+	}
+	
+	private boolean getActiveMMS() {
 		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
+		Set<String> activeMMS = new TreeSet<String>();
+		
 		if (active != null && active.size() > 0) {
 			for (Tuple t : active) {
 				// update server ID->Name map
@@ -157,9 +216,11 @@ public class ClientAPI {
 			}
 			for (Tuple t : active) {
 				String[] c = t.getElement().split(":");
+				
 				if (c.length == 2 && socketHash.get(t.getElement()) == null) {
 					Socket sock = new Socket();
 					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+					activeMMS.add(t.getElement());
 					try {
 						sock.setTcpNoDelay(true);
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
@@ -181,7 +242,19 @@ public class ClientAPI {
 				}
 			}
 		}
+		synchronized (keyList) {
+			keyList.addAll(activeMMS);
+			keyList.retainAll(socketHash.keySet());
+		}
+		
 		return true;
+	}
+	
+	private class MMCTimerTask extends TimerTask {
+		@Override
+		public void run() {
+			refreshActiveMMS(false);
+		}
 	}
 
 	/**
@@ -219,11 +292,12 @@ public class ClientAPI {
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
-		refreshActiveMMS();
-		
-		System.out.println("Got active server size=" + socketHash.size());
-		keyList.addAll(socketHash.keySet());
+		refreshActiveMMS(true);
+		System.out.println("Got active server size=" + keyList.size());
 		pc.setSocketHash(socketHash);
+		
+		timer.schedule(new MMCTimerTask(), 500, 5000);
+		
 		return 0;
 	}
 	
@@ -236,8 +310,9 @@ public class ClientAPI {
 	 * @return		
 	 */
 	public String put(String key, byte[] content) throws IOException, Exception {
-		if (key == null || keyList.size() == 0)
-			throw new Exception("key can not be null or MetaError.");
+		if (key == null || keyList.size() == 0) {
+			throw new Exception("key can not be null or no active MMServer.");
+		}
 		String[] keys = key.split("@");
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);
@@ -438,5 +513,6 @@ public class ClientAPI {
 			pc.getRf().quit();
 		}
 		pc.close();
+		timer.cancel();
 	}
 }

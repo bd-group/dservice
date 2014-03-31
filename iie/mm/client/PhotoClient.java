@@ -56,6 +56,10 @@ public class PhotoClient {
 			this.key = key;
 			this.seqno = curseqno.incrementAndGet();
 		}
+		
+		public String toString() {
+			return "ID " + idx + " SEQNO " + seqno + " KEY " + key;
+		}
 	}
 	
 	public class XRefGroup {
@@ -364,6 +368,30 @@ public class PhotoClient {
 		}
 	}
 	
+	public List<String> getActiveMMSByHB() throws IOException {
+		List<String> ls = new ArrayList<String>();
+		int err = 0;
+
+		refreshJedis();
+		try {
+			Set<String> keys = jedis.get().keys("mm.hb.*");
+
+			for(String hp : keys) {
+				ls.add(hp.substring(6));
+			}
+		} catch (JedisException e) {
+			err = -1;
+			System.out.println("Get mm.hb.* failed: " + e.getMessage());
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+
+		return ls;
+	}
+	
 	private byte[] __handleInput(DataInputStream dis) throws IOException {
 		int count;
 		
@@ -407,12 +435,13 @@ public class PhotoClient {
 			r = __handleInput(storeis);
 			she.setFreeSocket(id);
 		} catch (Exception e) {
-			e.printStackTrace();
+			System.err.println("__syncStore send/recv failed: " + e.getMessage());
 			// remove this socket do reconnect?
 			she.delFromSockets(id);
 		}
 		
 		if (r == null) {
+			// if we can't get reasonable response from redis, report it!
 			String rr = null;
 			int err = 0;
 			
@@ -436,7 +465,7 @@ public class PhotoClient {
 					jedis.set(rf.putInstance(jedis.get()));
 			}
 			if (rr == null)
-				throw new IOException("Metadata inconsistent or connection broken?");
+				throw new IOException("MM Server failed or Metadata connection broken?");
 			return rr;
 		}
 		

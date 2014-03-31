@@ -94,16 +94,21 @@ public class DeleteSet {
 	}
 	
 	/**
-	 * 查询所有的active的节点的硬件信息，
+	 * 查询所有的active的节点的硬件信息，查找还有心跳信息的server
 	 * 每个节点的信息作为list中的一个元素
 	 */
 	public List<String> getAllServerInfo() {
-		//查找还有心跳信息的server
-		Set<String> keys = jedis.keys("mm.hb.*");
 		List<String> ls = new ArrayList<String>();
-		for(String hp : keys) {
-			String[] hostport = hp.substring(6).split(":");
-			ls.add(getServerInfo(hostport[0], Integer.parseInt(hostport[1])));
+
+		try {
+			Set<String> keys = jedis.keys("mm.hb.*");
+
+			for(String hp : keys) {
+				String[] hostport = hp.substring(6).split(":");
+				ls.add(getServerInfo(hostport[0], Integer.parseInt(hostport[1])));
+			}
+		} catch (Exception e) {
+			System.out.println("Get mm.hb.* failed: " + e.getMessage());
 		}
 
 		return ls;
