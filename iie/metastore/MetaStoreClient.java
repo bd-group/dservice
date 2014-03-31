@@ -5,6 +5,7 @@ import iie.metastore.MetaStoreClient.ScrubRule.ScrubAction;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -20,6 +21,7 @@ import java.net.UnknownHostException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -463,6 +465,9 @@ public class MetaStoreClient {
 
 			int exitVal = p.waitFor();
 			System.out.println(" -> exit w/ " + exitVal);
+			br.close();
+			isr.close();
+			err.close();
 			if (exitVal > 0)
 				return false;
 		} catch (InterruptedException e) {
@@ -492,6 +497,9 @@ public class MetaStoreClient {
 				if (verbose) System.out.println(line);
 			}
 			if (verbose) System.out.println("</ERROR>");
+			br.close();
+			isr.close();
+			err.close();
 			
 			InputStream out = p.getInputStream();
 			isr = new InputStreamReader(out);
@@ -507,6 +515,9 @@ public class MetaStoreClient {
 
 			int exitVal = p.waitFor();
 			if (verbose) System.out.println(" -> exit w/ " + exitVal);
+			br.close();
+			isr.close();
+			out.close();
 			if (exitVal > 0)
 				return result;
 		} catch (InterruptedException e) {
@@ -554,9 +565,9 @@ public class MetaStoreClient {
 		FreeSpace fs = new FreeSpace();
 		
 		while ((line = bufReader.readLine()) != null) {
-			if (line.startsWith("Total space")) {
+			if (line.startsWith("True  space")) {
 				String[] ls = line.split(" ");
-				fs.total = Long.parseLong(ls[2].substring(0, ls[2].length() - 2)) * 1000000;
+				fs.total = Long.parseLong(ls[3].substring(0, ls[3].length() - 2)) * 1000000;
 				fs.ratio = Double.parseDouble(ls[ls.length - 1]);
 				break;
 			}
@@ -583,18 +594,27 @@ public class MetaStoreClient {
 					// calculate space now
 					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
 						if (getlen) {
-							SFileLocation sfl = f.getLocations().get(0);
-							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-							String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
-							String result = runRemoteCmdWithResult(cmd);
-							if (!result.equals("")) {
-								String[] res = result.split("\t");
+							for (int i = 0; i < f.getLocationsSize(); i++) {
+								SFileLocation sfl = f.getLocations().get(i);
 								try {
-									fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
-									fs.addRecordnr(f.getRecord_nr());
-								} catch (NumberFormatException nfe) {
-									nfe.printStackTrace();
+									String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+									String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+									String result = runRemoteCmdWithResult(cmd);
+									if (!result.equals("")) {
+										String[] res = result.split("\t");
+										try {
+											fs.addSpace(Long.parseLong(res[0]) * 1024 / 1000);
+											fs.addRecordnr(f.getRecord_nr());
+										} catch (NumberFormatException nfe) {
+											nfe.printStackTrace();
+											continue;
+										}
+									}
+								} catch (MetaException mee) {
+									mee.printStackTrace();
+									continue;
 								}
+								break;
 							}
 						}
 					} else if (f.getLength() > 0) {
@@ -776,6 +796,7 @@ public class MetaStoreClient {
 	    long ofl_fid = -1, srep_fid = -1, fsck_begin = -1, fsck_end = -1;
 	    int srep_repnr = -1;
 	    String ofl_sfl_dev = null;
+	    boolean ofl_del = false;
 	    int flt_version = 0;
 	    String ng_name = null;
 	    boolean statfs2_xj = false, statfs2_del = false, statfs2_getlen = true;
@@ -783,6 +804,9 @@ public class MetaStoreClient {
 	    long statfs2_bday = -1, statfs2_days = -1;
 	    String scrub_rule = null;
 	    long scrub_max = -1;
+	    String dfl_dev = null, dfl_location = null;
+	    String dfl_file = null;
+	    int fls_op = -1;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -821,42 +845,76 @@ public class MetaStoreClient {
 	    		System.out.println("-h   : print this help.");
 	    		System.out.println("-r   : server name.");
 	    		System.out.println("-p   : server port.");
+	    		
+	    		System.out.println("\n[Node]");
 	    		System.out.println("-n   : add current machine as a new node.");
+	    		System.out.println("-nn  : add node with specified name.");
+	    		System.out.println("-dn  : delete node.");
+	    		System.out.println("-ln  : list existing node.");
+	    		
+	    		System.out.println("\n[File and FileLocation]");
 	    		System.out.println("-f   : auto test file operations, from create to delete.");
-	    		System.out.println("-sd  : show device");
+	    		System.out.println("-frr : read the file object by fid.");
+	    		System.out.println("-fro : reopen a file.");
+	    		System.out.println("-srep: (re)set file repnr.");
+	    		System.out.println("-fcr : create a new file and return the fid.");
+	    		System.out.println("-fcl : close the file.");
+	    		System.out.println("-fcd : delete the file.");
+	    		System.out.println("-ofl : offline a file location.");
+	    		System.out.println("-dfl : delete a file location and remove the physical data.");
+	    		System.out.println("-dflf: delete a file location (read from a file).");
+	    		System.out.println("-lfbd: list FID by devices.");
+	    		
+	    		System.out.println("\n[Device]");
+	    		System.out.println("-sd  : show device.");
 	    		System.out.println("-md  : modify device: change prop or attached node.");
 	    		System.out.println("-cd  : add new device.");
 	    		System.out.println("-dd  : delete device.");
 	    		System.out.println("-ld  : list existing devices.");
-	    		System.out.println("-nn  : add node with specified name.");
-	    		System.out.println("-dn  : delete node.");
-	    		System.out.println("-ln  : list existing node.");
+	    		System.out.println("-ond : online device.");
+	    		System.out.println("-ofd : offline device.");
+	    		System.out.println("-ofdp: offline device physically.");
+	    		System.out.println("-lbdn: list device by node.");
+	    		
+	    		System.out.println("\n[DM Info]");
 	    		System.out.println("-gni : get current active Node Info from DM.");
 	    		System.out.println("-dms : get current DM status.");
-	    		System.out.println("-frr : read the file object by fid.");
+	    		
+	    		System.out.println("\n[DB and Table]");
 	    		System.out.println("-sap : set attribution parameters.");
 	    		System.out.println("-lst : list table files.");
 	    		System.out.println("-lfd : list files by digest.");
 	    		System.out.println("-flt : filter table files.");
-                        System.out.println("-flc : count stats of the filter table files.");
+                System.out.println("-flc : count stats of the filter table files.");
 	    		System.out.println("-tct : truncate table files.");
-	    		System.out.println("-pp  : ping pong latency test.");
-	    		System.out.println("-flctc : lots of file createtion test.");
-	    		System.out.println("-lfdc: concurrent list files by digest test.");
-	    		System.out.println("-fro : reopen a file.");
-	    		System.out.println("-srep: (re)set file repnr.");
-	    		System.out.println("-cvt : convert date to timestamp.");
-	    		System.out.println("-bdnu : need to data balance 's quantities.");
-	    		System.out.println("-dabal : data balance operation.");
+	    		System.out.println("-ltg : list table's nodegroups.");
+	    		System.out.println("-trunc: trunc table files FAST.");
 	    		
+	    		System.out.println("\n[Tools]");
+	    		System.out.println("-FSCK   : do system checking: check md5sum of files' locations.");
+	    		System.out.println("-cvt    : convert date to timestamp.");
+	    		System.out.println("-tsm    : toggle safe mode of DM.");
+	    		System.out.println("-alz    : analyze the system to report file nr and space.");
+	    		System.out.println("-statfs : stat the file system and report file state.");
+	    		System.out.println("-statfs2: scan files to REMOVE/DELETE.");
+	    		System.out.println("-statfs3: scan files to get record/size info.");
+	    		System.out.println("-scrub_fast: use multi-thread to get files.");
+	    		System.out.println("-avglen : get avg len by table split value.");
+	    		System.out.println("-scrub  : into scrub mode, do auto clean.");
+	    		System.out.println("-fls    : control FLSelector watch list.");
+	    		
+	    		System.out.println("\n[Test]");
+	    		System.out.println("-pp    : ping pong latency test.");
+	    		System.out.println("-lst_test: list table files' test (single thread).");
+	    		System.out.println("-flctc : lots of file createtion test.");
+	    		System.out.println("-lfdc  : concurrent list files by digest test.");
+	    			    		
 	    		System.out.println("");
 	    		System.out.println("Be careful with following operations!");
 	    		System.out.println("");
-	    		
-	    		System.out.println("-tsm : toggle safe mode of DM.");
-	    		System.out.println("-fcr : create a new file and return the fid.");
-	    		System.out.println("-fcl : close the file.");
-	    		System.out.println("-fcd : delete the file.");
+	    			    		
+	    		System.out.println("-bdnu : need to data balance 's quantities.");
+	    		System.out.println("-dabal : data balance operation.");
 	    		
 	    		System.exit(0);
 	    	}
@@ -1173,6 +1231,10 @@ public class MetaStoreClient {
 	    		}
 	    		ofl_sfl_dev = o.opt;
 	    	}
+	    	if (o.flag.equals("-ofl_del")) {
+	    		// set delete flag for the local file
+	    		ofl_del = true;
+	    	}
 	    	if (o.flag.equals("-srep_fid")) {
 	    		// set rep file id
 	    		if (o.opt == null) {
@@ -1212,6 +1274,38 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		ng_name = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_dev")) {
+	    		// device ID
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_dev devid");
+	    			System.exit(0);
+	    		}
+	    		dfl_dev = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_location")) {
+	    		// location
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_location loc");
+	    			System.exit(0);
+	    		}
+	    		dfl_location = o.opt;
+	    	}
+	    	if (o.flag.equals("-dfl_file")) {
+	    		// dfl file
+	    		if (o.opt == null) {
+	    			System.out.println("-dfl_file FILEPATH");
+	    			System.exit(0);
+	    		}
+	    		dfl_file = o.opt;
+	    	}
+	    	if (o.flag.equals("-fls_op")) {
+	    		// set fls_op
+	    		if (o.opt == null) {
+	    			System.out.println("-fls_op 0/1/2");
+	    			System.exit(0);
+	    		}
+	    		fls_op = Integer.parseInt(o.opt);
 	    	}
 	    }
 	    if (cli == null) {
@@ -1508,6 +1602,28 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				}
 	    	}
+	    	if (o.flag.equals("-ldbn")) {
+	    		// list device by node
+	    		if (node_name == null) {
+	    			System.out.println("Please set -node");
+	    			System.exit(0);
+	    		}
+	    		List<String> devids;
+	    		try {
+	    			devids = cli.client.listDevsByNode(node_name);
+	    			if (devids.size() > 0) {
+	    				for (String d : devids) {
+	    					System.out.println("DEVID: " + d);
+	    				}
+	    			}
+	    		} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
 	    	if (o.flag.equals("-sd")) {
 	    		// show device
 	    		if (devid == null) {
@@ -1591,8 +1707,70 @@ public class MetaStoreClient {
 					break;
 				}
 	    	}
+	    	if (o.flag.equals("-ofdp")) {
+	    		// physically offline a device
+	    		if (devid == null) {
+	    			System.out.println("Please set -devid");
+	    			System.exit(0);
+	    		}
+	    		try {
+					cli.client.offlineDevicePhysically(devid);
+					System.out.println("Offline Device '" + devid + "' done physically.");
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-lfbd")) {
+	    		// list FID by devices
+	    		if (o.opt == null) {
+	    			System.out.println("Please set -lfbd <DEVID,DEVID,...>");
+	    			System.exit(0);
+	    		}
+	    		List<Long> fids = null;
+	    		String[] devids = o.opt.split(",");
+	    		
+	    		if (devids.length > 0) {
+	    			try {
+	    				fids = cli.client.listFilesByDevs(Arrays.asList(devids));
+					} catch (MetaException e) {
+						e.printStackTrace();
+						break;
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+	    		}
+	    		if (fids != null && fids.size() > 0) {
+	    			for (Long _fid : fids) {
+	    				System.out.println(_fid);
+	    			}
+	    			System.out.println("-> Total " + fids.size() + " FIDs.");
+	    		}
+	    	}
+	    	if (o.flag.equals("-fls")) {
+	    		// control FLSelector watch list
+	    		if (dbName == null || tableName == null || fls_op == -1) {
+	    			System.out.println("Please set -db and -table");
+	    			System.exit(0);
+	    		}
+	    		try {
+					boolean res = cli.client.flSelectorWatch(dbName + "." + tableName, fls_op);
+					System.out.println("Control FLSelector OP=" + (fls_op == 0 ? "ADD" :
+						(fls_op == 1 ? "DEL" : "FLUSH")) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
 	    	if (o.flag.equals("-ond")) {
-	    		// offline Device
+	    		// online Device
 	    		if (devid == null) {
 	    			System.out.println("Please set -devid.");
 	    			System.exit(0);
@@ -1778,6 +1956,13 @@ public class MetaStoreClient {
 					sr.soft = 30 * 24;
 					sr.hard = 30 * 24;
 					sr.action = ScrubRule.ScrubAction.DOWNREP;
+					srl.add(sr);
+					sr = new ScrubRule();
+					sr.type = "all";
+					sr.soft = 400000; // year before unix ZERO year
+					sr.hard = 400000;
+					sr.action = ScrubRule.ScrubAction.DELETE;
+					srl.add(sr);
 				}
 				System.out.println("Target Ratio " + target_ratio);
 				for (ScrubRule sr : srl) {
@@ -1850,7 +2035,7 @@ public class MetaStoreClient {
 						BufferedReader bufReader = new BufferedReader(new StringReader(dms));
 						String line = null;
 						while ((line = bufReader.readLine()) != null) {
-							if (line.startsWith("Total space")) {
+							if (line.startsWith("True  space")) {
 								String[] ls = line.split(" ");
 								ratio = Double.parseDouble(ls[ls.length - 1]);
 								break;
@@ -1869,7 +2054,7 @@ public class MetaStoreClient {
 						long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
 						List<Long> fsmapToDel = new ArrayList<Long>();
 						
-						for (Long k : fmap.descendingKeySet()) {
+						for (Long k : fmap.keySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
 							long hours = (cur_hour - k) / 3600;
 							long total_free = 0;
@@ -1877,7 +2062,7 @@ public class MetaStoreClient {
 							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
 							// iterate on each rule
 							for (ScrubRule sr : srl) {
-								if (hours > sr.soft) {
+								if (hours > sr.soft || hours < -10000) {
 									// act on each table
 									List<String> toDel = new ArrayList<String>();
 									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2044,7 +2229,7 @@ public class MetaStoreClient {
 					Long total_size = 0L;
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2100,7 +2285,7 @@ public class MetaStoreClient {
 				Long total_size = 0L;
 				Map<String, Long> sizeMap = new TreeMap<String, Long>();
 				Map<String, Long> fnrMap = new TreeMap<String, Long>();
-				for (Long k : fmap.descendingKeySet()) {
+				for (Long k : fmap.keySet()) {
 					Map<String, FileStat> fsmap = fmap.get(k);
 					System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 					for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2156,7 +2341,7 @@ public class MetaStoreClient {
 					BufferedReader bufReader = new BufferedReader(new StringReader(dms));
 					String line = null;
 					while ((line = bufReader.readLine()) != null) {
-						if (line.startsWith("Total space")) {
+						if (line.startsWith("True  space")) {
 							String[] ls = line.split(" ");
 							if (Double.parseDouble(ls[ls.length - 1]) <= 0.05) {
 								// emergency mode, automatically delete
@@ -2299,7 +2484,7 @@ public class MetaStoreClient {
 					Long total_size = 0L;
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2326,7 +2511,7 @@ public class MetaStoreClient {
 						System.err.print("Do you really want to DOWN-REP these files? (Y or N) ");
 					
 					if ((System.in.read() == 'Y') || isEmergency) {
-						for (Long k : fmap.descendingKeySet()) {
+						for (Long k : fmap.keySet()) {
 							Map<String, FileStat> fsmap = fmap.get(k);
 							System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 							for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2407,6 +2592,55 @@ public class MetaStoreClient {
 					break;
 				}
 			}
+			if (o.flag.equals("-dfl")) {
+				// delete a file location, and remove the physical data
+				if (dfl_dev == null || dfl_location == null) {
+					System.out.println("Please set -dfl_dev and -dfl_location");
+					System.exit(0);
+				}
+
+				try {
+					cli.client.del_filelocation(dfl_dev, dfl_location);
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+			}
+			if (o.flag.equals("-dflf")) {
+				// delete a file location (read from a file), and remove the physical data
+				if (dfl_file == null) {
+					System.out.println("Please set -dfl_file");
+					System.exit(0);
+				}
+
+				try {
+					File tf = new File(dfl_file);
+					FileReader fr = new FileReader(tf.getAbsoluteFile());
+					BufferedReader br = new BufferedReader(fr);
+					String line = null;
+					
+					while ((line = br.readLine()) != null) {
+						String[] ln = line.split(",");
+						if (ln.length == 2) {
+							System.out.println("Got DEVID " + ln[0] + " LOC " + ln[1]);
+							cli.client.del_filelocation(ln[0], ln[1]);
+						}
+					}
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
+				}
+			}
 			if (o.flag.equals("-ofl")) {
 				// offline a file location
 				if (ofl_fid < 0 || ofl_sfl_dev == null) {
@@ -2427,7 +2661,15 @@ public class MetaStoreClient {
 						}
 					}
 					if (sfl != null)
-						cli.client.offline_filelocation(sfl);
+						ofl_del = ofl_del && cli.client.offline_filelocation(sfl);
+					if (ofl_del) {
+						String mp, cmd = null;
+						mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+						if (mp != null)
+							cmd = "ssh " + sfl.getNode_name() + " rm -rf " + mp + "/" + sfl.getLocation();
+						System.out.println("CMD: {" + cmd + "}");
+						// runRemoteCmd(cmd);
+					}
 				} catch (FileOperationException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -2472,7 +2714,7 @@ public class MetaStoreClient {
 					break;
 				}
 			}
-			if(o.flag.equals("-statfs3")){
+			if (o.flag.equals("-statfs3")){
 				long end = 0;
 				
 				if ((dbName == null) ||
@@ -2567,7 +2809,7 @@ public class MetaStoreClient {
 					Map<String, Long> sizeMap = new TreeMap<String, Long>();
 					Map<String, Long> fnrMap = new TreeMap<String, Long>();
 					Map<String, List<Long>> fidMap = new TreeMap<String, List<Long>>();
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
@@ -2594,11 +2836,13 @@ public class MetaStoreClient {
 					System.out.println("Total Size " + total_size + " KB");
 					
 					String command = "ssh %s 'cd sotstore/dservice ; java -cp build/devmap.jar:build/iie.jar:lib/lucene-core-4.2.1.jar -Djava.library.path=build/ iie.metastore.LuceneStat %s %s'";
+					TreeSet<Long> fs = new TreeSet<Long>();
 					for (Map.Entry<String, List<Long>> e : fidMap.entrySet()) {
 						long totalRecord = 0;
 						long totalSize = 0;
 						long fnrs = 0, freps = 0, ignore = 0;
 						
+						fs.clear();
 						for (Long fid : e.getValue()) {
 							SFile f = cli.client.get_file_by_id(fid);
 							String result = "";
@@ -2606,35 +2850,38 @@ public class MetaStoreClient {
 							
 							freps = 0;
 							fnrs++;
+							fs.add(fid);
 							List<Long> tr = new ArrayList<Long>(f.getLocationsSize());
 							List<Long> ts = new ArrayList<Long>(f.getLocationsSize());
-							for (SFileLocation loc : f.getLocations()) {
-								if (loc.getVisit_status() != MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
-									ignore++;
-									continue;
-								}
-								freps++;
-								result = runRemoteCmdWithResultVerbose(String.format(command, 
-										loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
-
-								if (!"".equals(result) && result.indexOf("$") >= 0){
-									int start = result.indexOf("$");
-									int stop = result.indexOf(")");
-									result = result.substring(start+2,stop);	
-									String[] dres = result.split(",");
-									long drecord = Long.parseLong(dres[0]);
-									long dsize = Long.parseLong(dres[1]);
-									if (!isCalc) {
-										isCalc = true;
-										totalRecord += drecord;
-										totalSize += dsize;
+							if (f.getLocationsSize() > 0) {
+								for (SFileLocation loc : f.getLocations()) {
+									if (loc.getVisit_status() != MetaStoreConst.MFileLocationVisitStatus.ONLINE) {
+										ignore++;
+										continue;
 									}
-									//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
-									tr.add(drecord);
-									ts.add(dsize);
-								} else {
-									tr.add(0L);
-									tr.add(0L);
+									freps++;
+									result = runRemoteCmdWithResultVerbose(String.format(command, 
+											loc.getNode_name(), loc.getDevid(), loc.getLocation()), false);
+
+									if (!"".equals(result) && result.indexOf("$") >= 0){
+										int start = result.indexOf("$");
+										int stop = result.indexOf(")");
+										result = result.substring(start+2,stop);	
+										String[] dres = result.split(",");
+										long drecord = Long.parseLong(dres[0]);
+										long dsize = Long.parseLong(dres[1]);
+										if (!isCalc) {
+											isCalc = true;
+											totalRecord += drecord;
+											totalSize += dsize;
+										}
+										//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
+										tr.add(drecord);
+										ts.add(dsize);
+									} else {
+										tr.add(0L);
+										tr.add(0L);
+									}
 								}
 							}
 							long xtr = -1;
@@ -2648,6 +2895,7 @@ public class MetaStoreClient {
 						}
 						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
 								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " KB");
+						System.out.println(fs);
 					}
 				} catch (MetaException e) {
 					e.printStackTrace();
@@ -2884,7 +3132,7 @@ public class MetaStoreClient {
 						}
 					}
 					// ok, dump the file stats
-					for (Long k : fmap.descendingKeySet()) {
+					for (Long k : fmap.keySet()) {
 						Map<String, FileStat> fsmap = fmap.get(k);
 						System.out.print(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t");
 						for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {

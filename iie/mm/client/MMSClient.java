@@ -8,6 +8,7 @@ import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -172,7 +173,7 @@ public class MMSClient {
 	/**
 	 * @param args
 	 */
-	public static void main(String[] args) throws Exception{
+	public static void main(String[] args) {
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
@@ -220,6 +221,8 @@ public class MMSClient {
 		int dupNum = 1;
 		Set<String> sentinels = new HashSet<String>();
 		String uri = null;
+		String mget_type = "all";
+		long mget_begin_time = 0;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -349,6 +352,20 @@ public class MMSClient {
 				}
 				uri = o.opt;
 			}
+			if (o.flag.equals("-mget_type")) {
+				if (o.opt == null) {
+					System.out.println("-mget_type TYPE");
+					System.exit(0);
+				}
+				mget_type = o.opt;
+			}
+			if (o.flag.equals("-mget_begin_time")) {
+				if (o.opt == null) {
+					System.out.println("-mget_begin_time TIME");
+					System.exit(0);
+				}
+				mget_begin_time = Long.parseLong(o.opt);
+			}
 		}
 		
 		/*ClientConf conf = null;
@@ -368,6 +385,9 @@ public class MMSClient {
 			pcInfo = new ClientAPI();
 			pcInfo.init(uri);
 		} catch (IOException e) {
+			e.printStackTrace();
+			System.exit(0);
+		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(0);
 		}
@@ -405,6 +425,8 @@ public class MMSClient {
 					e.printStackTrace();
 				} catch (NoSuchAlgorithmException e) {
 					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-lpta")) {
@@ -422,7 +444,11 @@ public class MMSClient {
 				}
 				lpt_nr = 0;
 				for (LPutThread t : lputs) {
-					t.join();
+					try {
+						t.join();
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
 					lpt_nr += t.pnr;
 				}
 				long end = System.currentTimeMillis();
@@ -470,6 +496,8 @@ public class MMSClient {
 				} catch (NoSuchAlgorithmException e) {
 					e.printStackTrace();
 				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (Exception e) {
 					e.printStackTrace();
 				}
 			}
@@ -524,7 +552,11 @@ public class MMSClient {
 					lgt_nr = 0;
 					size = 0;
 					for (LGetThread t : lgets) {
-						t.join();
+						try {
+							t.join();
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
 						lgt_nr += t.gnr;
 						size += t.size;
 					}
@@ -585,6 +617,8 @@ public class MMSClient {
 							" LAT " + ((double)dur / lgt_nr) + " ms");
 				} catch(IOException e){
 					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
 				}
 			}
 			
@@ -624,6 +658,8 @@ public class MMSClient {
 					e.printStackTrace();
 				} catch (IOException e) {
 					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-get")) {
@@ -651,12 +687,85 @@ public class MMSClient {
 				System.out.println("Provide the INFO about a photo.");
 				System.out.println("get args:  " + info);
 				try{
-					
 					byte[] content = pcInfo.get(info);
 					FileOutputStream fos = new FileOutputStream("getbi");
+					
 					fos.write(content);
 					fos.close();
-					System.out.println("get content length:"+content.length);
+					System.out.println("get content length:" + content.length);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-mget")) {
+				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
+				System.out.println("get args: " + set + ", type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck);
+				
+				try {
+					Thread.sleep(1000 * 1);
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+				List<String> r;
+				try {
+					String rset = null;
+					Map<String, String> cookies = new HashMap<String, String>();
+					long begin, end;
+					
+					begin = System.nanoTime();
+					r = pcInfo.getkeys(mget_type, mget_begin_time);
+					end = System.nanoTime();
+					if (r.size() > 0)
+						rset = r.get(0).split("@")[0];
+					System.out.println("Got nr " + r.size() + " keys from Set " + rset + " in " + ((end - begin) / 1000.0) + " us.");
+					
+					long tlen = 0;
+					long ttime = 0;
+					do {
+						begin = System.nanoTime();
+						List<byte[]> b = pcInfo.mget(r, cookies);
+						end = System.nanoTime();
+						ttime += (end - begin);
+					
+						long len = 0;
+						for (byte[] v : b) {
+							if (v != null)
+								len += v.length;
+						}
+						System.out.println("Got nr " + b.size() + " vals len " + len + "B in " + ((end - begin) / 1000.0) + " us, BW is " + (len / ((end - begin) / 1000000.0)) + " KB/s.");
+						System.out.flush();
+						tlen += len;
+
+						// do check now
+						int idx = Integer.parseInt(cookies.get("idx"));
+						if (lgt_docheck) {
+							for (int i = 0; i < b.size(); i++) {
+								MessageDigest md;
+								md = MessageDigest.getInstance("md5");
+								md.update(b.get(i));
+								byte[] mdbytes = md.digest();
+
+								StringBuffer sb = new StringBuffer();
+								for (int j = 0; j < mdbytes.length; j++) {
+									sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+								}
+								if (!sb.toString().equalsIgnoreCase(r.get(i + (idx - b.size())).split("@")[1])) {
+									System.out.println("IDX " + i + " : expect " + r.get(i) + " got " + sb.toString());
+								}
+							}
+						}
+						//if (idx >= r.size() - 1)
+						if (b.size() == 0)
+							break;
+					} while (true);
+					
+					System.out.println(" -> cookies: " + cookies);
+					System.out.println("MGET nr " + r.size() + " size " + tlen + "B : BW " + 
+							(tlen / (ttime / 1000000.0)) + " KB/s");
+					
+				} catch (IOException e) {
+					e.printStackTrace();
 				} catch (Exception e) {
 					e.printStackTrace();
 				}
@@ -682,8 +791,8 @@ public class MMSClient {
 				}
 			}
 		}
-		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
-			pcInfo.getPc().getRf().quit();
+//		if (pcInfo.getPc().getConf().getRedisMode() == ClientConf.RedisMode.SENTINEL)
+//			pcInfo.getPc().getRf().quit();
 		pcInfo.quit();
 	}
 

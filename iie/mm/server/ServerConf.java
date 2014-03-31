@@ -25,6 +25,7 @@ public class ServerConf {
 	public static int DEFAULT_FLUSH_INTERVAL = 10;
 	public static int DEFAULT_REQNR_TO_FLUSH = 15;
 	public static int DEFAULT_HTTP_PORT = 20202;
+	public static int DEFAULT_SYSINFOSTAT_PORT = 19888;
 	
 	private boolean use_junixsocket = false;
 	
@@ -43,6 +44,9 @@ public class ServerConf {
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 		
 	private Set<String> storeArray = new HashSet<String>();
+	
+	private String sysInfoServerName = null;
+	private int sysInfoServerPort = -1;
 	
 	public enum RedisMode {
 		SENTINEL, STANDALONE,
@@ -238,6 +242,22 @@ public class ServerConf {
 
 	public void setSentinels(Set<String> sentinels) {
 		this.sentinels = sentinels;
+	}
+
+	public String getSysInfoServerName() {
+		return sysInfoServerName;
+	}
+
+	public void setSysInfoServerName(String sysInfoServerName) {
+		this.sysInfoServerName = sysInfoServerName;
+	}
+
+	public int getSysInfoServerPort() {
+		return sysInfoServerPort;
+	}
+
+	public void setSysInfoServerPort(int sysInfoServerPort) {
+		this.sysInfoServerPort = sysInfoServerPort;
 	}
 	
 }

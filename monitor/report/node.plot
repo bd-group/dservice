@@ -24,5 +24,7 @@ plot "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \"
 	using 1:2     t "Total  Node  Y1" w linesp ls 1 axes x1y1, \
      "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $7;}' FIXME_REPORT_FILE" \
 	using 1:2     t "Active Node  Y1" w linesp ls 2 axes x1y1, \
-     "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $47/$3*$7*100 \" \" ($47-$46)/$3*$7*100 \" \" ($47+$46)/$3*$7*100;}' FIXME_REPORT_FILE" \
-	using 1:2:3:4 t "Free Stdev % Y2" w errorbars ls 3 axes x1y2
+     "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $47/$3*$9*100;}' FIXME_REPORT_FILE" \
+	using 1:2     t "Free Avg   % Y2" w lines axes x1y2
+#     "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $47/$3*$9*100 \" \" ($47-$46)/$3*$9*100 \" \" ($47+$46)/$3*$9*100;}' FIXME_REPORT_FILE" \
+#	using 1:2:3:4 t "Free Stdev % Y2" w errorbars ls 4 axes x1y2

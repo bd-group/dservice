@@ -51,11 +51,13 @@ public class MMServer {
 		}
 		
 		String serverName = null,redisMasterName = null,redisServer = null;
+		String SysInfoStatServerName = null;
 		int serverPort = ServerConf.DEFAULT_SERVER_PORT,
 				blockSize = ServerConf.DEFAULT_BLOCK_SIZE, 
 				redisPort = ServerConf.DEFAULT_REDIS_PORT, 
 				period = ServerConf.DEFAULT_PERIOD,
-				httpPort = ServerConf.DEFAULT_HTTP_PORT;
+				httpPort = ServerConf.DEFAULT_HTTP_PORT,
+				SysInfoStatServerPort = ServerConf.DEFAULT_SYSINFOSTAT_PORT;
 		Set<String> sa = new HashSet<String>();
 		Set<String> sentinels = new HashSet<String>();
 		
@@ -65,9 +67,11 @@ public class MMServer {
 				System.out.println("-h    : print this help.");
 				System.out.println("-r    : local server name.");
 				System.out.println("-p    : local server listen port.");
-				System.out.println("-rr : redis server name.");
-                System.out.println("-rp : redis server port.");
+				System.out.println("-rr   : redis server name.");
+                System.out.println("-rp   : redis server port.");
 //				System.out.println("-rmn  : redis master name");
+                System.out.println("-sr   : SysInfoStat server name.");
+                System.out.println("-sp   : SysInfoStat server port.");
 				System.out.println("-hp   : http server port.");
 				System.out.println("-blk  : block size.");
 				System.out.println("-prd  : logging period.");
@@ -101,12 +105,12 @@ public class MMServer {
                 redisServer = o.opt;
 	        }
 	        if (o.flag.equals("-rp")) {
-	                // set redis server port
-	                if (o.opt == null) {
-	                        System.out.println("-rp redisServerPort");
-	                        System.exit(0);
-	                }
-	                redisPort = Integer.parseInt(o.opt);
+	        	// set redis server port
+	        	if (o.opt == null) {
+	        		System.out.println("-rp redisServerPort");
+	        		System.exit(0);
+	        	}
+	        	redisPort = Integer.parseInt(o.opt);
 	        }
 //			if (o.flag.equals("-rmn")) {
 //				if(o.opt == null){
@@ -116,6 +120,22 @@ public class MMServer {
 //				redisMasterName = o.opt;
 //				
 //			}
+	        if (o.flag.equals("-sr")) {
+                // set SysInfoStat server name
+                if (o.opt == null) {
+                        System.out.println("-sr SysInfoStat_server_name");
+                        System.exit(0);
+                }
+                SysInfoStatServerName = o.opt;
+	        }
+	        if (o.flag.equals("-sp")) {
+	        	// set SysInfoStat server port
+	        	if (o.opt == null) {
+	        		System.out.println("-sp SysInfoStat_server_port");
+	        		System.exit(0);
+	        	}
+	        	SysInfoStatServerPort = Integer.parseInt(o.opt);
+	        }
 			if (o.flag.equals("-hp")) {
 				// set http server port
 				httpPort = Integer.parseInt(o.opt);
@@ -167,6 +187,13 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
+			if (SysInfoStatServerName != null) {
+				conf.setSysInfoServerName(SysInfoStatServerName);
+				conf.setSysInfoServerPort(SysInfoStatServerPort);
+				System.out.println("Enable SysInfoStat mode: Server " + SysInfoStatServerName + ":" + SysInfoStatServerPort);
+			} else {
+				System.out.println("Disable SysInfoStat mode");
+			}
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(0);

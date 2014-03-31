@@ -40,6 +40,143 @@ public class SysInfoStat {
 		}
 	}
 	
+	public static class MMStat {
+		Double tlen = 0.0;
+		Long[] ts = new Long[2];
+		Double[] wbw = new Double[2];
+		Double[] rbw = new Double[2];
+		Double[] rlat = new Double[2];
+		Long[] wbytes = new Long[2];
+		Long[] rbytes = new Long[2];
+		Long[] rdelay = new Long[2];
+		Long[] readN = new Long[2];
+		Long[] readErr = new Long[2];
+		Long[] writeN = new Long[2];
+		Long[] writeErr = new Long[2];
+		
+		public MMStat() {
+			ts[0] = new Long(0);
+			ts[1] = new Long(0);
+			wbw[0] = new Double(0);
+			wbw[1] = new Double(0);
+			rbw[0] = new Double(0);
+			rbw[1] = new Double(0);
+			rlat[0] = new Double(0);
+			rlat[1] = new Double(0);
+			wbytes[0] = new Long(0);
+			wbytes[1] = new Long(0);
+			rbytes[0] = new Long(0);
+			rbytes[1] = new Long(0);
+			rdelay[0] = new Long(0);
+			rdelay[1] = new Long(0);
+			readN[0] = new Long(0);
+			readN[1] = new Long(0);
+			readErr[0] = new Long(0);
+			readErr[1] = new Long(0);
+			writeN[0] = new Long(0);
+			writeN[1] = new Long(0);
+			writeErr[0] = new Long(0);
+			writeErr[1] = new Long(0);
+		}
+		
+		public boolean isValid() {
+			return (ts[1] - ts[0] >=0) &&
+					(wbw[1] >= 0) &&
+					(rbw[1] >= 0) &&
+					(rlat[1] >= 0) &&
+					(wbytes[1] - wbytes[0] >= 0) &&
+					(rbytes[1] - rbytes[0] >= 0) &&
+					(rdelay[1] - rdelay[0] >= 0) &&
+					(readN[1] - readN[0] >= 0) &&
+					(readErr[1] - readErr[0] >= 0) &&
+					(writeN[1] - writeN[0] >= 0) &&
+					(writeErr[1] - writeErr[0] >= 0);
+		}
+		
+		public String toString() {
+			String r = "";
+			
+			r += tlen + "," +
+					(ts[1] - ts[0]) + "," +
+					(wbw[1]) + "," +
+					(rbw[1]) + "," +
+					(rlat[1]) + "," +
+					(wbytes[1] - wbytes[0]) + "," +
+					(rbytes[1] - rbytes[0]) + "," +
+					(rdelay[1] - rdelay[0]) + "," +
+					(readN[1] - readN[0]) + "," +
+					(readErr[1] - readErr[0]) + "," +
+					(writeN[1] - writeN[0]) + "," +
+					(writeErr[1] - writeErr[0]);
+			return r;
+		}
+		
+		public void Add(MMStat other) {
+			synchronized (this) {
+				if (tlen == 0.0) {
+					tlen = (double)(other.ts[1] - other.ts[0]);
+					ts[0] = other.ts[0];
+					ts[1] = other.ts[1];
+				} else {
+					tlen = (double) Math.min(ts[1] - ts[0], other.ts[1] - other.ts[0]);
+					ts[0] = (ts[0] + other.ts[0]) / 2;
+					ts[1] = (ts[1] + other.ts[1]) / 2;
+				}
+				wbw[0] += other.wbw[0];
+				wbw[1] += other.wbw[1];
+				rbw[0] += other.rbw[0];
+				rbw[1] += other.rbw[1];
+				rlat[0] += other.rlat[0];
+				rlat[0] /= 2;
+				rlat[1] += other.rlat[1];
+				rlat[1] /= 2;
+				wbytes[0] += other.wbytes[0];
+				wbytes[1] += other.wbytes[1];
+				rbytes[0] += other.rbytes[0];
+				rbytes[1] += other.rbytes[1];
+				rdelay[0] += other.rdelay[0];
+				rdelay[1] += other.rdelay[1];
+				readN[0] += other.readN[0];
+				readN[1] += other.readN[1];
+				readErr[0] += other.readErr[0];
+				readErr[1] += other.readErr[1];
+				writeN[0] += other.writeN[0];
+				writeN[1] += other.writeN[1];
+				writeErr[0] += other.writeErr[0];
+				writeErr[1] += other.writeErr[1];
+			}
+		}
+		
+		public void Update(Long ts, Double wbw, Double rbw, Double rlat, Long wbytes, 
+				Long rbytes, Long rdelay, Long readN, Long readErr, Long writeN, Long writeErr) {
+			synchronized (this) {
+				this.ts[0] = this.ts[1];
+				this.wbw[0] = this.wbw[1];
+				this.rbw[0] = this.rbw[1];
+				this.rlat[0] = this.rlat[1];
+				this.wbytes[0] = this.wbytes[1];
+				this.rbytes[0] = this.rbytes[1];
+				this.rdelay[0] = this.rdelay[1];
+				this.readN[0] = this.readN[1];
+				this.readErr[0] = this.readErr[1];
+				this.writeN[0] = this.writeN[1];
+				this.writeErr[0] = this.writeErr[1];
+				
+				this.ts[1] = ts;
+				this.wbw[1] = wbw;
+				this.rbw[1] = rbw;
+				this.rlat[1] = rlat;
+				this.wbytes[1] = wbytes;
+				this.rbytes[1] = rbytes;
+				this.rdelay[1] = rdelay;
+				this.readN[1] = readN;
+				this.readErr[1] = readErr;
+				this.writeN[1] = writeN;
+				this.writeErr[1] = writeErr;
+			}
+		}
+	}
+	
 	public static class NetStat {
 		Double tlen = 0.0;
 		Long[] ts = new Long[2];
@@ -438,6 +575,8 @@ public class SysInfoStat {
 		public static Map<String, CPUStat> cpuMap = new ConcurrentHashMap<String, CPUStat>();
 		public static Map<String, SysStatKey> nskMap = new ConcurrentHashMap<String, SysStatKey>();
 		public static Map<SysStatKey, NetStat> nsMap = new ConcurrentHashMap<SysStatKey, NetStat>();
+		public static Map<String, SysStatKey> mmkMap = new ConcurrentHashMap<String, SysStatKey>();
+		public static Map<SysStatKey, MMStat> mmMap = new ConcurrentHashMap<SysStatKey, MMStat>();
 		public ServerReportTask spt = new ServerReportTask();
 		public Timer timer = new Timer("ServerReportTask");
 		public String prefix = "sysinfo"; 
@@ -453,6 +592,7 @@ public class SysInfoStat {
 		public class ServerReportTask extends TimerTask {
 			public Map<String, DiskStat> nodeMap = new ConcurrentHashMap<String, DiskStat>();
 			public Map<String, NetStat> nnMap = new ConcurrentHashMap<String, NetStat>();
+			public Map<String, MMStat> mMap = new ConcurrentHashMap<String, MMStat>();
 			
 			@Override
 			public void run() {
@@ -460,7 +600,7 @@ public class SysInfoStat {
 				if (do_report) {
 					Date d = new Date(System.currentTimeMillis());
 					SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-					File reportFile = new File(prefix + "-" + sdf.format(d));
+					File reportFile = new File("log/" + prefix + "-" + sdf.format(d));
 					if (reportFile.getParentFile() != null)
 						if (!reportFile.getParentFile().exists() && !reportFile.getParentFile().mkdirs()) {
 							return;
@@ -479,7 +619,7 @@ public class SysInfoStat {
 							ds.Add(e.getValue());
 						}
 						if (e.getValue().ts[1] - e.getValue().ts[0] < 1024)
-							sb.append("RPT_DEV  -> " + e.getKey().hostname + "," + e.getKey().dev + "," + 
+							sb.append("RPT_DEV -> " + e.getKey().hostname + "," + e.getKey().dev + "," + 
 									(System.currentTimeMillis() / 1000) + "," + e.getValue() + "\n");
 					}
 					DiskStat alldevs = new DiskStat();
@@ -546,6 +686,39 @@ public class SysInfoStat {
 					}
 					nnMap.clear();
 					
+					// handle MM info
+					for (Map.Entry<SysStatKey, MMStat> e : mmMap.entrySet()) {
+						MMStat mms = mMap.get(e.getKey().hostname);
+						if (mms == null) {
+							mms = new MMStat();
+							mMap.put(e.getKey().hostname, mms);
+						}
+						synchronized (e.getValue()) {
+							mms.Add(e.getValue());
+						}
+						if (e.getValue().isValid() && e.getValue().ts[1] - e.getValue().ts[0] < 1024)
+							sb.append("RPT_MMX -> " + e.getKey().hostname + "," + e.getKey().dev + "," +
+									(System.currentTimeMillis() / 1000) + "," +
+									e.getValue() + "\n");
+					}
+					MMStat allmms = new MMStat();
+					isAll = false;
+					for (Map.Entry<String, MMStat> e : mMap.entrySet()) {
+						if (e.getValue().tlen > 0 && e.getValue().tlen < 1024) {
+							allmms.Add(e.getValue());
+							isAll = true;
+							if (e.getValue().isValid())
+								sb.append("RPT_MMA -> " + e.getKey() + "," +
+										(System.currentTimeMillis() / 1000) + "," +
+										e.getValue() + "\n");
+						}
+					}
+					if (isAll && allmms.isValid()) {
+						sb.append("RPT_MMA -> ALL_MMS," +
+								(System.currentTimeMillis() / 1000) + "," + allmms + "\n");
+					}
+					mMap.clear();
+					
 					// ok, write to file
 					try {
 						if (!reportFile.exists()) {
@@ -585,7 +758,33 @@ public class SysInfoStat {
 				
 				for (String line : lines) {
 					String[] ds = line.split(",");
-					if (ds.length == 14) {
+					if (ds.length == 13) {
+						// MM Stat
+						SysStatKey mmk = mmkMap.get(ds[0] + ":" + ds[1]); // serverName:port
+						if (mmk == null) {
+							mmk = new SysStatKey(ds[0], ds[1]);
+							mmkMap.put(ds[0] + ":" + ds[1], mmk);
+						}
+						MMStat mms = mmMap.get(mmk);
+						if (mms == null) {
+							mms = new MMStat();
+							mmMap.put(mmk, mms);
+							System.out.println("Alloc MMSrv " + mmk.hostname + ":" + mmk.dev);
+						}
+						if (Long.parseLong(ds[2]) > mms.ts[1]) {
+							mms.Update(Long.parseLong(ds[2]), 
+									Double.parseDouble(ds[3]),
+									Double.parseDouble(ds[4]),
+									Double.parseDouble(ds[5]),
+									Long.parseLong(ds[6]),
+									Long.parseLong(ds[7]),
+									Long.parseLong(ds[8]),
+									Long.parseLong(ds[9]),
+									Long.parseLong(ds[10]),
+									Long.parseLong(ds[11]),
+									Long.parseLong(ds[12]));
+						}
+					} else if (ds.length == 14) {
 						// DiskStat
 						SysStatKey dsk = dskMap.get(ds[0] + ":" + ds[1]);
 						if (dsk == null) {
@@ -875,6 +1074,15 @@ public class SysInfoStat {
 	    for (Option o : optsList) {
 	    	if (o.flag.equals("-h")) {
 	    		// print help message
+	    		System.out.println("-h  : print this help.");
+	    		System.out.println("-s  : server mode.");
+	    		System.out.println("-c  : client mode.");
+	    		System.out.println("-r  : server name.");
+	    		System.out.println("-p  : server port.");
+	    		System.out.println("-i  : set dump interval.");
+	    		System.out.println("-f  : set log file prefix.");
+	    		
+	    		System.exit(0);
 	    	}
 	    	if (o.flag.equals("-s")) {
 	    		// into server mode

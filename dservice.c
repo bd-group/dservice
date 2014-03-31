@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-01-13 16:36:46 macan>
+ * Time-stamp: <2014-03-12 11:48:55 macan>
  *
  */
 
@@ -61,6 +61,35 @@ struct dev_scan_context
     int nr;
 };
 
+struct dservice_info
+{
+    atomic64_t qrep;            /* queued reps */
+    atomic64_t hrep;            /* handling reps */
+    atomic64_t drep;            /* done reps (not reported) */
+
+    atomic64_t qdel;            /* queued dels */
+    atomic64_t hdel;            /* handling dels */
+    atomic64_t ddel;            /* done dels (not reported) */
+
+    atomic64_t tver;            /* total verify SFLs */
+    atomic64_t tvyr;            /* total verify reply */
+
+    long upts;                  /* startup timestamp */
+    long uptime;                /* system uptime */
+    double loadavg[3];          /* system loadavg */
+
+    atomic_t updated;
+};
+
+struct thread_args
+{
+    int tid;
+};
+
+static struct dservice_info g_di;
+static int g_rep_thread_nr = 1;
+static int g_del_thread_nr = 1;
+
 static sem_t g_timer_sem;
 static sem_t g_main_sem;
 static sem_t g_rep_sem;
@@ -69,14 +98,14 @@ static sem_t g_async_recv_sem;
 static sem_t g_dscan_sem;
 
 static pthread_t g_timer_thread = 0;
-static pthread_t g_rep_thread = 0;
-static pthread_t g_del_thread = 0;
+static pthread_t *g_rep_thread = NULL;
+static pthread_t *g_del_thread = NULL;
 static pthread_t g_async_recv_thread = 0;
 static pthread_t g_dscan_thread = 0;
 
 static int g_timer_thread_stop = 0;
-static int g_rep_thread_stop = 0;
-static int g_del_thread_stop = 0;
+static int *g_rep_thread_stop = NULL;
+static int *g_del_thread_stop = NULL;
 static int g_main_thread_stop = 0;
 static int g_async_recv_thread_stop = 0;
 static int g_dscan_thread_stop = 0;
@@ -101,9 +130,47 @@ static LIST_HEAD(g_verify);
 
 #define NORMAL_HB_MODE          0
 #define QUICK_HB_MODE           1
+#define QUICK_HB_MODE2          10
 
 static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
+
+static int __get_sysinfo()
+{
+    struct sysinfo s;
+    static time_t last = 0;
+    int err, i;
+
+    if (last == 0) last = time(NULL);
+    
+    memset(&s, 0, sizeof(s));
+    err = sysinfo(&s);
+    if (err) {
+        hvfs_err(lib, "sysinfo() failed w/ %s(%d)\n",
+                 strerror(errno), errno);
+        return 0;
+    }
+    g_di.uptime = s.uptime;
+    for (i = 0; i < 3; i++) {
+        g_di.loadavg[i] = (double)s.loads[i] / (1 << SI_LOAD_SHIFT);
+    }
+    if ((atomic64_read(&g_di.qrep) +
+         atomic64_read(&g_di.hrep) +
+         atomic64_read(&g_di.drep) +
+         atomic64_read(&g_di.qdel) +
+         atomic64_read(&g_di.hdel) +
+         atomic64_read(&g_di.ddel)) != 0 ||
+        g_di.loadavg[0] > 10) {
+        atomic_set(&g_di.updated, 1);
+        return 1;
+    } else if (atomic_read(&g_di.updated)) {
+        atomic_set(&g_di.updated, 0);
+        return 1;
+    } else if (time(NULL) - last >= 60) {
+        return 1;
+    } else
+        return 0;
+}
 
 static void __sigaction_default(int signo, siginfo_t *info, void *arg)
 {
@@ -119,7 +186,7 @@ static void __sigaction_default(int signo, siginfo_t *info, void *arg)
                   HVFS_COLOR_END,
                   SIGCODES(info->si_code));
         lib_segv(signo, info, arg);
-    } else if (signo == SIGHUP || signo == SIGINT) {
+    } else if (signo == SIGHUP || signo == SIGINT || signo == SIGTERM) {
         if (!g_main_thread_stop) {
             hvfs_info(lib, "Exit DService ...\n");
             g_main_thread_stop = 1;
@@ -1092,6 +1159,7 @@ int handle_commands(char *recv)
             list_add_tail(&ra->list, &g_rep);
             xlock_unlock(&g_rep_lock);
             sem_post(&g_rep_sem);
+            atomic64_inc(&g_di.qrep);
 
             has_cmds = 1;
         } else if (strncmp(line, "+DEL:", 5) == 0) {
@@ -1136,6 +1204,7 @@ int handle_commands(char *recv)
             list_add_tail(&ra->list, &g_del);
             xlock_unlock(&g_del_lock);
             sem_post(&g_del_sem);
+            atomic64_inc(&g_di.qdel);
 
             has_cmds = 1;
         } else if (strncmp(line, "+VYR:", 5) == 0) {
@@ -1166,6 +1235,8 @@ int handle_commands(char *recv)
                     break;
                 }
             }
+            atomic64_inc(&g_di.tvyr);
+            atomic_set(&g_di.updated, 1);
             err = stat(fpath, &buf);
             if (err) {
                 hvfs_err(lib, "stat(%s) failed w/ %s(%d)\n",
@@ -1269,6 +1340,23 @@ int __do_heartbeat()
     
     /* TODO: append any commands to report */
     len += sprintf(query + len, "+CMD\n");
+    /* Add new INFO cmd: collect this node's load, queued rep/del */
+    if (__get_sysinfo()) {
+        len += sprintf(query + len, "+INFO:%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,"
+                       "%ld,%0.2f\n",
+                       atomic64_read(&g_di.qrep),
+                       atomic64_read(&g_di.hrep),
+                       atomic64_read(&g_di.drep),
+                       atomic64_read(&g_di.qdel),
+                       atomic64_read(&g_di.hdel),
+                       atomic64_read(&g_di.ddel),
+                       atomic64_read(&g_di.tver),
+                       atomic64_read(&g_di.tvyr),
+                       g_di.uptime,
+                       g_di.loadavg[0]
+            );
+    }
+
     xlock_lock(&g_rep_lock);
     list_for_each_entry_safe(pos, n, &g_rep, list) {
         if (nr2 >= nr_max) {
@@ -1284,6 +1372,8 @@ int __do_heartbeat()
             list_del(&pos->list);
             __free_rep_args(pos);
             xfree(pos);
+            atomic64_dec(&g_di.qrep);
+            atomic64_dec(&g_di.drep);
             nr2++;
         } else if (pos->status == REP_STATE_ERROR_DONE) {
             len += sprintf(query + len, "+FAIL:REP:%s,%s,%s\n",
@@ -1291,6 +1381,8 @@ int __do_heartbeat()
             list_del(&pos->list);
             __free_rep_args(pos);
             xfree(pos);
+            atomic64_dec(&g_di.qrep);
+            atomic64_dec(&g_di.drep);
             nr2++;
         }
     }
@@ -1311,6 +1403,8 @@ int __do_heartbeat()
             list_del(&pos2->list);
             __free_del_args(pos2);
             xfree(pos2);
+            atomic64_dec(&g_di.qdel);
+            atomic64_dec(&g_di.ddel);
             nr2++;
         } else if (pos2->status == DEL_STATE_ERROR_DONE) {
             len += sprintf(query + len, "+FAIL:DEL:%s,%s,%s\n",
@@ -1319,6 +1413,8 @@ int __do_heartbeat()
             list_del(&pos2->list);
             __free_del_args(pos2);
             xfree(pos2);
+            atomic64_dec(&g_di.qdel);
+            atomic64_dec(&g_di.ddel);
             nr2++;
         }
     }
@@ -1327,7 +1423,7 @@ int __do_heartbeat()
     xlock_lock(&g_verify_lock);
     list_for_each_entry_safe(pos3, n3, &g_verify, list) {
         if (nr2 >= nr_max) {
-            mode = QUICK_HB_MODE;
+            mode = QUICK_HB_MODE2;
             break;
         }
         hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d\n",
@@ -1338,6 +1434,7 @@ int __do_heartbeat()
         list_del(&pos3->list);
         __free_verify_args(pos3);
         xfree(pos3);
+        atomic64_inc(&g_di.tver);
         nr2++;
     }
     xlock_unlock(&g_verify_lock);
@@ -1364,7 +1461,9 @@ void do_heartbeat(time_t cur)
 
     if (cur - last >= hb_interval) {
         if (__do_heartbeat() == QUICK_HB_MODE)
-            hb_interval = 1;
+            hb_interval = QUICK_HB_MODE; /* reset to 1 second */
+        else if (__do_heartbeat() == QUICK_HB_MODE2)
+            hb_interval = QUICK_HB_MODE2; /* reset to 10 seconds */
         else
             hb_interval = g_ds_conf.hb_interval;
         last = cur;
@@ -1481,6 +1580,9 @@ void do_help()
                "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
                "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
                "-S, --dscan       Enable device scanning.\n"
+               "-b, --prob        Scan probility for single dir.\n"
+               "-R, --reptn       Set rep thread number.\n"
+               "-D, --deltn       Set del thread number.\n"
                "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
                "-M, --mkd         Set max keeping days for lingering dirs.\n"
                "-h, -?, -help     print this help.\n"
@@ -1510,22 +1612,27 @@ static void *__async_recv_thread_main(void *args)
 
         while (!g_async_recv_thread_stop) {
             memset(reply, 0, sizeof(reply));
-            if ((br == recvfrom(g_sockfd, reply, sizeof(reply), 0,
-                                (struct sockaddr*) &g_server, &serverSize)) == -1) {
+            if ((br = recvfrom(g_sockfd, reply, sizeof(reply), 0,
+                               (struct sockaddr*) &g_server, &serverSize)) == -1) {
                 if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                     hvfs_err(lib, "Recv TIMEOUT!\n");
                 } else {
                     hvfs_err(lib, "Recv from Server reply failed w/ %s\n", strerror(errno));
                 }
             } else {
-                /* ok, get the reply */
-                if (strncmp(reply, "+OK", 3) != 0) {
-                    hvfs_err(lib, "Invalid reply (or request) from server: %s(%d)\n",
-                             reply, br);
+                if (br == 0) {
+                    /* target ordered shutdown? (in UDP?) */
+                    hvfs_err(lib, "Recv from Server failed? w/ %s\n", strerror(errno));
                 } else {
-                    /* handle any piggyback commands */
-                    if (handle_commands(reply))
-                        __do_heartbeat();
+                    /* ok, get the reply */
+                    if (strncmp(reply, "+OK", 3) != 0) {
+                        hvfs_err(lib, "Invalid reply (or request) from server: %s(%d)\n",
+                                 reply, br);
+                    } else {
+                        /* handle any piggyback commands */
+                        if (handle_commands(reply))
+                            __do_heartbeat();
+                    }
                 }
             }
         }
@@ -1535,11 +1642,12 @@ static void *__async_recv_thread_main(void *args)
 
 static void *__del_thread_main(void *args)
 {
+    struct thread_args *ta = (struct thread_args *)args;
     sigset_t set;
     time_t cur;
     struct del_args *pos, *n;
     LIST_HEAD(local);
-    int err, nosuchfod = 0;
+    int err, nosuchfod = 0, tid = ta->tid;
 
     /* first, let us block the SIGALRM */
     sigemptyset(&set);
@@ -1547,7 +1655,7 @@ static void *__del_thread_main(void *args)
     pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
                                              * errs */
     /* then, we loop for the enqueue events */
-    while (!g_del_thread_stop) {
+    while (!g_del_thread_stop[tid]) {
         err = sem_wait(&g_del_sem);
         if (err) {
             if (errno == EINTR)
@@ -1556,12 +1664,14 @@ static void *__del_thread_main(void *args)
         }
 
         cur = time(NULL);
-        /* TODO: */
+        /* NOTE: only handle ONE request now */
         xlock_lock(&g_del_lock);
         list_for_each_entry_safe(pos, n, &g_del, list) {
             if (pos->status == DEL_STATE_INIT) {
                 list_del(&pos->list);
                 list_add_tail(&pos->list, &local);
+                atomic64_inc(&g_di.hdel);
+                break;
             }
         }
         xlock_unlock(&g_del_lock);
@@ -1572,8 +1682,8 @@ static void *__del_thread_main(void *args)
             char cmd[8192];
             int len = 0;
 
-            hvfs_info(lib, "Handle DEL POS target.location %s status %d\n",
-                      pos->target.location, pos->status);
+            hvfs_info(lib, "[%d] Handle DEL POS target.location %s status %d\n",
+                      tid, pos->target.location, pos->status);
             pos->retries++;
             switch (pos->status) {
             case DEL_STATE_INIT:
@@ -1603,6 +1713,8 @@ static void *__del_thread_main(void *args)
                 xlock_lock(&g_del_lock);
                 list_add_tail(&pos->list, &g_del);
                 xlock_unlock(&g_del_lock);
+                atomic64_dec(&g_di.hdel);
+                atomic64_inc(&g_di.ddel);
                 continue;
                 break;
             case DEL_STATE_ERROR:
@@ -1613,6 +1725,8 @@ static void *__del_thread_main(void *args)
                     list_del(&pos->list);
                     xlock_lock(&g_del_lock);
                     list_add_tail(&pos->list, &g_del);
+                    atomic64_dec(&g_di.hdel);
+                    atomic64_inc(&g_di.ddel);
                     xlock_unlock(&g_del_lock);
                 } else {
                     // otherwise reset to INIT
@@ -1675,6 +1789,8 @@ static void *__del_thread_main(void *args)
                 xlock_lock(&g_del_lock);
                 list_add_tail(&pos->list, &g_del);
                 xlock_unlock(&g_del_lock);
+                atomic64_dec(&g_di.hdel);
+                atomic64_inc(&g_di.ddel);
             }
         }
     }
@@ -1685,11 +1801,12 @@ static void *__del_thread_main(void *args)
 
 static void *__rep_thread_main(void *args)
 {
+    struct thread_args *ta = (struct thread_args *)args;
     sigset_t set;
     time_t cur;
     struct rep_args *pos, *n;
     LIST_HEAD(local);
-    int err;
+    int err, tid = ta->tid;
 
     /* first, let us block the SIGALRM */
     sigemptyset(&set);
@@ -1697,7 +1814,7 @@ static void *__rep_thread_main(void *args)
     pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
                                              * errs */
     /* then, we loop for the enqueue events */
-    while (!g_rep_thread_stop) {
+    while (!g_rep_thread_stop[tid]) {
         err = sem_wait(&g_rep_sem);
         if (err) {
             if (errno == EINTR)
@@ -1706,12 +1823,14 @@ static void *__rep_thread_main(void *args)
         }
 
         cur = time(NULL);
-        /* TODO: */
+        /* NOTE: only handle ONE request now */
         xlock_lock(&g_rep_lock);
         list_for_each_entry_safe(pos, n, &g_rep, list) {
             if (pos->status == REP_STATE_INIT) {
                 list_del(&pos->list);
                 list_add_tail(&pos->list, &local);
+                atomic64_inc(&g_di.hrep);
+                break;
             }
         }
         xlock_unlock(&g_rep_lock);
@@ -1723,8 +1842,8 @@ static void *__rep_thread_main(void *args)
             char *dir = strdup(pos->to.location);
             char *digest = NULL;
 
-            hvfs_info(lib, "Handle REP POS to.location %s status %d\n", 
-                      pos->to.location, pos->status);
+            hvfs_info(lib, "[%d] Handle REP POS to.location %s status %d\n", 
+                      tid, pos->to.location, pos->status);
             pos->retries++;
             switch(pos->status) {
             case REP_STATE_INIT:
@@ -1769,6 +1888,8 @@ static void *__rep_thread_main(void *args)
                 xlock_lock(&g_rep_lock);
                 list_add_tail(&pos->list, &g_rep);
                 xlock_unlock(&g_rep_lock);
+                atomic64_dec(&g_di.hrep);
+                atomic64_inc(&g_di.drep);
                 continue;
                 break;
             case REP_STATE_ERROR:
@@ -1780,6 +1901,8 @@ static void *__rep_thread_main(void *args)
                     xlock_lock(&g_rep_lock);
                     list_add_tail(&pos->list, &g_rep);
                     xlock_unlock(&g_rep_lock);
+                    atomic64_dec(&g_di.hrep);
+                    atomic64_inc(&g_di.drep);
                     continue;
                 } else {
                     sprintf(cmd, "rm -rf %s/%s", pos->to.mp, pos->to.location);
@@ -1865,6 +1988,8 @@ static void *__rep_thread_main(void *args)
                 xlock_lock(&g_rep_lock);
                 list_add_tail(&pos->list, &g_rep);
                 xlock_unlock(&g_rep_lock);
+                atomic64_dec(&g_di.hrep);
+                atomic64_inc(&g_di.drep);
             }
         }
     }
@@ -2073,11 +2198,12 @@ int main(int argc, char *argv[])
 #define GIT_SHA "master"
 #endif
 
+    memset(&g_di, 0, sizeof(g_di));
     srandom(time(NULL));
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:S";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -2092,6 +2218,8 @@ int main(int argc, char *argv[])
         {"prob", required_argument, 0, 'b'},
         {"dscan", no_argument, 0, 'S'},
         {"mkd", required_argument, 0, 'M'},
+        {"reptn", required_argument, 0, 'R'},
+        {"deltn", required_argument, 0, 'D'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -2140,6 +2268,16 @@ int main(int argc, char *argv[])
             break;
         case 'S':
             g_ds_conf.enable_dscan = 1;
+            break;
+        case 'R':
+            g_rep_thread_nr = atoi(optarg);
+            if (!g_rep_thread_nr)
+                g_rep_thread_nr = 1;
+            break;
+        case 'D':
+            g_del_thread_nr = atoi(optarg);
+            if (!g_del_thread_nr)
+                g_del_thread_nr = 1;
             break;
         case 'f':
         {
@@ -2274,23 +2412,87 @@ int main(int argc, char *argv[])
     }
 
     /* setup rep thread */
-    err = pthread_create(&g_rep_thread, NULL, &__rep_thread_main,
-                         NULL);
-    if (err) {
-        hvfs_err(lib, "Create REP thread failed w/ %s\n", strerror(errno));
-        err = -errno;
-        goto out_rep;
-    }
+    {
+        struct thread_args *ta;
+        int i;
 
+        ta = xzalloc(g_rep_thread_nr * sizeof(*ta));
+        if (!ta) {
+            hvfs_err(lib, "xzalloc(%d) thread_args failed, no memory.\n",
+                     g_rep_thread_nr);
+            err = -ENOMEM;
+            goto out_rep;
+        }
+        for (i = 0; i < g_rep_thread_nr; i++) {
+            ta[i].tid = i;
+        }
+        g_rep_thread_stop = xzalloc(g_rep_thread_nr * sizeof(int));
+        if (!g_rep_thread_stop) {
+            hvfs_err(lib, "xzalloc(%d) int failed, no memory.\n",
+                     g_rep_thread_nr);
+            err = -ENOMEM;
+            goto out_rep;
+        }
+        g_rep_thread = xzalloc(g_rep_thread_nr * sizeof(pthread_t));
+        if (!g_rep_thread) {
+            hvfs_err(lib, "xzalloc(%d) pthread_t failed, no memory.\n",
+                     g_rep_thread_nr);
+            err = -ENOMEM;
+            goto out_rep;
+        }
+
+        for (i = 0; i < g_rep_thread_nr; i++) {
+            err = pthread_create(&g_rep_thread[i], NULL, &__rep_thread_main,
+                                 &ta[i]);
+            if (err) {
+                hvfs_err(lib, "Create REP thread failed w/ %s\n", strerror(errno));
+                err = -errno;
+                goto out_rep;
+            }
+        }
+    }
+    
     /* setup del thread */
-    err = pthread_create(&g_del_thread, NULL, &__del_thread_main,
-                         NULL);
-    if (err) {
-        hvfs_err(lib, "Create DEL thread failed w/ %s\n", strerror(errno));
-        err = -errno;
-        goto out_del;
-    }
+    {
+        struct thread_args *ta;
+        int i;
 
+        ta = xzalloc(g_del_thread_nr * sizeof(*ta));
+        if (!ta) {
+            hvfs_err(lib, "xzalloc(%d) thread_args failed, no memory.\n",
+                     g_del_thread_nr);
+            err = -ENOMEM;
+            goto out_del;
+        }
+        for (i = 0; i < g_del_thread_nr; i++) {
+            ta[i].tid = i;
+        }
+        g_del_thread_stop = xzalloc(g_del_thread_nr * sizeof(int));
+        if (!g_del_thread_stop) {
+            hvfs_err(lib, "xzalloc(%d) int failed, no memory.\n",
+                     g_del_thread_nr);
+            err = -ENOMEM;
+            goto out_del;
+        }
+        g_del_thread = xzalloc(g_del_thread_nr * sizeof(pthread_t));
+        if (!g_del_thread) {
+            hvfs_err(lib, "xzalloc(%d) pthread_t failed, no memory.\n",
+                     g_del_thread_nr);
+            err = -ENOMEM;
+            goto out_del;
+        }
+
+        for (i = 0; i < g_del_thread_nr; i++) {
+            err = pthread_create(&g_del_thread[i], NULL, &__del_thread_main,
+                                 &ta[i]);
+            if (err) {
+                hvfs_err(lib, "Create DEL thread failed w/ %s\n", strerror(errno));
+                err = -errno;
+                goto out_del;
+            }
+        }
+    }
+    
     /* setup async recv thread */
     err = pthread_create(&g_async_recv_thread, NULL, &__async_recv_thread_main,
                          NULL);
@@ -2351,15 +2553,35 @@ int main(int argc, char *argv[])
         sem_post(&g_timer_sem);
         pthread_join(g_timer_thread, NULL);
     }
-    g_rep_thread_stop = 1;
-    if (g_rep_thread) {
-        sem_post(&g_rep_sem);
-        pthread_join(g_rep_thread, NULL);
+    {
+        int i;
+
+        for (i = 0; i < g_rep_thread_nr; i++) {
+            g_rep_thread_stop[i] = 1;
+            if (g_rep_thread[i]) {
+                sem_post(&g_rep_sem);
+            }
+        }
+        for (i = 0; i < g_rep_thread_nr; i++) {
+            if (g_rep_thread[i]) {
+                pthread_join(g_rep_thread[i], NULL);
+            }
+        }
     }
-    g_del_thread_stop = 1;
-    if (g_del_thread) {
-        sem_post(&g_del_sem);
-        pthread_join(g_del_thread, NULL);
+    {
+        int i;
+
+        for (i = 0; i < g_del_thread_nr; i++) {
+            g_del_thread_stop[i] = 1;
+            if (g_del_thread[i]) {
+                sem_post(&g_del_sem);
+            }
+        }
+        for (i = 0; i < g_del_thread_nr; i++) {
+            if (g_del_thread[i]) {
+                pthread_join(g_del_thread[i], NULL);
+            }
+        }
     }
 
     close(g_sockfd);

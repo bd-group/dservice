@@ -10,10 +10,13 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 import redis.clients.jedis.Jedis;
@@ -24,8 +27,9 @@ public class ClientAPI {
 	private int index;				
 	private List<String> keyList = new ArrayList<String>();
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
-	private Map<String, SocketHashEntry> socketHash;
+	private ConcurrentHashMap<String, SocketHashEntry> socketHash;
 	private Jedis jedis;
+	private long last_refresh_ts = 0;
 	
 	public ClientAPI(ClientConf conf) {
 		pc = new PhotoClient(conf);
@@ -33,6 +37,30 @@ public class ClientAPI {
 
 	public ClientAPI() {
 		pc = new PhotoClient();
+	}
+	
+	public enum MMType {
+		TEXT, IMAGE, AUDIO, VIDEO, APPLICATION, THUMBNAIL, OTHER,
+	}
+	
+	public static String getMMTypeSymbol(MMType type) {
+		switch (type) {
+		case TEXT:
+			return "t";
+		case IMAGE:
+			return "i";
+		case AUDIO:
+			return "a";
+		case VIDEO:
+			return "v";
+		case APPLICATION:
+			return "o";
+		case THUMBNAIL:
+			return "s";
+		case OTHER:
+		default:
+			return "";
+		}
 	}
 	
 	/**
@@ -119,6 +147,42 @@ public class ClientAPI {
 		
 		return 0;
 	}
+	
+	private boolean refreshActiveMMS() {
+		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
+		if (active != null && active.size() > 0) {
+			for (Tuple t : active) {
+				// update server ID->Name map
+				pc.addToServers((long)t.getScore(), t.getElement());
+			}
+			for (Tuple t : active) {
+				String[] c = t.getElement().split(":");
+				if (c.length == 2 && socketHash.get(t.getElement()) == null) {
+					Socket sock = new Socket();
+					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+					try {
+						sock.setTcpNoDelay(true);
+						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
+						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+								new DataOutputStream(sock.getOutputStream()));
+						if (socketHash.putIfAbsent(t.getElement(), she) != null) {
+							she.clear();
+						}
+					} catch (SocketException e) {
+						e.printStackTrace();
+						continue;
+					} catch (NumberFormatException e) {
+						e.printStackTrace();
+						continue;
+					} catch (IOException e) {
+						e.printStackTrace();
+						continue;
+					}
+				}
+			}
+		}
+		return true;
+	}
 
 	/**
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
@@ -155,35 +219,8 @@ public class ClientAPI {
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 		//从redis上获取所有的服务器地址
-		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
-		if (active != null && active.size() > 0) {
-			for (Tuple t : active) {
-				pc.addToServers((long)t.getScore(), t.getElement());
-			}
-			for (Tuple t : active) {
-				String[] c = t.getElement().split(":");
-				if (c.length == 2) {
-					Socket sock = new Socket();
-					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
-					try {
-						sock.setTcpNoDelay(true);
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
-						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
-								new DataOutputStream(sock.getOutputStream()));
-						socketHash.put(t.getElement(), she);
-					} catch (SocketException e) {
-						e.printStackTrace();
-						continue;
-					} catch (NumberFormatException e) {
-						e.printStackTrace();
-						continue;
-					} catch (IOException e) {
-						e.printStackTrace();
-						continue;
-					}
-				}
-			}
-		}
+		refreshActiveMMS();
+		
 		System.out.println("Got active server size=" + socketHash.size());
 		keyList.addAll(socketHash.keySet());
 		pc.setSocketHash(socketHash);
@@ -199,13 +236,14 @@ public class ClientAPI {
 	 * @return		
 	 */
 	public String put(String key, byte[] content) throws IOException, Exception {
-		if (key == null || keyList.size() ==0)
+		if (key == null || keyList.size() == 0)
 			throw new Exception("key can not be null or MetaError.");
 		String[] keys = key.split("@");
 		if (keys.length != 2)
 			throw new Exception("wrong format of key:" + key);
 		String r = null;
-		boolean nodedup = false;
+		boolean nodedup = false, isSaved = false;
+		boolean isMMServerFailed = false;
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			if (she.probSelected())
@@ -217,9 +255,19 @@ public class ClientAPI {
 						nodedup = true;
 					} else 
 						nodedup = false;
+					isSaved = true;
 				} catch (SocketException e) {
 					i--;
 					index++;
+				} catch (IOException e) {
+					// BUG-XXX: ignore this exception at first time, try another MM server;
+					// if every MMServer failed, 
+					if (!isMMServerFailed) {
+						i--;
+						index++;
+						isMMServerFailed = true;
+					}
+					e.printStackTrace();
 				}
 			else {
 				i--;
@@ -230,6 +278,8 @@ public class ClientAPI {
 		if (index >= keyList.size()) {
 			index = 0;
 		}
+		if (!isSaved)
+			throw new Exception("Error in saving Key:" + key);
 		return r;
 	}
 	
@@ -317,7 +367,71 @@ public class ClientAPI {
 		else 
 			throw new Exception("wrong format of key:" + key);
 	}
-
+	
+	/**
+	 * It is thread-safe
+	 * 批量读取某个集合的所有key
+	 */
+	public List<String> getkeys(String type, long begin_time) throws IOException, Exception {
+		String prefix;
+		
+		if (type == null)
+			throw new Exception("type can not be null");
+		if (type.equalsIgnoreCase("image")) {
+			prefix = getMMTypeSymbol(MMType.IMAGE);
+		} else if (type.equalsIgnoreCase("thumbnail")) {
+			prefix = getMMTypeSymbol(MMType.THUMBNAIL);
+		} else if (type.equalsIgnoreCase("text")) {
+			prefix = getMMTypeSymbol(MMType.TEXT);
+		} else if (type.equalsIgnoreCase("audio")) {
+			prefix = getMMTypeSymbol(MMType.AUDIO);
+		} else if (type.equalsIgnoreCase("video")) {
+			prefix = getMMTypeSymbol(MMType.VIDEO);
+		} else if (type.equalsIgnoreCase("application")) {
+			prefix = getMMTypeSymbol(MMType.APPLICATION);
+		} else if (type.equalsIgnoreCase("other")) {
+			prefix = getMMTypeSymbol(MMType.OTHER);
+		} else {
+			throw new Exception("type '" + type + "' is invalid.");
+		}
+		
+		// query on redis
+		TreeSet<Long> tranges = pc.getSets(prefix);
+		try {
+			long setTs = tranges.tailSet(begin_time).first();
+			return pc.getSetElements(prefix + setTs);
+		} catch (NoSuchElementException e) {
+			throw new Exception("Can not find any keys larger or equal to " + begin_time);
+		}
+	}
+	
+	/**
+	 * it is thread safe.
+	 * 批量获取keys对应的所有多媒体对象内容
+	 * 
+	 * @param keys
+	 * @param cookies
+	 * @return
+	 * @throws IOException
+	 * @throws Exception
+	 */
+	public List<byte[]> mget(List<String> keys, Map<String, String> cookies) throws IOException, Exception {
+		if (keys == null || cookies == null)
+			throw new Exception("keys or cookies list can not be null.");
+		if (keys.size() > 0) {
+			String key = keys.get(keys.size() - 1);
+			if (key != null) {
+				long ts = -1;
+				try {
+					ts = Long.parseLong(key.split("@")[0].substring(1));
+				} catch (Exception e) {
+				}
+				cookies.put("ts", Long.toString(ts));
+			}
+		}
+		return pc.mget(keys, cookies);
+	}
+	
 	public void quit() {
 		if (pc.getRf() != null) {
 			pc.getRf().putInstance(jedis);
