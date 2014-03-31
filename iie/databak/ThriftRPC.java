@@ -1703,6 +1703,30 @@ public class ThriftRPC implements org.apache.hadoop.hive.metastore.api.ThriftHiv
 		// TODO Auto-generated method stub
 		return false;
 	}
+	@Override
+	public boolean del_filelocation(SFileLocation arg0) throws MetaException,
+			TException {
+		// TODO Auto-generated method stub
+		return false;
+	}
+	@Override
+	public List<SFile> get_files_by_ids(List<Long> arg0)
+			throws FileOperationException, MetaException, TException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	@Override
+	public boolean flSelectorWatch(String arg0, int arg1) throws MetaException,
+			TException {
+		// TODO Auto-generated method stub
+		return false;
+	}
+	@Override
+	public boolean offlineDevicePhysically(String arg0) throws MetaException,
+			TException {
+		// TODO Auto-generated method stub
+		return false;
+	}
 	
 //	@Override
 //	public int del_fileLocation(SFileLocation arg0)

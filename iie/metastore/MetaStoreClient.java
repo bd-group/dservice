@@ -400,7 +400,7 @@ public class MetaStoreClient {
 					begin = System.nanoTime();
 					for (Long fid : files) {
 						SFile f = cli.client.get_file_by_id(fid);
-						line += "fid " + f.getFid();
+//						line += "fid " + f.getFid();
 					}
 					end = System.nanoTime();
 					System.out.println(Thread.currentThread().getId() + "--> Search by digest consumed " + (stop - start) / 1000.0 + " us.");

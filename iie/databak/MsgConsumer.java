@@ -113,8 +113,8 @@ public class MsgConsumer {
 				String data = new String(message.getData());
 				int time = 0;
 				System.out.println(data);
-//				if(data != null)
-//					return;
+				if(data != null)
+					return;
 //				try {
 //					Thread.sleep(1*1000);
 //				} catch (InterruptedException e) {
@@ -333,9 +333,10 @@ public class MsgConsumer {
 //			DatabakRPC dr = new DatabakRPC(conf);
 //			Registry r = LocateRegistry.createRegistry(8111);
 //			r.rebind("DatabakRPC", dr);
-			new Thread(new RPCServer(conf)).start();
+//			new Thread(new RPCServer(conf)).start();
 			
 			new MsgConsumer(conf).consume();
+//			System.out.println("conusmer return");
 		} catch (MetaClientException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();

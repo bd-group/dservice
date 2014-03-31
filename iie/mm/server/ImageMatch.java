@@ -70,7 +70,7 @@ public class ImageMatch {
 		
 	}
 	
-	class WorkThread implements Runnable
+	private class WorkThread implements Runnable
 	{
 		private RedisFactory rf;
 		private ServerConf conf;
@@ -219,6 +219,6 @@ public class ImageMatch {
 	
 	public static void main(String[] a) 
 	{
-		
+//		ImageMatch.WorkThread p = new ImageMatch(conf)ImageMatch.new
 	}
 }

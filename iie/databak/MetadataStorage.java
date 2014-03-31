@@ -84,18 +84,18 @@ public class MetadataStorage {
 					//thread-safe, but need to be in a synchronized block during iteration
 					sFileHm = Collections.synchronizedMap(new LRUMap<String, SFile>(conf.getFcs()));
 					sflHm = Collections.synchronizedMap(new LRUMap<String, SFileLocation>(conf.getFcs()*2));
-					msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
+//					msClient = new MetaStoreClient(conf.getMshost(), conf.getMsport());
 					
 					//metastoreclient在初始化时要调get_local_attribution，get_all_attributions
-					Database localdb = msClient.client.get_local_attribution();
-					writeObject(ObjectType.DATABASE, localdb.getName(), localdb);
-					conf.setLocalDbName(localdb.getName());
-					List<Database> dbs = msClient.client.get_all_attributions();
-					for(Database db : dbs)
-					{
-						writeObject(ObjectType.DATABASE, db.getName(), db);
-					}
-					
+//					Database localdb = msClient.client.get_local_attribution();
+//					writeObject(ObjectType.DATABASE, localdb.getName(), localdb);
+//					conf.setLocalDbName(localdb.getName());
+//					List<Database> dbs = msClient.client.get_all_attributions();
+//					for(Database db : dbs)
+//					{
+//						writeObject(ObjectType.DATABASE, db.getName(), db);
+//					}
+//					
 					//每次系统启动时，从redis中读取已经持久化的对象到内存缓存中(SFile和SFileLocation除外)
 					long start = System.currentTimeMillis();
 					readAll(ObjectType.DATABASE);
@@ -110,12 +110,6 @@ public class MetadataStorage {
 					readAll(ObjectType.SFILELOCATION);
 					long end = System.currentTimeMillis();
 					System.out.println("loading objects from redis into cache takes "+(end-start)+" ms");
-				} catch (MetaException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				} catch (TException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
 				} catch (JedisConnectionException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -643,7 +637,20 @@ public class MetadataStorage {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
-		}
+		}else
+	    {
+	    	Jedis jedis = null;
+	      try{
+	        jedis = rf.getDefaultInstance();
+	        jedis.hdel(key, field);
+	      }catch(JedisConnectionException e){
+	        RedisFactory.putBrokenInstance(jedis);
+	        jedis = null;
+	        throw e;
+	      }finally{
+	        RedisFactory.putInstance(jedis);
+	      }
+	    }
 		
 		if(key.equals(ObjectType.DATABASE))
 			databaseHm.remove(field);
