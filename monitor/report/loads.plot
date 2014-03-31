@@ -1,0 +1,307 @@
+reset
+
+set terminal png size 1600,900
+set origin 0.0, 0.0
+set size 1, 1
+set output "FIXME_LOCATION/loads.png"
+set auto x
+set xtics out
+set auto y
+
+set title "Node Loads' Distriubtion On Day FIXME_REPORT_DAY"
+set xlabel "TimeStamp # (1 tic is about 65s)"
+set ylabel "Run Queue Length (#)"
+#set xdata time
+#set timefmt "%s"
+#set format x "%H:%S"
+set y2label "Run Queue Length (#)"
+set ytics nomirror
+set y2tics nomirror
+#set key out
+set nokey
+set grid
+#set style fill pattern
+#set style histogram clustered
+#set style data histograms
+
+plot "< tail -n1 FIXME_REPORT_FILE | awk -F, '{print ($42 - cts) \" \" $58;}' | sed -e 's/;/ /g'"  \
+	u (1):($2) t "D1 Y1" axes x1y1, \
+       "" u (2):($3) t "D2 Y1" axes x1y1, \
+       "" u (3):($4) t "D3 Y1" axes x1y1, \
+       "" u (4):($5) t "D4 Y1" axes x1y1, \
+       "" u (5):($6) t "D5 Y1" axes x1y1, \
+       "" u (6):($7) t "D6 Y1" axes x1y1, \
+       "" u (7):($8) t "D7 Y1" axes x1y1, \
+       "" u (8):($9) t "D8 Y1" axes x1y1, \
+       "" u (9):($10) t "D9 Y1" axes x1y1, \
+       "" u (10):($11) t "D10 Y1" axes x1y1, \
+       "" u (11):($12) t "D11 Y1" axes x1y1, \
+       "" u (12):($13) t "D12 Y1" axes x1y1, \
+       "" u (13):($14) t "D13 Y1" axes x1y1, \
+       "" u (14):($15) t "D14 Y1" axes x1y1, \
+       "" u (15):($16) t "D15 Y1" axes x1y1, \
+       "" u (16):($17) t "D16 Y1" axes x1y1, \
+       "" u (17):($18) t "D17 Y1" axes x1y1, \
+       "" u (18):($19) t "D18 Y1" axes x1y1, \
+       "" u (19):($20) t "D19 Y1" axes x1y1, \
+       "" u (20):($21) t "D20 Y1" axes x1y1, \
+       "" u (21):($22) t "D21 Y1" axes x1y1, \
+       "" u (22):($23) t "D22 Y1" axes x1y1, \
+       "" u (23):($24) t "D23 Y1" axes x1y1, \
+       "" u (24):($25) t "D24 Y1" axes x1y1, \
+       "" u (25):($26) t "D25 Y1" axes x1y1, \
+       "" u (26):($27) t "D26 Y1" axes x1y1, \
+       "" u (27):($28) t "D27 Y1" axes x1y1, \
+       "" u (28):($29) t "D28 Y1" axes x1y1, \
+       "" u (29):($30) t "D29 Y1" axes x1y1, \
+       "" u (30):($31) t "D30 Y1" axes x1y1, \
+       "" u (31):($32) t "D31 Y1" axes x1y1, \
+       "" u (32):($33) t "D32 Y1" axes x1y1, \
+       "" u (33):($34) t "D33 Y1" axes x1y1, \
+       "" u (34):($35) t "D34 Y1" axes x1y1, \
+       "" u (35):($36) t "D35 Y1" axes x1y1, \
+       "" u (36):($37) t "D36 Y1" axes x1y1, \
+       "" u (37):($38) t "D37 Y1" axes x1y1, \
+       "" u (38):($39) t "D38 Y1" axes x1y1, \
+       "" u (39):($40) t "D39 Y1" axes x1y1, \
+       "" u (40):($41) t "D40 Y1" axes x1y1, \
+       "" u (41):($42) t "D41 Y1" axes x1y1, \
+       "" u (42):($43) t "D42 Y1" axes x1y1, \
+       "" u (43):($44) t "D43 Y1" axes x1y1, \
+       "" u (44):($45) t "D44 Y1" axes x1y1, \
+       "" u (45):($46) t "D45 Y1" axes x1y1, \
+       "" u (46):($47) t "D46 Y1" axes x1y1, \
+       "" u (47):($48) t "D47 Y1" axes x1y1, \
+       "" u (48):($49) t "D48 Y1" axes x1y1, \
+       "" u (49):($50) t "D49 Y1" axes x1y1, \
+       "" u (50):($51) t "D50 Y1" axes x1y1, \
+       "" u (51):($52) t "D51 Y1" axes x1y1, \
+       "" u (52):($53) t "D52 Y1" axes x1y1, \
+       "" u (53):($54) t "D53 Y1" axes x1y1, \
+       "" u (54):($55) t "D54 Y1" axes x1y1, \
+       "" u (55):($56) t "D55 Y1" axes x1y1, \
+       "" u (56):($57) t "D56 Y1" axes x1y1, \
+       "" u (57):($58) t "D57 Y1" axes x1y1, \
+       "" u (58):($59) t "D58 Y1" axes x1y1, \
+       "" u (59):($60) t "D59 Y1" axes x1y1, \
+       "" u (60):($61) t "D60 Y1" axes x1y1, \
+       "" u (61):($62) t "D61 Y1" axes x1y1, \
+       "" u (62):($63) t "D62 Y1" axes x1y1, \
+       "" u (63):($64) t "D63 Y1" axes x1y1, \
+       "" u (64):($65) t "D64 Y1" axes x1y1, \
+       "" u (65):($66) t "D65 Y1" axes x1y1, \
+       "" u (66):($67) t "D66 Y1" axes x1y1, \
+       "" u (67):($68) t "D67 Y1" axes x1y1, \
+       "" u (68):($69) t "D68 Y1" axes x1y1, \
+       "" u (69):($70) t "D69 Y1" axes x1y1, \
+       "" u (70):($71) t "D70 Y1" axes x1y1, \
+       "" u (71):($72) t "D71 Y1" axes x1y1, \
+       "" u (72):($73) t "D72 Y1" axes x1y1, \
+       "" u (73):($74) t "D73 Y1" axes x1y1, \
+       "" u (74):($75) t "D74 Y1" axes x1y1, \
+       "" u (75):($76) t "D75 Y1" axes x1y1, \
+       "" u (76):($77) t "D76 Y1" axes x1y1, \
+       "" u (77):($78) t "D77 Y1" axes x1y1, \
+       "" u (78):($79) t "D78 Y1" axes x1y1, \
+       "" u (79):($80) t "D79 Y1" axes x1y1, \
+       "" u (80):($81) t "D80 Y1" axes x1y1, \
+       "" u (81):($82) t "D81 Y1" axes x1y1, \
+       "" u (82):($83) t "D82 Y1" axes x1y1, \
+       "" u (83):($84) t "D83 Y1" axes x1y1, \
+       "" u (84):($85) t "D84 Y1" axes x1y1, \
+       "" u (85):($86) t "D85 Y1" axes x1y1, \
+       "" u (86):($87) t "D86 Y1" axes x1y1, \
+       "" u (87):($88) t "D87 Y1" axes x1y1, \
+       "" u (88):($89) t "D88 Y1" axes x1y1, \
+       "" u (89):($90) t "D89 Y1" axes x1y1, \
+       "" u (90):($91) t "D90 Y1" axes x1y1, \
+       "" u (91):($92) t "D91 Y1" axes x1y1, \
+       "" u (92):($93) t "D92 Y1" axes x1y1, \
+       "" u (93):($94) t "D93 Y1" axes x1y1, \
+       "" u (94):($95) t "D94 Y1" axes x1y1, \
+       "" u (95):($96) t "D95 Y1" axes x1y1, \
+       "" u (96):($97) t "D96 Y1" axes x1y1, \
+       "" u (97):($98) t "D97 Y1" axes x1y1, \
+       "" u (98):($99) t "D98 Y1" axes x1y1, \
+       "" u (99):($100) t "D99 Y1" axes x1y1, \
+       "" u (100):($101) t "D100 Y1" axes x1y1, \
+       "" u (101):($102) t "D101 Y1" axes x1y1, \
+       "" u (102):($103) t "D102 Y1" axes x1y1, \
+       "" u (103):($104) t "D103 Y1" axes x1y1, \
+       "" u (104):($105) t "D104 Y1" axes x1y1, \
+       "" u (105):($106) t "D105 Y1" axes x1y1, \
+       "" u (106):($107) t "D106 Y1" axes x1y1, \
+       "" u (107):($108) t "D107 Y1" axes x1y1, \
+       "" u (108):($109) t "D108 Y1" axes x1y1, \
+       "" u (109):($110) t "D109 Y1" axes x1y1, \
+       "" u (110):($111) t "D110 Y1" axes x1y1, \
+       "" u (111):($112) t "D111 Y1" axes x1y1, \
+       "" u (112):($113) t "D112 Y1" axes x1y1, \
+       "" u (113):($114) t "D113 Y1" axes x1y1, \
+       "" u (114):($115) t "D114 Y1" axes x1y1, \
+       "" u (115):($116) t "D115 Y1" axes x1y1, \
+       "" u (116):($117) t "D116 Y1" axes x1y1, \
+       "" u (117):($118) t "D117 Y1" axes x1y1, \
+       "" u (118):($119) t "D118 Y1" axes x1y1, \
+       "" u (119):($120) t "D119 Y1" axes x1y1, \
+       "" u (120):($121) t "D120 Y1" axes x1y1, \
+       "" u (121):($122) t "D121 Y1" axes x1y1, \
+       "" u (122):($123) t "D122 Y1" axes x1y1, \
+       "" u (123):($124) t "D123 Y1" axes x1y1, \
+       "" u (124):($125) t "D124 Y1" axes x1y1, \
+       "" u (125):($126) t "D125 Y1" axes x1y1, \
+       "" u (126):($127) t "D126 Y1" axes x1y1, \
+       "" u (127):($128) t "D127 Y1" axes x1y1, \
+       "" u (128):($129) t "D128 Y1" axes x1y1, \
+       "" u (129):($130) t "D129 Y1" axes x1y1, \
+       "" u (130):($131) t "D130 Y1" axes x1y1, \
+       "" u (131):($132) t "D131 Y1" axes x1y1, \
+       "" u (132):($133) t "D132 Y1" axes x1y1, \
+       "" u (133):($134) t "D133 Y1" axes x1y1, \
+       "" u (134):($135) t "D134 Y1" axes x1y1, \
+       "" u (135):($136) t "D135 Y1" axes x1y1, \
+       "" u (136):($137) t "D136 Y1" axes x1y1, \
+       "" u (137):($138) t "D137 Y1" axes x1y1, \
+       "" u (138):($139) t "D138 Y1" axes x1y1, \
+       "" u (139):($140) t "D139 Y1" axes x1y1, \
+       "" u (140):($141) t "D140 Y1" axes x1y1, \
+       "" u (141):($142) t "D141 Y1" axes x1y1, \
+       "" u (142):($143) t "D142 Y1" axes x1y1, \
+       "" u (143):($144) t "D143 Y1" axes x1y1, \
+       "" u (144):($145) t "D144 Y1" axes x1y1, \
+       "" u (145):($146) t "D145 Y1" axes x1y1, \
+       "" u (146):($147) t "D146 Y1" axes x1y1, \
+       "" u (147):($148) t "D147 Y1" axes x1y1, \
+       "" u (148):($149) t "D148 Y1" axes x1y1, \
+       "" u (149):($150) t "D149 Y1" axes x1y1, \
+       "" u (150):($151) t "D150 Y1" axes x1y1, \
+       "" u (151):($152) t "D151 Y1" axes x1y1, \
+       "" u (152):($153) t "D152 Y1" axes x1y1, \
+       "" u (153):($154) t "D153 Y1" axes x1y1, \
+       "" u (154):($155) t "D154 Y1" axes x1y1, \
+       "" u (155):($156) t "D155 Y1" axes x1y1, \
+       "" u (156):($157) t "D156 Y1" axes x1y1, \
+       "" u (157):($158) t "D157 Y1" axes x1y1, \
+       "" u (158):($159) t "D158 Y1" axes x1y1, \
+       "" u (159):($160) t "D159 Y1" axes x1y1, \
+       "" u (160):($161) t "D160 Y1" axes x1y1, \
+       "" u (161):($162) t "D161 Y1" axes x1y1, \
+       "" u (162):($163) t "D162 Y1" axes x1y1, \
+       "" u (163):($164) t "D163 Y1" axes x1y1, \
+       "" u (164):($165) t "D164 Y1" axes x1y1, \
+       "" u (165):($166) t "D165 Y1" axes x1y1, \
+       "" u (166):($167) t "D166 Y1" axes x1y1, \
+       "" u (167):($168) t "D167 Y1" axes x1y1, \
+       "" u (168):($169) t "D168 Y1" axes x1y1, \
+       "" u (169):($170) t "D169 Y1" axes x1y1, \
+       "" u (170):($171) t "D170 Y1" axes x1y1, \
+       "" u (171):($172) t "D171 Y1" axes x1y1, \
+       "" u (172):($173) t "D172 Y1" axes x1y1, \
+       "" u (173):($174) t "D173 Y1" axes x1y1, \
+       "" u (174):($175) t "D174 Y1" axes x1y1, \
+       "" u (175):($176) t "D175 Y1" axes x1y1, \
+       "" u (176):($177) t "D176 Y1" axes x1y1, \
+       "" u (177):($178) t "D177 Y1" axes x1y1, \
+       "" u (178):($179) t "D178 Y1" axes x1y1, \
+       "" u (179):($180) t "D179 Y1" axes x1y1, \
+       "" u (180):($181) t "D180 Y1" axes x1y1, \
+       "" u (181):($182) t "D181 Y1" axes x1y1, \
+       "" u (182):($183) t "D182 Y1" axes x1y1, \
+       "" u (183):($184) t "D183 Y1" axes x1y1, \
+       "" u (184):($185) t "D184 Y1" axes x1y1, \
+       "" u (185):($186) t "D185 Y1" axes x1y1, \
+       "" u (186):($187) t "D186 Y1" axes x1y1, \
+       "" u (187):($188) t "D187 Y1" axes x1y1, \
+       "" u (188):($189) t "D188 Y1" axes x1y1, \
+       "" u (189):($190) t "D189 Y1" axes x1y1, \
+       "" u (190):($191) t "D190 Y1" axes x1y1, \
+       "" u (191):($192) t "D191 Y1" axes x1y1, \
+       "" u (192):($193) t "D192 Y1" axes x1y1, \
+       "" u (193):($194) t "D193 Y1" axes x1y1, \
+       "" u (194):($195) t "D194 Y1" axes x1y1, \
+       "" u (195):($196) t "D195 Y1" axes x1y1, \
+       "" u (196):($197) t "D196 Y1" axes x1y1, \
+       "" u (197):($198) t "D197 Y1" axes x1y1, \
+       "" u (198):($199) t "D198 Y1" axes x1y1, \
+       "" u (199):($200) t "D199 Y1" axes x1y1, \
+       "" u (200):($201) t "D200 Y1" axes x1y1, \
+       "" u (201):($202) t "D201 Y1" axes x1y1, \
+       "" u (202):($203) t "D202 Y1" axes x1y1, \
+       "" u (203):($204) t "D203 Y1" axes x1y1, \
+       "" u (204):($205) t "D204 Y1" axes x1y1, \
+       "" u (205):($206) t "D205 Y1" axes x1y1, \
+       "" u (206):($207) t "D206 Y1" axes x1y1, \
+       "" u (207):($208) t "D207 Y1" axes x1y1, \
+       "" u (208):($209) t "D208 Y1" axes x1y1, \
+       "" u (209):($210) t "D209 Y1" axes x1y1, \
+       "" u (210):($211) t "D210 Y1" axes x1y1, \
+       "" u (211):($212) t "D211 Y1" axes x1y1, \
+       "" u (212):($213) t "D212 Y1" axes x1y1, \
+       "" u (213):($214) t "D213 Y1" axes x1y1, \
+       "" u (214):($215) t "D214 Y1" axes x1y1, \
+       "" u (215):($216) t "D215 Y1" axes x1y1, \
+       "" u (216):($217) t "D216 Y1" axes x1y1, \
+       "" u (217):($218) t "D217 Y1" axes x1y1, \
+       "" u (218):($219) t "D218 Y1" axes x1y1, \
+       "" u (219):($220) t "D219 Y1" axes x1y1, \
+       "" u (220):($221) t "D220 Y1" axes x1y1, \
+       "" u (221):($222) t "D221 Y1" axes x1y1, \
+       "" u (222):($223) t "D222 Y1" axes x1y1, \
+       "" u (223):($224) t "D223 Y1" axes x1y1, \
+       "" u (224):($225) t "D224 Y1" axes x1y1, \
+       "" u (225):($226) t "D225 Y1" axes x1y1, \
+       "" u (226):($227) t "D226 Y1" axes x1y1, \
+       "" u (227):($228) t "D227 Y1" axes x1y1, \
+       "" u (228):($229) t "D228 Y1" axes x1y1, \
+       "" u (229):($230) t "D229 Y1" axes x1y1, \
+       "" u (230):($231) t "D230 Y1" axes x1y1, \
+       "" u (231):($232) t "D231 Y1" axes x1y1, \
+       "" u (232):($233) t "D232 Y1" axes x1y1, \
+       "" u (233):($234) t "D233 Y1" axes x1y1, \
+       "" u (234):($235) t "D234 Y1" axes x1y1, \
+       "" u (235):($236) t "D235 Y1" axes x1y1, \
+       "" u (236):($237) t "D236 Y1" axes x1y1, \
+       "" u (237):($238) t "D237 Y1" axes x1y1, \
+       "" u (238):($239) t "D238 Y1" axes x1y1, \
+       "" u (239):($240) t "D239 Y1" axes x1y1, \
+       "" u (240):($241) t "D240 Y1" axes x1y1, \
+       "" u (241):($242) t "D241 Y1" axes x1y1, \
+       "" u (242):($243) t "D242 Y1" axes x1y1, \
+       "" u (243):($244) t "D243 Y1" axes x1y1, \
+       "" u (244):($245) t "D244 Y1" axes x1y1, \
+       "" u (245):($246) t "D245 Y1" axes x1y1, \
+       "" u (246):($247) t "D246 Y1" axes x1y1, \
+       "" u (247):($248) t "D247 Y1" axes x1y1, \
+       "" u (248):($249) t "D248 Y1" axes x1y1, \
+       "" u (249):($250) t "D249 Y1" axes x1y1, \
+       "" u (250):($251) t "D250 Y1" axes x1y1, \
+       "" u (251):($252) t "D251 Y1" axes x1y1, \
+       "" u (252):($253) t "D252 Y1" axes x1y1, \
+       "" u (253):($254) t "D253 Y1" axes x1y1, \
+       "" u (254):($255) t "D254 Y1" axes x1y1, \
+       "" u (255):($256) t "D255 Y1" axes x1y1, \
+       "" u (256):($257) t "D256 Y1" axes x1y1, \
+       "" u (257):($258) t "D257 Y1" axes x1y1, \
+       "" u (258):($259) t "D258 Y1" axes x1y1, \
+       "" u (259):($260) t "D259 Y1" axes x1y1, \
+       "" u (260):($261) t "D260 Y1" axes x1y1, \
+       "" u (261):($262) t "D261 Y1" axes x1y1, \
+       "" u (262):($263) t "D262 Y1" axes x1y1, \
+       "" u (263):($264) t "D263 Y1" axes x1y1, \
+       "" u (264):($265) t "D264 Y1" axes x1y1, \
+       "" u (265):($266) t "D265 Y1" axes x1y1, \
+       "" u (266):($267) t "D266 Y1" axes x1y1, \
+       "" u (267):($268) t "D267 Y1" axes x1y1, \
+       "" u (268):($269) t "D268 Y1" axes x1y1, \
+       "" u (269):($270) t "D269 Y1" axes x1y1, \
+       "" u (270):($271) t "D270 Y1" axes x1y1, \
+       "" u (271):($272) t "D271 Y1" axes x1y1, \
+       "" u (272):($273) t "D272 Y1" axes x1y1, \
+       "" u (273):($274) t "D273 Y1" axes x1y1, \
+       "" u (274):($275) t "D274 Y1" axes x1y1, \
+       "" u (275):($276) t "D275 Y1" axes x1y1, \
+       "" u (276):($277) t "D276 Y1" axes x1y1, \
+       "" u (277):($278) t "D277 Y1" axes x1y1, \
+       "" u (278):($279) t "D278 Y1" axes x1y1, \
+       "" u (279):($280) t "D279 Y1" axes x1y1, \
+       "" u (280):($281) t "D280 Y1" axes x1y1

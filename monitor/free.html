@@ -5,7 +5,7 @@
 <meta http-equiv="pragma" content="no-cache">
 <meta http-equiv="cache-control" content="no-cache">
 <meta http-equiv="expires" content="0">    
-<meta http-equiv="description" content="6# frps picture">
+<meta http-equiv="description" content="6# Free space picture">
 <script language="JavaScript" type="text/javascript"> 
 function init()
 {
@@ -20,9 +20,10 @@ function init()
 		num=arrtmp[i].indexOf("=");
 		if(num==2){
 			name=arrtmp[i].substring(0,num);
+			//alert(name);
 			value=arrtmp[i].substr(num+1);
 			this[name]=value;
-			document.getElementById('back').innerHTML='<center><img src="'+value+'/sfl.png"/></center>';
+			document.getElementById('back').innerHTML='<center><img src="'+value+'/free.png"/></center>';
 //			var url = document.getElementById("url");
 //			alert(url);
 //			document.getElementById("url").src =value + url ;
@@ -32,7 +33,7 @@ function init()
 	
 }
 </script>
-<title>Sfl Picture</title>
+<title>Free Space Picture</title>
 
 <link rel="stylesheet" type="text/css" href="main.css">
 </head>

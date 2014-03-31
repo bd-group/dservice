@@ -22,6 +22,6 @@ set key out
 set grid
 
 NODES = "FIXME_NODE"
-plot for [node in NODES] node \
-        using ($2+8*3600):($6/1024) t "Read  Bandwidth Y1 @ ".node with lines axes x1y1, \
-        node using ($2+8*3600):($5/1024) t "Write Bandwidth Y2 @ ".node with lines axes x1y2
+plot for [node in NODES] \
+     node using ($2+8*3600):($6/1024) t "Read  Bandwidth Y1 @ ".node with lines axes x1y1, \
+     node using ($2+8*3600):($5/1024) t "Write Bandwidth Y2 @ ".node with lines axes x1y2

@@ -15,6 +15,7 @@ set ylabel "CPU Ratio (%)"
 set xdata time
 set timefmt "%s"
 set format x "%H:%S"
+set yrange [0:100]
 #set ytics nomirror
 #set y2tics nomirror
 #set logscale y2 10
