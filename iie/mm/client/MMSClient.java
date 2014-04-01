@@ -770,6 +770,23 @@ public class MMSClient {
 					e.printStackTrace();
 				}
 			}
+			if (o.flag.equals("-scrub")) {
+				if (o.opt == null) {
+					System.out.println("Provide server:port to scrub.");
+					break;
+				}
+				System.out.println("get args: " + o.opt);
+				String[] s = o.opt.split(":");
+				if (s.length == 2) {
+					try {
+						pcInfo.getPc().scrubMetadata(s[0], Integer.parseInt(s[1]));
+					} catch (NumberFormatException e) {
+						e.printStackTrace();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
 			if (o.flag.equals("-del")) {
 				String sname = o.opt;
 				System.out.println("Provide the set name to be deleted.");

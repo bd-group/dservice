@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.Timer;
 import java.util.concurrent.BlockingQueue;
@@ -18,6 +19,7 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 import org.eclipse.jetty.server.Server;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class PhotoServer {
@@ -71,21 +73,43 @@ public class PhotoServer {
 		if (jedis == null) 
 			return "#FAIL: Get default jedis instance failed.";
 		
-		// find all servers
-		Set<String> servers = jedis.zrange("mm.active.http", 0, -1);
-		r += "<H2> Total HTTP Servers: </H2><tt>";
-		for (String s : servers) {
-			String[] url = s.split(":");
-			InetSocketAddress isa = new InetSocketAddress(url[0], 10000);
-			r += "<p> <a href=http://" + isa.getAddress().getHostAddress() + ":" + url[1] + "/info><tt>" + s + "</tt></a>";
+		// find all http servers
+		int configNr = 0, activeNr = 0;
+		Set<Tuple> cservers = jedis.zrangeWithScores("mm.active.http", 0, -1);
+
+		if (cservers != null) {
+			r += "<H2> Total HTTP Servers: </H2><tt>";
+			for (Tuple s : cservers) {
+				String[] url = s.getElement().split(":");
+				InetSocketAddress isa = new InetSocketAddress(url[0], 10000);
+				r += "<p> <a href=http://" + isa.getAddress().getHostAddress() + ":" + url[1] + "/info><tt>[MMS" + (long)s.getScore() + "] " + s.getElement() + "</tt></a>";
+			}
+			configNr = cservers.size();
 		}
+		
+		// find all mms servers
+		Set<Tuple> mservers = jedis.zrangeWithScores("mm.active", 0, -1);
+		HashMap<String, Long> smap = new HashMap<String, Long>();
+
+		if (mservers != null) {
+			for (Tuple s : mservers) {
+				smap.put(s.getElement(), (long)s.getScore());
+			}
+		}
+		
 		// find heartbeated servers
-		servers = jedis.keys("mm.hb.*");
-		r += "</tt><H2> Active MM Servers: </H2><tt>";
-		for (String s : servers) {
-			r += "<p>" + s.substring(6);
+		Set<String> aservers = jedis.keys("mm.hb.*");
+		if (aservers != null) {
+			r += "</tt><H2> Active MM Servers: </H2><tt>";
+			for (String s : aservers) {
+				r += "<p>[MMS" + smap.get(s.substring(6)) + "] " + s.substring(6);
+			}
+			r += "</tt>";
+			activeNr = aservers.size();
 		}
-		r += "</tt>";
+		if (activeNr < configNr) {
+			r += "<H3><font color=\"red\">" + (configNr - activeNr) + " MM Server(s) might Down!</font></H3>";
+		}
 		RedisFactory.putInstance(jedis);
 		
 		return r;

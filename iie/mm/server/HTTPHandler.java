@@ -45,7 +45,7 @@ public class HTTPHandler extends AbstractHandler {
 	}
 	
 	private void okResponse(Request baseRequest, HttpServletResponse response, byte[] content) throws IOException {
-		// FIXME: text/image/audio/video/application
+		// FIXME: text/image/audio/video/application/thumbnail/other
 		response.setContentType("image");
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
@@ -129,14 +129,14 @@ public class HTTPHandler extends AbstractHandler {
 			baseRequest.setHandled(true);
 			String page = "<HTML> " +
 							"<HEAD>" +
-							"<TITLE> MM Server Info</TITLE>" +
+							"<TITLE> MM Server Info: [MMS" + ServerConf.serverId + "]</TITLE>" +
 							"</HEAD>" +
 							"<BODY>" +
 							"<H1> #In Current Server Session: </H1>" +
-							"<H2> Server Info: </H2><tt>" +
+							"<H2> Server Info: [MMS" + ServerConf.serverId + "]</H2><tt>" +
 							"Uptime              (S): " + ((System.currentTimeMillis() - PhotoServer.upts) / 1000) + "<p>" +
-							"Writes (#): total " + ServerProfile.writeN.longValue() + ", error " + ServerProfile.writeErr.longValue() + "<p>" +
-							"Reads  (#): total " + ServerProfile.readN.longValue() + ", error " + ServerProfile.readErr.longValue() + "<p>" +
+							"Writes (#): total " + ServerProfile.writeN.longValue() + ", error <font color=\"red\">" + ServerProfile.writeErr.longValue() + "</font><p>" +
+							"Reads  (#): total " + ServerProfile.readN.longValue() + ", error <font color=\"red\">" + ServerProfile.readErr.longValue() + "</font><p>" +
 							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
 							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
 							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +
@@ -147,7 +147,7 @@ public class HTTPHandler extends AbstractHandler {
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
 							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + "</tt>" +
 							"<H1> #Useful Links:</H1><tt>" +
-							"<a href=/data>Sets</a>" +
+							"<H2><tt><a href=/data>Active Data Sets</a></tt></H2>" +
 							"</tt>" +
 							"</BODY>" +
 							"</HTML>";
@@ -222,17 +222,18 @@ public class HTTPHandler extends AbstractHandler {
 			response.getWriter().println("#FAIL: set can not be null");
 		} else {
 			Set<String> elements = sp.getSetElements(set);
-			String page = "<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>" +
-					"<BODY><H1> Set = " + set + "</H1><UL>";
+			StringBuilder sb = new StringBuilder();
+			sb.append("<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>" +
+					"<BODY><H1> Set = " + set + "</H1><UL>");
 			for (String el : elements) {
-				page += "<li><a href=/get?key=" + set + "@" + el + "><tt>" + el + "</tt></a>";
+				sb.append("<li><a href=/get?key=" + set + "@" + el + "><tt>" + el + "</tt></a>");
 			}
-			page += "</UL></BODY> </HTML>";
+			sb.append("</UL></BODY> </HTML>");
 			
 			response.setContentType("text/html;charset=utf-8");
 			response.setStatus(HttpServletResponse.SC_OK);
 			baseRequest.setHandled(true);
-			response.getWriter().write(page);
+			response.getWriter().write(sb.toString());
 			response.getWriter().flush();
 		}
 	}
