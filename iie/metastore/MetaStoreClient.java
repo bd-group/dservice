@@ -874,7 +874,7 @@ public class MetaStoreClient {
 	    		System.out.println("-ond : online device.");
 	    		System.out.println("-ofd : offline device.");
 	    		System.out.println("-ofdp: offline device physically.");
-	    		System.out.println("-lbdn: list device by node.");
+	    		System.out.println("-ldbn: list device by node.");
 	    		
 	    		System.out.println("\n[DM Info]");
 	    		System.out.println("-gni : get current active Node Info from DM.");
@@ -1714,15 +1714,16 @@ public class MetaStoreClient {
 	    			System.exit(0);
 	    		}
 	    		try {
-					cli.client.offlineDevicePhysically(devid);
-					System.out.println("Offline Device '" + devid + "' done physically.");
-				} catch (MetaException e) {
-					e.printStackTrace();
-					break;
-				} catch (TException e) {
-					e.printStackTrace();
-					break;
-				}
+	    			cli.client.setTimeout(600);
+	    			cli.client.offlineDevicePhysically(devid);
+	    			System.out.println("Offline Device '" + devid + "' done physically.");
+	    		} catch (MetaException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		} catch (TException e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
 	    	}
 	    	if (o.flag.equals("-lfbd")) {
 	    		// list FID by devices
