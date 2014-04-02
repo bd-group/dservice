@@ -41,6 +41,7 @@ public class ServerConf {
 	private int reqnr_to_flush = DEFAULT_REQNR_TO_FLUSH;
 	
 	public static long serverId = -1l;
+	// this is http servers
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 		
 	private Set<String> storeArray = new HashSet<String>();

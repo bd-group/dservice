@@ -1,10 +1,10 @@
-//�������
+
 var links = [[],
              [],
              [],
              []];
 	var id;
-//��ʼ��������:���1
+
 function init1(){
 	//alert(window.location.search);
 //	document.getElementById("context").innerHTML="<iframe class='iframe' name='iframeContext'/>";
@@ -21,14 +21,37 @@ function init1(){
 			
 			var today = new Date();
 			var year=today.getFullYear(); 
-    		var month=today.getMonth()+1;    
+    		var month=today.getMonth()+1;  
     		var date=today.getDate();    
 //			var h=today.getHours(); 
 //			var m=today.getMinutes(); 
 //			var s=today.getSeconds(); 
 			id = random;
+			switch(month){
+				case 1:month="01";break;
+				case 2:month="02";break;
+				case 3:month="03";break;
+				case 4:month="04";break;
+				case 5:month="05";break;
+				case 6:month="06";break;
+				case 7:month="07";break;
+				case 8:month="08";break;
+				case 9:month="09";break;
+				default:break;
+			}
+			switch(date){
+				case 1:date="01";break;
+				case 2:date="02";break;
+				case 3:date="03";break;
+				case 4:date="04";break;
+				case 5:date="05";break;
+				case 6:date="06";break;
+				case 7:date="07";break;
+				case 8:date="08";break;
+				case 9:date="09";break;
+				default:break;
+			}
 			window.location.search="?city=XJ&date="+year+"-"+month+"-"+date +"&id=" +id;
-			
 		}else{
 			id = window.location.search;
 			var idsarr = id.split("&");
@@ -39,12 +62,12 @@ function init1(){
 			
 
 		}
-	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png","node.png"];
-	for(var i = 0;i<8;i++)
+	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png","node.png","fops.png","fail.png","diskfrees.png","ds.png","loads.png","free.png"];
+	for(var i = 0;i<14;i++)
 	{
 		var url = document.getElementById("url"+i).href;
 		document.getElementById("url"+i).href =url + window.location.search;
-		document.getElementById("img"+i).innerHTML='<img width = "800px" height = "400px"  src="'+id+'/'+links[i]+'"/>';
+		document.getElementById("img"+i).innerHTML='<img title="'+links[i]+'" width = "800px" height = "500px"  src="'+id+'/'+links[i]+'"/>';
 	}
 	
 	var search = GetRequest();

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
@@ -55,6 +56,10 @@ public class PhotoClient {
 			this.idx = idx;
 			this.key = key;
 			this.seqno = curseqno.incrementAndGet();
+		}
+		
+		public String toString() {
+			return "ID " + idx + " SEQNO " + seqno + " KEY " + key;
 		}
 	}
 	
@@ -201,10 +206,10 @@ public class PhotoClient {
 									new DataOutputStream(socket.getOutputStream()));
 									//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
 									//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
-							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
+							System.out.println("[GFS] New connection @ " + id + " for " + hostname + ":" + port);
 						} catch (SocketException e) {
 							xnr.getAndDecrement();
-							System.out.println("Connect to " + hostname + ":" + port + " failed.");
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -212,7 +217,7 @@ public class PhotoClient {
 							throw e;
 						} catch (Exception e) {
 							xnr.getAndDecrement();
-							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -364,6 +369,30 @@ public class PhotoClient {
 		}
 	}
 	
+	public List<String> getActiveMMSByHB() throws IOException {
+		List<String> ls = new ArrayList<String>();
+		int err = 0;
+
+		refreshJedis();
+		try {
+			Set<String> keys = jedis.get().keys("mm.hb.*");
+
+			for(String hp : keys) {
+				ls.add(hp.substring(6));
+			}
+		} catch (JedisException e) {
+			err = -1;
+			System.out.println("Get mm.hb.* failed: " + e.getMessage());
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+
+		return ls;
+	}
+	
 	private byte[] __handleInput(DataInputStream dis) throws IOException {
 		int count;
 		
@@ -407,12 +436,13 @@ public class PhotoClient {
 			r = __handleInput(storeis);
 			she.setFreeSocket(id);
 		} catch (Exception e) {
-			e.printStackTrace();
+			System.err.println("__syncStore send/recv failed: " + e.getMessage());
 			// remove this socket do reconnect?
 			she.delFromSockets(id);
 		}
 		
 		if (r == null) {
+			// if we can't get reasonable response from redis, report it!
 			String rr = null;
 			int err = 0;
 			
@@ -436,7 +466,7 @@ public class PhotoClient {
 					jedis.set(rf.putInstance(jedis.get()));
 			}
 			if (rr == null)
-				throw new IOException("Metadata inconsistent or connection broken?");
+				throw new IOException("MM Server failed or Metadata connection broken?");
 			return rr;
 		}
 		
@@ -643,7 +673,6 @@ public class PhotoClient {
 			return searchPhoto(info);
 		}
 	}
-	
 	
     /**
 	 * infos是拼接的元信息，各个元信息用#隔开
@@ -1062,7 +1091,6 @@ public class PhotoClient {
 		
 		return r.subList(0, i - bi);
 	}
-	
 		
 	public TreeSet<Long> getSets(String prefix) throws IOException {
 		TreeSet<Long> tranges = new TreeSet<Long>();
@@ -1111,7 +1139,7 @@ public class PhotoClient {
 				r = new ArrayList<String>();
 
 				for (Map.Entry<String, String> e : kvs.entrySet()) {
-					String[] v = e.getValue().split("@");
+					String[] v = e.getValue().split("@|#");
 					if (v.length >= 7) {
 						t.put(v[6] + "." + v[3] + "." + (String.format("%015d", Long.parseLong(v[4])) + "." + v[2]),
 								set + "@" + e.getKey());
@@ -1120,6 +1148,13 @@ public class PhotoClient {
 					}
 				}
 				r.addAll(t.values());
+				/*int i = 0;
+				for (Map.Entry<String, String> x : t.entrySet()) {
+					if (i > 100)
+						break;
+					System.out.println(x.getKey() + " -> " + x.getValue());
+					i++;
+				}*/
 				kvs.clear();
 				t.clear();
 			} else {
@@ -1147,5 +1182,109 @@ public class PhotoClient {
 				jedis.set(rf.putInstance(jedis.get()));
 		}
 		return r;
+	}
+	
+	/**
+	 * getAllSets() will not refresh Jedis connection, caller should do it
+	 * 
+	 * @return
+	 * @throws IOException
+	 */
+	private TreeSet<String> getAllSets() throws IOException {
+		TreeSet<String> tranges = new TreeSet<String>();
+
+		Set<String> keys = jedis.get().keys("*.srvs");
+
+		if (keys != null && keys.size() > 0) {
+			for (String key : keys) {
+				key = key.replaceAll("\\.srvs", "");
+				tranges.add(key);
+			}
+		}
+
+		return tranges;
+	}
+	
+	private class GenValue {
+		boolean isGen = false;
+		String newValue = null;
+	}
+	
+	private GenValue __gen_value(String value, Long sid) {
+		GenValue r = new GenValue();
+		
+		for (String info : value.split("#")) {
+			String[] si = info.split("@");
+			boolean doClean = false;
+			
+			if (si.length >= 7) {
+				try {
+					if (Long.parseLong(si[2]) == sid) {
+						// ok, we should clean this entry
+						doClean = true;
+						r.isGen = true;
+					}
+				} catch (NumberFormatException nfe) {
+				}
+			}
+			if (!doClean) {
+				if (r.newValue == null)
+					r.newValue = info;
+				else
+					r.newValue += "#" + info;
+			}
+		}
+		if (!r.isGen)
+			return null;
+		else
+			return r;
+	}
+	
+	public void scrubMetadata(String server, int port) throws IOException {
+		String member = server + ":" + port;
+		int err = 0;
+		
+		try {
+			refreshJedis();
+		} catch (IOException e) {
+			System.err.println("refreshJedis() failed w/ " + e.getMessage());
+			return;
+		}
+		
+		try {
+			Double gd = jedis.get().zscore("mm.active", member);
+			if (gd != null) {
+				Long sid = gd.longValue();
+				TreeSet<String> sets = getAllSets();
+				for (String set : sets) {
+					System.out.println("-> Begin Scrub SET " + set + " ... ");
+					Map<String, String> kvs = jedis.get().hgetAll(set);
+
+					if (kvs != null) {
+						for (Map.Entry<String, String> e : kvs.entrySet()) {
+							GenValue gv = __gen_value(e.getValue(), sid);
+							if (gv != null) {
+								// ok, do update now
+								if (gv.newValue != null)
+									jedis.get().hset(set, e.getKey(), gv.newValue);
+								else
+									jedis.get().hdel(set, e.getKey());
+								System.out.println("HSET " + set + " " + e.getKey() + " " + gv.newValue + " " + e.getValue());
+							}
+						}
+						kvs.clear();
+					}
+				}
+			} else {
+				System.out.println("Find server " + member + " failed.");
+			}
+		} catch (JedisException e) {
+			err = -1;
+		} finally {
+			if (err < 0) 
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
 	}
 }
