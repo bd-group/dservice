@@ -319,7 +319,9 @@ public class ClientAPI {
 		String r = null;
 		boolean nodedup = false, isSaved = false;
 		boolean isMMServerFailed = false;
-		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
+		int dupnum = Math.min(keyList.size(), pc.getConf().getDupNum());
+		
+		for (int i = 0; i < dupnum; i++) {
 			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
 			if (she.probSelected())
 				// BUG-XXX: we have to check if we can recover from this exception, 

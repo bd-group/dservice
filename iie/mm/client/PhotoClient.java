@@ -206,10 +206,10 @@ public class PhotoClient {
 									new DataOutputStream(socket.getOutputStream()));
 									//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
 									//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
-							System.out.println("New connection @ " + id + " for " + hostname + ":" + port);
+							System.out.println("[GFS] New connection @ " + id + " for " + hostname + ":" + port);
 						} catch (SocketException e) {
 							xnr.getAndDecrement();
-							System.out.println("Connect to " + hostname + ":" + port + " failed.");
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -217,7 +217,7 @@ public class PhotoClient {
 							throw e;
 						} catch (Exception e) {
 							xnr.getAndDecrement();
-							System.out.println("Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
