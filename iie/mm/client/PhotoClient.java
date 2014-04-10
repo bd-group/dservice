@@ -320,8 +320,7 @@ public class PhotoClient {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
 		RedisInstance ri = conf.getRedisInstance();
-		if (ri != null)
-			jedis.set(rf.getNewInstance(ri));
+		jedis.set(rf.getNewInstance(ri));
 	}
 	
 	public ClientConf getConf() {
