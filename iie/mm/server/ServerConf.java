@@ -55,6 +55,7 @@ public class ServerConf {
 	
 	private RedisMode redisMode;
 	private Set<String> sentinels;
+	private String outsideIP;
 
 	public ServerConf(String nodeName, int serverPort, Set<String> sentinels, 
 			int blockSize, int period, int httpPort) throws Exception {
@@ -259,6 +260,14 @@ public class ServerConf {
 
 	public void setSysInfoServerPort(int sysInfoServerPort) {
 		this.sysInfoServerPort = sysInfoServerPort;
+	}
+
+	public String getOutsideIP() {
+		return outsideIP;
+	}
+
+	public void setOutsideIP(String outsideIP) {
+		this.outsideIP = outsideIP;
 	}
 	
 }

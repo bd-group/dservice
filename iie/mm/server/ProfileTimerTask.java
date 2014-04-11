@@ -54,6 +54,12 @@ public class ProfileTimerTask extends TimerTask {
 		pi.set(hbkey, "1");
 		pi.expire(hbkey, period + 5);
 		pi.sync();
+		
+		// update mm.dns for IP info
+		if (conf.getOutsideIP() != null) {
+			jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getServerPort(), conf.getOutsideIP() + ":" + conf.getServerPort());
+			System.out.println("Update mm.dns for " + conf.getNodeName() + " -> " + conf.getOutsideIP());
+		}
 
 		// determine the ID of ourself, register ourself
 		String self = conf.getNodeName() + ":" + conf.getServerPort();

@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -211,22 +212,27 @@ public class ClientAPI {
 		
 		if (active != null && active.size() > 0) {
 			for (Tuple t : active) {
+				// translate ServerName to IP address
+				String ipport = jedis.hget("mm.dns", t.getElement());
+
 				// update server ID->Name map
-				pc.addToServers((long)t.getScore(), t.getElement());
-			}
-			for (Tuple t : active) {
-				String[] c = t.getElement().split(":");
+				if (ipport == null) {
+					pc.addToServers((long)t.getScore(), t.getElement());
+					ipport = t.getElement();
+				} else
+					pc.addToServers((long)t.getScore(), ipport);
 				
-				if (c.length == 2 && socketHash.get(t.getElement()) == null) {
+				String[] c = ipport.split(":");
+				if (c.length == 2 && socketHash.get(ipport) == null) {
 					Socket sock = new Socket();
 					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
-					activeMMS.add(t.getElement());
+					activeMMS.add(ipport);
 					try {
 						sock.setTcpNoDelay(true);
 						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
 						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
 								new DataOutputStream(sock.getOutputStream()));
-						if (socketHash.putIfAbsent(t.getElement(), she) != null) {
+						if (socketHash.putIfAbsent(ipport, she) != null) {
 							she.clear();
 						}
 					} catch (SocketException e) {
@@ -301,63 +307,91 @@ public class ClientAPI {
 		return 0;
 	}
 	
+	private String __put(Set<String> targets, String[] keys, byte[] content, boolean nodedup) 
+			throws Exception {
+		Random rand = new Random();
+		String r = null;
+		Set<String> saved = new TreeSet<String>();
+		HashMap<String, Long> failed = new HashMap<String, Long>();
+		int targetnr = targets.size(); 
+		
+		do {
+			for (String server : targets) {
+				SocketHashEntry she = socketHash.get(server);
+				if (she.probSelected()) {
+					// BUG-XXX: we have to check if we can recover from this exception, 
+					// then try our best to survive.
+					try {
+						r = pc.syncStorePhoto(keys[0], keys[1], content, she, nodedup);
+						if (r.split("#").length < pc.getConf().getDupNum()) {
+							nodedup = true;
+						} else 
+							nodedup = false;
+						saved.add(server);
+					} catch (Exception e) {
+						if (failed.containsKey(server)) {
+							failed.put(server, failed.get(server) + 1);
+						} else
+							failed.put(server, new Long(1));
+						System.out.println("[PUT] " + keys[0] + "@" + keys[1] + " to " + server + 
+								" failed: (" + e.getMessage() + ") for " + failed.get(server) + " times.");
+					}
+				} else {
+					// this means target server has no current usable connection, we try to use 
+					// another server
+				}
+			}
+			if (saved.size() < targetnr) {
+				List<String> remains = new ArrayList<String>(keyList);
+				remains.removeAll(saved);
+				for (Map.Entry<String, Long> e : failed.entrySet()) {
+					if (e.getValue() > 9) {
+						remains.remove(e.getKey());
+					}
+				}
+				if (remains.size() == 0)
+					break;
+				targets.clear();
+				for (int i = saved.size(); i < targetnr; i++) {
+					targets.add(remains.get(rand.nextInt(remains.size())));
+				}
+			} else break;
+		} while (true);
+		
+		if (saved.size() == 0) {
+			throw new Exception("Error in saving Key: " + keys[0] + "@" + keys[1]);
+		}
+		return r;
+	}
+	
 	/**
 	 * 同步写,对外提供的接口
 	 * It is thread-safe!
-	 * @param set
-	 * @param md5
+	 * @param key
 	 * @param content
-	 * @return		
+	 * @return info to locate the file	
 	 */
-	public String put(String key, byte[] content) throws IOException, Exception {
+	public String put(String key, byte[] content) throws Exception {
 		if (key == null || keyList.size() == 0) {
-			throw new Exception("key can not be null or no active MMServer.");
+			throw new Exception("Key can not be null or no active MMServer (" + keyList.size() + ").");
 		}
 		String[] keys = key.split("@");
 		if (keys.length != 2)
-			throw new Exception("wrong format of key:" + key);
-		String r = null;
-		boolean nodedup = false, isSaved = false;
-		boolean isMMServerFailed = false;
+			throw new Exception("Wrong format of key: " + key);
+		boolean nodedup = false;
 		int dupnum = Math.min(keyList.size(), pc.getConf().getDupNum());
 		
+		// roundrobin select dupnum servers from keyList, if error in put, random select in remain servers
+		Set<String> targets = new TreeSet<String>();
 		for (int i = 0; i < dupnum; i++) {
-			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
-			if (she.probSelected())
-				// BUG-XXX: we have to check if we can recover from this exception, 
-				// then try our best to survive.
-				try {
-					r = pc.syncStorePhoto(keys[0], keys[1], content, she, nodedup);
-					if (r.split("#").length < pc.getConf().getDupNum()) {
-						nodedup = true;
-					} else 
-						nodedup = false;
-					isSaved = true;
-				} catch (SocketException e) {
-					i--;
-					index++;
-				} catch (IOException e) {
-					// BUG-XXX: ignore this exception at first time, try another MM server;
-					// if every MMServer failed, 
-					if (!isMMServerFailed) {
-						i--;
-						index++;
-						isMMServerFailed = true;
-					}
-					e.printStackTrace();
-				}
-			else {
-				i--;
-				index++;
-			}
+			targets.add(keyList.get((index + i) % keyList.size()));
 		}
 		index++;
 		if (index >= keyList.size()) {
 			index = 0;
 		}
-		if (!isSaved)
-			throw new Exception("Error in saving Key:" + key);
-		return r;
+			
+		return __put(targets, keys, content, nodedup);
 	}
 	
 	/**
