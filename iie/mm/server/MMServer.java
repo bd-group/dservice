@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
@@ -50,7 +52,7 @@ public class MMServer {
 	        }
 		}
 		
-		String serverName = null,redisMasterName = null,redisServer = null;
+		String serverName = null, redisServer = null;
 		String SysInfoStatServerName = null;
 		int serverPort = ServerConf.DEFAULT_SERVER_PORT,
 				blockSize = ServerConf.DEFAULT_BLOCK_SIZE, 
@@ -60,6 +62,8 @@ public class MMServer {
 				SysInfoStatServerPort = ServerConf.DEFAULT_SYSINFOSTAT_PORT;
 		Set<String> sa = new HashSet<String>();
 		Set<String> sentinels = new HashSet<String>();
+		String outsideIP = null;
+		boolean isSetOutsideIP = false;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -69,7 +73,6 @@ public class MMServer {
 				System.out.println("-p    : local server listen port.");
 				System.out.println("-rr   : redis server name.");
                 System.out.println("-rp   : redis server port.");
-//				System.out.println("-rmn  : redis master name");
                 System.out.println("-sr   : SysInfoStat server name.");
                 System.out.println("-sp   : SysInfoStat server port.");
 				System.out.println("-hp   : http server port.");
@@ -77,8 +80,17 @@ public class MMServer {
 				System.out.println("-prd  : logging period.");
 				System.out.println("-sa   : storage array.");
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
+				System.out.println("-ip   : IP hint exported to outside service.");
 				
 				System.exit(0);
+			}
+			if (o.flag.equals("-ip")) {
+				// set outside accessible IP address hint
+				if (o.opt == null) {
+					System.out.println("-ip IPAddressHint");
+					System.exit(0);
+				}
+				outsideIP = o.opt;
 			}
 			if (o.flag.equals("-r")) {
 				// set serverName
@@ -112,14 +124,6 @@ public class MMServer {
 	        	}
 	        	redisPort = Integer.parseInt(o.opt);
 	        }
-//			if (o.flag.equals("-rmn")) {
-//				if(o.opt == null){
-//					System.out.println("-rmn redis master name");
-//					System.exit(0);
-//				}
-//				redisMasterName = o.opt;
-//				
-//			}
 	        if (o.flag.equals("-sr")) {
                 // set SysInfoStat server name
                 if (o.opt == null) {
@@ -180,6 +184,25 @@ public class MMServer {
 			}
 		}
 		
+		if (outsideIP == null) {
+			System.out.println("In current version you HAVE TO set outside IP address (-ip IPADDR_HINT)(e.g. -ip .69.).");
+			System.exit(0);
+		} else {
+			try {
+				InetAddress[] a = InetAddress.getAllByName(InetAddress.getLocalHost().getHostName());
+				for (InetAddress ia : a) {
+					if (ia.getHostAddress().contains(outsideIP)) {
+						System.out.println("Got host IP " + ia.getHostAddress() + " by hint " + outsideIP);
+						outsideIP = ia.getHostAddress();
+						isSetOutsideIP = true;
+					}
+				}
+			} catch (UnknownHostException e) {
+				e.printStackTrace();
+				System.exit(0);
+			}
+		}
+		
 		// set the serverConf
 		try {
 			if (sentinels.size() > 0)
@@ -187,6 +210,8 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
+			if (isSetOutsideIP)
+				conf.setOutsideIP(outsideIP);
 			if (SysInfoStatServerName != null) {
 				conf.setSysInfoServerName(SysInfoStatServerName);
 				conf.setSysInfoServerPort(SysInfoStatServerPort);

@@ -320,8 +320,7 @@ public class PhotoClient {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
 		RedisInstance ri = conf.getRedisInstance();
-		if (ri != null)
-			jedis.set(rf.getNewInstance(ri));
+		jedis.set(rf.getNewInstance(ri));
 	}
 	
 	public ClientConf getConf() {
@@ -378,7 +377,11 @@ public class PhotoClient {
 			Set<String> keys = jedis.get().keys("mm.hb.*");
 
 			for(String hp : keys) {
-				ls.add(hp.substring(6));
+				String ipport = jedis.get().hget("mm.dns", hp.substring(6));
+				if (ipport == null)
+					ls.add(hp.substring(6));
+				else
+					ls.add(ipport);
 			}
 		} catch (JedisException e) {
 			err = -1;
@@ -436,7 +439,7 @@ public class PhotoClient {
 			r = __handleInput(storeis);
 			she.setFreeSocket(id);
 		} catch (Exception e) {
-			System.err.println("__syncStore send/recv failed: " + e.getMessage());
+			System.out.println("__syncStore send/recv failed: " + e.getMessage() + " r?null=" + (r == null ? true : false));
 			// remove this socket do reconnect?
 			she.delFromSockets(id);
 		}
@@ -527,6 +530,14 @@ public class PhotoClient {
 			refreshJedis();
 			try {
 				info = jedis.get().hget(set, md5);
+				
+				if (info != null) {
+					// NOTE: the delete unit is SET, thus, do NOT need reference 
+					//System.out.println(set + "." + md5 + " exists in MM server");
+					jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
+
+					return info;
+				}
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken, wait ...");
 				try {
@@ -542,16 +553,8 @@ public class PhotoClient {
 				else
 					jedis.set(rf.putInstance(jedis.get()));
 			}
-		
-			if (info == null) {
-				return __syncStorePhoto(set, md5, content, she);
-			} else {
-				// NOTE: the delete unit is SET, thus, do NOT need reference 
-				//System.out.println(set + "." + md5 + " exists in MM server");
-				//jedis.hincrBy(set, "r." + md5, 1);
-				
-				return info;
-			}
+			
+			return __syncStorePhoto(set, md5, content, she);
 		}
 		throw new IOException("Invalid Operation Mode.");
 	}

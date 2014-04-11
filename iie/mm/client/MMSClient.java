@@ -90,7 +90,8 @@ public class MMSClient {
 						}
 						try {
 							if (type.equalsIgnoreCase("sync"))
-								ca.put(set + "@" + sb.toString(), content);
+								//System.out.println("KEY=" + set + "@" + sb.toString() + ", INFO=" + ca.put(set + "@" + sb.toString(), content));
+								ca.put(set + "@" + sb.toString(), content);	
 							else if (type.equalsIgnoreCase("async"))
 								ca.put(set + "@" + sb.toString(), content);
 							else if (type.equalsIgnoreCase("pthca"))

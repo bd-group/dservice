@@ -464,7 +464,7 @@ void __put_inuse_sock(struct MMSConnection *c, struct MMSCSock *s)
 
 int update_mmserver(struct redisConnection *rc)
 {
-    redisReply *rpy = NULL;
+    redisReply *rpy = NULL, *_rr = NULL;
     int err = 0;
 
     rpy = redisCMD(rc->rc, "zrange mm.active 0 -1 withscores");
@@ -484,6 +484,21 @@ int update_mmserver(struct redisConnection *rc)
             int port;
             long sid;
 
+            /* try to parse hostname to ip address */
+            {
+                char cmd[256];
+
+                sprintf(cmd, "hget mm.dns %s", p);
+                _rr = redisCMD(rc->rc, cmd);
+                if (_rr == NULL) {
+                    hvfs_warning(mmcc, "try to do dns for '%s' failed %s\n",
+                                 p, rc->rc->errstr);
+                } else if (_rr->type == REDIS_REPLY_STRING) {
+                    hvfs_info(mmcc, "do DNS for %s -> %s\n", p, _rr->str);
+                    p = _rr->str;
+                }
+            }
+            
             p = strtok_r(p, ":", &n);
             if (p) {
                 hostname = strdup(p);
@@ -523,6 +538,10 @@ int update_mmserver(struct redisConnection *rc)
                       hostname, port);
             __mmsc_insert(c);
             i++;
+            if (_rr) {
+                freeReplyObject(_rr);
+                _rr = NULL;
+            }
         }
         hvfs_info(mmcc, "Got %d MMServer from Meta Server.\n", i);
     }
