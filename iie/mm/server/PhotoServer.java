@@ -36,8 +36,17 @@ public class PhotoServer {
 		this.conf = conf;
 		serverport = conf.getServerPort();
 		period = conf.getPeriod();
-		ss = new ServerSocket(serverport);
-		pool = Executors.newCachedThreadPool();
+		if (!conf.isHTTPOnly()) {
+			ss = new ServerSocket(serverport);
+			pool = Executors.newCachedThreadPool();
+		}
+	}
+	
+	public void startUpHttp() throws Exception {
+		//启动http服务
+		Server server = new Server(conf.getHttpPort());
+		server.setHandler(new HTTPHandler(conf));
+		server.start();
 	}
 	
 	public void startUp() throws Exception {
