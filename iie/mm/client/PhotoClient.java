@@ -319,8 +319,6 @@ public class PhotoClient {
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
-		RedisInstance ri = conf.getRedisInstance();
-		jedis.set(rf.getNewInstance(ri));
 	}
 	
 	public ClientConf getConf() {
