@@ -746,6 +746,66 @@ public class StorePhoto {
 		return tm;
 	}
 	
+	public Map<String,String> getDedupInfo()
+	{
+		int err = 0;
+		
+		try {
+			reconnectJedis();
+		} catch (IOException e2) {
+			e2.printStackTrace();
+			return null;
+		}
+		try {
+			Map<String, String> di = jedis.hgetAll("mm.dedup.info");
+			
+			return di;
+		} catch (JedisConnectionException e) {
+			e.printStackTrace();
+			err = -1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			else
+				jedis = RedisFactory.putInstance(jedis);
+		}
+		
+		return null;
+	}
+	
+	public String getClientConfig(String field)
+	{
+		int err = 0;
+		
+		try {
+			reconnectJedis();
+		} catch (IOException e2) {
+			e2.printStackTrace();
+			return null;
+		}
+		try {
+			String di = jedis.hget("mm.client.conf",field);
+			
+			return di;
+		} catch (JedisConnectionException e) {
+			e.printStackTrace();
+			err = -1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			else
+				jedis = RedisFactory.putInstance(jedis);
+		}
+		
+		return null;
+	}
+	
 	//关闭jedis连接,关闭文件访问流
 	public void close() {
 		try {
