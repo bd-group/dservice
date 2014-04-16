@@ -1,14 +1,23 @@
 package iie.mm.server;
 
+import iie.mm.server.HTTPHandler.TopKeySet.KeySetEntry;
 import iie.mm.server.StorePhoto.RedirectException;
 import iie.mm.server.StorePhoto.SetStats;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -46,7 +55,6 @@ public class HTTPHandler extends AbstractHandler {
 	
 	private void okResponse(Request baseRequest, HttpServletResponse response, byte[] content) throws IOException {
 		// FIXME: text/image/audio/video/application/thumbnail/other
-		response.setContentType("image");
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
 		response.getOutputStream().write(content);
@@ -90,6 +98,23 @@ public class HTTPHandler extends AbstractHandler {
 					if (content == null || content.length == 0) {
 						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
 					} else {
+						switch (infos[0].charAt(0)) {
+						case 'i':
+						case 's':
+							response.setContentType("image");
+							break;
+						case 't':
+							response.setContentType("text/plain;charset=utf-8");
+							break;
+						case 'a':
+							response.setContentType("audio");
+							break;
+						case 'v':
+							response.setContentType("video");
+							break;
+						default:
+							response.setContentType("text/plain;charset=utf-8");
+						}
 						okResponse(baseRequest, response, content);
 					}
 				} catch (RedirectException e) {
@@ -102,8 +127,25 @@ public class HTTPHandler extends AbstractHandler {
 					if (content == null || content.length == 0) {
 						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
 					} else {
+						switch (infos[1].charAt(0)) {
+						case 'i':
+						case 's':
+							response.setContentType("image");
+							break;
+						case 't':
+							response.setContentType("text/plain;charset=utf-8");
+							break;
+						case 'a':
+							response.setContentType("audio");
+							break;
+						case 'v':
+							response.setContentType("video");
+							break;
+						default:
+							response.setContentType("text/plain;charset=utf-8");
+						}
 						okResponse(baseRequest, response, content);
-					} 
+					}
 				} catch (RedirectException e) {
 					redirectResponse(baseRequest, response, e);
 				}
@@ -237,6 +279,261 @@ public class HTTPHandler extends AbstractHandler {
 			response.getWriter().flush();
 		}
 	}
+	
+	public enum MMType {
+		TEXT, VIDEO, AUDIO, IMAGE, THUMBNAIL, APPLICATION, OTHER,
+	}
+	
+	public static String getMMTypeSymbol(MMType type) {
+		switch (type) {
+		case TEXT:
+			return "t";
+		case IMAGE:
+			return "i";
+		case AUDIO:
+			return "a";
+		case VIDEO:
+			return "v";
+		case APPLICATION:
+			return "o";
+		case THUMBNAIL:
+			return "s";
+		case OTHER:
+		default:
+			return "";
+		}
+	}
+
+	private void doDedup(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
+		Map<String, String> di = sp.getDedupInfo();
+		if (di == null)
+			return;
+		
+		TreeMap<String, SetStats> m = sp.getSetBlks();
+		if (m == null)
+			return;
+		
+		String sdn = sp.getClientConfig("dupnum");
+		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		
+		//get all timestamp
+		TreeSet<String> allts = new TreeSet<String>();          
+		for (String setname : m.keySet()) {
+			if (Character.isDigit(setname.charAt(0)))
+				allts.add(setname);
+			else
+		   		allts.add(setname.substring(1));
+		}
+
+		//get all sets dup num
+		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
+		for (Map.Entry<String, String> en : di.entrySet()) {
+			String setname = en.getKey().split("@")[0];
+			Integer n = dupnum.get(setname);
+			int i = n == null ? 0 : n.intValue();
+			i += Integer.parseInt(en.getValue());
+			dupnum.put(setname, i);
+		}
+
+		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Dedup Info</title> </head> <body>");
+		page.append("<H1> #Server Dedup Info </H1> ");
+		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
+		Iterator<String> iter = allts.descendingIterator();
+
+		while (iter.hasNext()) {
+			String ts = iter.next();
+			Date date = null;
+			try {
+				date = new Date(Long.parseLong(ts) * 1000);
+			} catch (NumberFormatException e){
+				System.out.println("Ignore timestamp " + ts);
+				continue;
+			}
+			String time = df.format(date);
+			SetStats ss = null;
+			Integer num = null;
+			String key = null;
+			int a, b;        
+			double c;
+			
+			page.append("<tr align=\"right\"><td>" + time + "</td><td>" + ts + "</td>");
+			
+			for (MMType type : MMType.values()) {
+				key = getMMTypeSymbol(type) + ts;
+				ss = m.get(key);
+				num = dupnum.get(key);
+				a = (int) (ss == null ? 0 : ss.rnr);
+				b = (num == null ? 0 : num.intValue()) / idn;
+				c = a + b == 0 ? 0 : b / (double)(a + b);
+				page.append("<td>" + a + " <br> "+ b + "<br>" + (String.format("%.2f", c)) + "</td>");
+			}
+		}
+		page.append("</table></body> </html>");
+
+		response.setContentType("text/html;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		try {
+			response.getWriter().write(page.toString());
+			response.getWriter().flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+			try {
+				badResponse(baseRequest, response, e.getMessage());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+		}
+	}
+
+	private void doTopdup(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
+		Map<String, String> di = sp.getDedupInfo();
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		TreeMap<String, HashMap<String, TopKeySet>> topd = new TreeMap<String, HashMap<String, TopKeySet>>();
+		String sdn = sp.getClientConfig("dupnum");
+		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
+		String sk = request.getParameter("k");
+		int k = 5;
+		if (sk != null) {
+			try {
+				k = Integer.parseInt(sk);
+			} catch (NumberFormatException nfe) {
+			}
+		}
+		for(Map.Entry<String, String> en : di.entrySet()) {
+			String setname = en.getKey().split("@")[0];
+			HashMap<String,TopKeySet> h1;
+			TopKeySet h2;
+			String type;
+			switch(setname.charAt(0)) {
+			case 't':
+				type = "text";
+				setname = setname.substring(1);
+				break;
+			case 'i':
+				type = "image";
+				setname = setname.substring(1);
+				break;
+			case 'a':
+				type = "audio";
+				setname = setname.substring(1);
+				break;
+			case 'v':
+				type = "video";
+				setname = setname.substring(1);
+				break;
+			case 'o':
+				type = "application";
+				setname = setname.substring(1);
+				break;
+			case 's':
+				type = "thumbnail";
+				setname = setname.substring(1);
+				break;
+			default:
+				type = "other";
+				break;
+			}
+			h1 = topd.get(setname);
+			if (h1 == null) {
+				h1 = new HashMap<String,TopKeySet>();
+				topd.put(setname, h1);
+			}
+			h2 = h1.get(type);
+			if (h2 == null) {
+				h2 = new TopKeySet(k);
+				h1.put(type, h2);
+			}
+			h2.put(en.getKey(), Long.parseLong(en.getValue()) / idn);
+		}
+
+		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Top Dup</title> </head> <body>");
+		page.append("<H1> #Server Top Dup </H1> ");
+		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>time</td><td>set timestamp</td><td>text</td><td>video</td><td>audio</td><td>image</td><td>thumbnail</td><td>application</td><td>other</td> </tr>  ");
+
+		Iterator<String> iter = topd.descendingKeySet().iterator();
+
+		while (iter.hasNext()) {
+			String ts = iter.next();
+			Date date = null;
+			try {
+				date = new Date(Long.parseLong(ts) * 1000);
+			} catch(NumberFormatException e){
+				System.out.println("Ignore timestamp " + ts);
+				continue;
+			}
+			String time = df.format(date);
+			page.append("<tr><td>" + time + "</td><td>" + ts + "</td>");
+			for (String type : new String[]{"text","video","audio","image","thumbnail","application","other"}) {
+				page.append("<td>");
+				if (topd.get(ts) != null && topd.get(ts).get(type) != null) {
+					int idx = 0;
+					for(KeySetEntry en : topd.get(ts).get(type).ll) {
+						idx++;
+						if (type.equalsIgnoreCase("thumbnail")) {
+							page.append("<img src=/get?key=" + en.key + "> " + en.dn + "<br>");
+						} else
+							page.append("<a href=/get?key=" + en.key + ">C" + idx + "</a> " + en.dn + "<br>");
+					}
+				}
+				page.append("</td>");
+			}
+			page.append("</tr>");
+		}
+		page.append("</table></body> </html>");
+		response.setContentType("text/html;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		try {
+			response.getWriter().write(page.toString());
+			response.getWriter().flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+			try {
+				badResponse(baseRequest, response, e.getMessage());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+		}
+	}
+
+	class TopKeySet {
+		public LinkedList<KeySetEntry> ll;
+		private int k;
+		
+		public TopKeySet(int k) {
+			ll = new LinkedList<KeySetEntry>();
+			this.k = k;
+		}
+		
+		class KeySetEntry {
+			String key;
+			Long dn;
+			
+			public KeySetEntry(String key, Long dn) {
+				this.key = key;
+				this.dn = dn;
+			}
+		}
+
+		public void put(String key, Long value) {
+			boolean isInserted = false;
+			for (int i = 0; i < ll.size(); i++) {
+				if (value.longValue() > ll.get(i).dn) {
+					ll.add(i, new KeySetEntry(key,value));
+					isInserted = true;
+					break;
+				}
+			}
+			if (ll.size() < k) {
+				if (!isInserted)
+					ll.addLast(new KeySetEntry(key,value));
+			} else if (ll.size() > k) {
+				ll.removeLast();
+			}
+		}
+	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
@@ -254,6 +551,10 @@ public class HTTPHandler extends AbstractHandler {
 			doData(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/b")) {
 			doBrowse(target, baseRequest, request, response);
+		} else if (target.startsWith("/dedup")){
+			doDedup(target, baseRequest, request, response);
+		} else if (target.startsWith("/topdup")){
+			doTopdup(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}
