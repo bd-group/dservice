@@ -99,9 +99,16 @@ public class ClientAPI {
 				if (sps >= 1)
 					conf.setSockPerServer(sps);
 			}
+			String dupinfo = jedis.hget("mm.client.conf", "dupinfo");
+			if (dupinfo != null) {
+				int di = Integer.parseInt(dupinfo);
+				if (di > 0)
+					conf.setLogDupInfo(true);
+			}
 			System.out.println("Auto conf client with: dupMode=" + dupMode + 
-					", dupNum=" + conf.getDupNum() + ", sockPerServer=" + 
-					conf.getSockPerServer());
+					", dupNum=" + conf.getDupNum() + 
+					", logDupInfo=" + conf.isLogDupInfo() +  
+					", sockPerServer=" + conf.getSockPerServer());
 		} catch (Exception e) {
 			e.printStackTrace();
 		}

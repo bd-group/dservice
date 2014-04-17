@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -83,6 +84,7 @@ public class HTTPHandler extends AbstractHandler {
 			HttpServletResponse response) throws IOException, ServletException {
 		String key = request.getParameter("key");
 		
+		try {
 		if (key == null) {
 			response.setContentType("text/html;charset=utf-8");
 			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
@@ -153,6 +155,9 @@ public class HTTPHandler extends AbstractHandler {
 				badResponse(baseRequest, response, "#FAIL: invalid key format {" + key + "}");
 			}
 		}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 	}
 
 	private void doPut(String target, Request baseRequest, HttpServletRequest request, 
@@ -187,7 +192,8 @@ public class HTTPHandler extends AbstractHandler {
 							"<H1> #Client Auto Config: </H1><tt>" +
 							"dupmode = " + jedis.hget("mm.client.conf", "dupmode") + "<p>" +
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
-							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + "</tt>" +
+							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + 
+							"logdupinfo = " + jedis.hget("mm.client.conf", "dupinfo") + "<p>" + "</tt>" +
 							"<H1> #Useful Links:</H1><tt>" +
 							"<H2><tt><a href=/data>Active Data Sets</a></tt></H2>" +
 							"</tt>" +
@@ -328,12 +334,15 @@ public class HTTPHandler extends AbstractHandler {
 
 		//get all sets dup num
 		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
+		HashMap<String, Integer> tnum = new HashMap<String, Integer>();
 		for (Map.Entry<String, String> en : di.entrySet()) {
 			String setname = en.getKey().split("@")[0];
 			Integer n = dupnum.get(setname);
+			Integer t = tnum.get(setname);
 			int i = n == null ? 0 : n.intValue();
 			i += Integer.parseInt(en.getValue());
 			dupnum.put(setname, i);
+			tnum.put(setname, t == null ? 1 : t + 1);
 		}
 
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Dedup Info</title> </head> <body>");
@@ -355,7 +364,7 @@ public class HTTPHandler extends AbstractHandler {
 			Integer num = null;
 			String key = null;
 			int a, b;        
-			double c;
+			double c, d;
 			
 			page.append("<tr align=\"right\"><td>" + time + "</td><td>" + ts + "</td>");
 			
@@ -366,11 +375,109 @@ public class HTTPHandler extends AbstractHandler {
 				a = (int) (ss == null ? 0 : ss.rnr);
 				b = (num == null ? 0 : num.intValue()) / idn;
 				c = a + b == 0 ? 0 : b / (double)(a + b);
-				page.append("<td>" + a + " <br> "+ b + "<br>" + (String.format("%.2f", c)) + "</td>");
+				if (a != 0 && tnum.get(key) != null) d = tnum.get(key) / (double)a; else d = 0.0;
+				page.append("<td>" + a + " <br> "+ b + "<br>" + (String.format("%.2f%%", c * 100)) + "<br>" + (String.format("%.2f%%", d * 100)) + "</td>");
 			}
 		}
 		page.append("</table></body> </html>");
 
+		response.setContentType("text/html;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		try {
+			response.getWriter().write(page.toString());
+			response.getWriter().flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+			try {
+				badResponse(baseRequest, response, e.getMessage());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+		}
+	}
+	
+	private void doP2p(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
+		Map<String, String> di = sp.getDedupInfo();
+		TreeSet<String> tset = new TreeSet<String>();
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		String sk = request.getParameter("k");
+		int k = 5;
+		
+		if (sk != null) {
+			try {
+				k = Integer.parseInt(sk);
+			} catch (NumberFormatException nfe) {
+			}
+		}
+		TreeMap<String, Set<String>> allsets = new TreeMap<String, Set<String>>();
+		for (Map.Entry<String, String> en : di.entrySet()) {
+			String[] keys = en.getKey().split("@");
+			if (keys.length == 2) {
+				Set<String> elements = allsets.get(keys[0]);
+				if (elements == null)
+					elements = new TreeSet<String>();
+				elements.add(keys[1]);
+				if (Character.isDigit(keys[0].charAt(0)))
+					tset.add(keys[0]);
+				else
+					tset.add(keys[0].substring(1));
+			}
+		}
+		
+		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server P2P Info</title> </head> <body>");
+		page.append("<H1> #Server P2P CX Info </H1> ");
+		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
+		Random rand = new Random();
+
+		for (String ts : tset.descendingSet()) {
+			Date date = null;
+			
+			try {
+				date = new Date(Long.parseLong(ts) * 1000);
+			} catch (NumberFormatException e) {
+				System.out.println("Ignore timestamp " + ts);
+				continue;
+			}
+			String time = df.format(date);
+			
+			page.append("<tr><td>" + time + "</td><td>" + ts + "</td>");
+			
+			for (MMType type : MMType.values()) {
+				String setname = getMMTypeSymbol(type) + ts;
+				Set<String> all = sp.getSetElements(setname);
+				int nr = 0;
+				
+				if (all != null && allsets.get(setname) != null) {
+					all.removeAll(allsets.get(setname));
+				}
+				if (all != null)
+					nr = all.size();
+				
+				page.append("<td>" + nr + "<br>");
+				if (all != null && nr > 0) {
+					String[] allArray = all.toArray(new String[0]);
+					int alen = Math.min(k, allArray.length);
+					Set<Integer> idx = new TreeSet<Integer>();
+					do {
+						int n = rand.nextInt();
+						if (n < 0)
+							n = -n;
+						idx.add(n % allArray.length);
+					} while (idx.size() < alen);
+					Integer[] idxArray = idx.toArray(new Integer[0]);
+					for (int i = 0; i < alen; i++) {
+						if (type == MMType.THUMBNAIL)
+							page.append("<img src=/get?key=" + setname + "@" + allArray[idxArray[i]] + ">");
+						else if (type == MMType.IMAGE)
+							page.append("<img width=\"100\" height=\"100\" src=/get?key=" + setname + "@" + allArray[idxArray[i]] + ">");
+					}
+				}
+				page.append("</td>");
+			}
+			page.append("</tr>");
+		}
+		page.append("</table></body> </html>");
 		response.setContentType("text/html;charset=utf-8");
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
@@ -392,16 +499,17 @@ public class HTTPHandler extends AbstractHandler {
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		TreeMap<String, HashMap<String, TopKeySet>> topd = new TreeMap<String, HashMap<String, TopKeySet>>();
 		String sdn = sp.getClientConfig("dupnum");
-		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
+		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
 		String sk = request.getParameter("k");
 		int k = 5;
+		
 		if (sk != null) {
 			try {
 				k = Integer.parseInt(sk);
 			} catch (NumberFormatException nfe) {
 			}
 		}
-		for(Map.Entry<String, String> en : di.entrySet()) {
+		for (Map.Entry<String, String> en : di.entrySet()) {
 			String setname = en.getKey().split("@")[0];
 			HashMap<String,TopKeySet> h1;
 			TopKeySet h2;
@@ -450,7 +558,7 @@ public class HTTPHandler extends AbstractHandler {
 
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Top Dup</title> </head> <body>");
 		page.append("<H1> #Server Top Dup </H1> ");
-		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>time</td><td>set timestamp</td><td>text</td><td>video</td><td>audio</td><td>image</td><td>thumbnail</td><td>application</td><td>other</td> </tr>  ");
+		page.append("<table rules=\"all\" border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td></tr>");
 
 		Iterator<String> iter = topd.descendingKeySet().iterator();
 
@@ -469,7 +577,7 @@ public class HTTPHandler extends AbstractHandler {
 				page.append("<td>");
 				if (topd.get(ts) != null && topd.get(ts).get(type) != null) {
 					int idx = 0;
-					for(KeySetEntry en : topd.get(ts).get(type).ll) {
+					for (KeySetEntry en : topd.get(ts).get(type).ll) {
 						idx++;
 						if (type.equalsIgnoreCase("thumbnail")) {
 							page.append("<img src=/get?key=" + en.key + "> " + en.dn + "<br>");
@@ -555,6 +663,12 @@ public class HTTPHandler extends AbstractHandler {
 			doDedup(target, baseRequest, request, response);
 		} else if (target.startsWith("/topdup")){
 			doTopdup(target, baseRequest, request, response);
+		} else if (target.startsWith("/p2p")) {
+			try {
+			doP2p(target, baseRequest, request, response);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
 		}
