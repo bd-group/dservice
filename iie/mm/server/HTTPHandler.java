@@ -314,29 +314,26 @@ public class HTTPHandler extends AbstractHandler {
 		Map<String, String> di = sp.getDedupInfo();
 		if (di == null)
 			return;
-		
 		TreeMap<String, SetStats> m = sp.getSetBlks();
 		if (m == null)
 			return;
 		
 		String sdn = sp.getClientConfig("dupnum");
-		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
+		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		
 		//get all timestamp
 		TreeSet<String> allts = new TreeSet<String>();          
-		for (String setname : m.keySet()) {
-			if (Character.isDigit(setname.charAt(0)))
-				allts.add(setname);
-			else
-		   		allts.add(setname.substring(1));
-		}
 
 		//get all sets dup num
 		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
 		HashMap<String, Integer> tnum = new HashMap<String, Integer>();
 		for (Map.Entry<String, String> en : di.entrySet()) {
 			String setname = en.getKey().split("@")[0];
+			if (Character.isDigit(setname.charAt(0)))
+				allts.add(setname);
+			else
+				allts.add(setname.substring(1));
 			Integer n = dupnum.get(setname);
 			Integer t = tnum.get(setname);
 			int i = n == null ? 0 : n.intValue();
@@ -401,13 +398,24 @@ public class HTTPHandler extends AbstractHandler {
 		Map<String, String> di = sp.getDedupInfo();
 		TreeSet<String> tset = new TreeSet<String>();
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		String volume = request.getParameter("vol");
 		String sk = request.getParameter("k");
-		int k = 5;
+		int k = 5, vol = 24, j = 0;
 		
 		if (sk != null) {
 			try {
 				k = Integer.parseInt(sk);
 			} catch (NumberFormatException nfe) {
+			}
+		}
+		if (volume != null) {
+			if (volume.equalsIgnoreCase("all")) {
+				vol = -1;
+			} else {
+				try {
+					vol = Integer.parseInt(volume);
+				} catch (Exception e) {
+				}
 			}
 		}
 		TreeMap<String, Set<String>> allsets = new TreeMap<String, Set<String>>();
@@ -427,16 +435,20 @@ public class HTTPHandler extends AbstractHandler {
 		
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server P2P Info</title> </head> <body>");
 		page.append("<H1> #Server P2P CX Info </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + ",k=" + k + "} </H3> ");
 		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
 		Random rand = new Random();
 
 		for (String ts : tset.descendingSet()) {
 			Date date = null;
 			
+			if (vol > 0 && ++j > vol)
+				break;
 			try {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch (NumberFormatException e) {
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
@@ -500,13 +512,24 @@ public class HTTPHandler extends AbstractHandler {
 		TreeMap<String, HashMap<String, TopKeySet>> topd = new TreeMap<String, HashMap<String, TopKeySet>>();
 		String sdn = sp.getClientConfig("dupnum");
 		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
+		String volume = request.getParameter("vol");
 		String sk = request.getParameter("k");
-		int k = 5;
+		int k = 5, vol = 24, j = 0;
 		
 		if (sk != null) {
 			try {
 				k = Integer.parseInt(sk);
 			} catch (NumberFormatException nfe) {
+			}
+		}
+		if (volume != null) {
+			if (volume.equalsIgnoreCase("all")) {
+				vol = -1;
+			} else {
+				try {
+					vol = Integer.parseInt(volume);
+				} catch (Exception e) {
+				}
 			}
 		}
 		for (Map.Entry<String, String> en : di.entrySet()) {
@@ -558,6 +581,7 @@ public class HTTPHandler extends AbstractHandler {
 
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Top Dup</title> </head> <body>");
 		page.append("<H1> #Server Top Dup </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + ",k=" + k + "} </H3> ");
 		page.append("<table rules=\"all\" border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td></tr>");
 
 		Iterator<String> iter = topd.descendingKeySet().iterator();
@@ -565,10 +589,14 @@ public class HTTPHandler extends AbstractHandler {
 		while (iter.hasNext()) {
 			String ts = iter.next();
 			Date date = null;
+			
+			if (vol > 0 && ++j > vol)
+				break;
 			try {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch(NumberFormatException e){
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
