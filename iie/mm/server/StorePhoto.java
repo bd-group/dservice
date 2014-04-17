@@ -32,7 +32,12 @@ public class StorePhoto {
 	//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
 	private static Map<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();		
 	private Map<String, RandomAccessFile> readRafHash;			//读文件时的随机访问流，用哈希来缓存
-	private Jedis jedis;
+	private final ThreadLocal<Jedis> jedis =
+         new ThreadLocal<Jedis>() {
+             @Override protected Jedis initialValue() {
+                 return null;
+         }
+	};
 	private static String sha = null;
 	
 	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
@@ -100,10 +105,10 @@ public class StorePhoto {
 	}
 	
 	public void reconnectJedis() throws IOException {
-		if (jedis == null) {
-			jedis = new RedisFactory(conf).getDefaultInstance();
+		if (jedis.get() == null) {
+			jedis.set(new RedisFactory(conf).getDefaultInstance());
 		}
-		if (jedis == null)
+		if (jedis.get() == null)
 			throw new IOException("Connection to MMM Server failed.");
 	}
 
@@ -135,7 +140,7 @@ public class StorePhoto {
 					+ "else "
 					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
 					+ "return ARGV[2] end";
-			sha = jedis.scriptLoad(script);
+			sha = jedis.get().scriptLoad(script);
 //			System.out.println(sha);
 		}
 		
@@ -159,7 +164,7 @@ public class StorePhoto {
 			try {
 				if (ssc.curBlock < 0) {
 					//需要通过节点名字来标示不同节点上相同名字的集合
-					String reply = jedis.get(set + ".blk." + localHostName + "." + ssc.disk);
+					String reply = jedis.get().get(set + ".blk." + localHostName + "." + ssc.disk);
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
@@ -168,8 +173,8 @@ public class StorePhoto {
 						ssc.curBlock = 0;
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-						jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
-						jedis.set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
+						jedis.get().sadd(set + ".srvs", localHostName + ":" + serverport);
+						jedis.get().set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
 						ssc.offset = 0;
 					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -183,7 +188,7 @@ public class StorePhoto {
 						ssc.raf.close();
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 					//当前可写的块号加一
-					jedis.incr(set + ".blk." + localHostName + "." + ssc.disk);
+					jedis.get().incr(set + ".blk." + localHostName + "." + ssc.disk);
 					ssc.offset = 0;
 				}
 				
@@ -228,7 +233,7 @@ public class StorePhoto {
 				returnStr = "#FAIL:" + e.getMessage();
 			} finally {
 				if (err < 0) {
-					jedis = RedisFactory.putBrokenInstance(jedis);
+					jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 					ServerProfile.writeErr.incrementAndGet();
 					return returnStr;
 				}
@@ -237,7 +242,7 @@ public class StorePhoto {
 		
 		try {
 			returnStr = rVal.toString();
-			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
+			returnStr = jedis.get().evalsha(sha, 1, set, md5, returnStr).toString();
 			BufferedImage bi = ImageMatch.readImage(content,coff,clen);
 			if(bi != null)
 			{
@@ -264,10 +269,10 @@ public class StorePhoto {
 			returnStr = "#FAIL:" + e.getMessage();
 		} finally {
 			if (err < 0) {
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
 			} else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 		return returnStr;
 	}
@@ -302,7 +307,7 @@ public class StorePhoto {
 					+ "else "
 					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
 					+ "return ARGV[2] end";
-			sha = jedis.scriptLoad(script);
+			sha = jedis.get().scriptLoad(script);
 //			System.out.println(sha);
 		}
 		
@@ -335,7 +340,7 @@ public class StorePhoto {
 				try {
 					if (ssc.curBlock < 0) {
 						// 需要通过节点名字来标示不同节点上相同名字的集合
-						String reply = jedis.get(set + ".blk." + localHostName
+						String reply = jedis.get().get(set + ".blk." + localHostName
 								+ "." + ssc.disk);
 						if (reply != null) {
 							ssc.curBlock = Long.parseLong(reply);
@@ -345,9 +350,9 @@ public class StorePhoto {
 							ssc.curBlock = 0;
 							ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 							// 把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-							jedis.sadd(set + ".srvs", localHostName + ":"
+							jedis.get().sadd(set + ".srvs", localHostName + ":"
 									+ serverport);
-							jedis.set(set + ".blk." + localHostName + "."
+							jedis.get().set(set + ".blk." + localHostName + "."
 									+ ssc.disk, "" + ssc.curBlock);
 							ssc.offset = 0;
 						}
@@ -366,7 +371,7 @@ public class StorePhoto {
 						}
 						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 						// 当前可写的块号加一
-						jedis.incr(set + ".blk." + localHostName + "."
+						jedis.get().incr(set + ".blk." + localHostName + "."
 								+ ssc.disk);
 						ssc.offset = 0;
 					}
@@ -411,7 +416,7 @@ public class StorePhoto {
 					err = -1;
 				} finally {
 					if (err < 0) {
-						jedis = RedisFactory.putBrokenInstance(jedis);
+						jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 						ServerProfile.writeErr.incrementAndGet();
 						return null;
 					}
@@ -424,7 +429,7 @@ public class StorePhoto {
 				e.printStackTrace();
 				// Rollback SSC offset
 				ssc.offset = init_offset;
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
 				return null;
 			} 
@@ -432,7 +437,7 @@ public class StorePhoto {
 		
 		try {
 			for (int i = 0; i < content.length; i++) {
-				returnVal[i] = jedis.evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
+				returnVal[i] = jedis.get().evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
 				BufferedImage bi = ImageMatch.readImage(content[i]);
 				if(bi != null)
 				{
@@ -460,10 +465,10 @@ public class StorePhoto {
 			returnVal = null;
 		} finally {
 			if (err < 0) {
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
 			} else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 		return returnVal;
 	}
@@ -486,7 +491,7 @@ public class StorePhoto {
 		info = (String) lookupCache.get(set + "." + md5);
 		if (info == null) {
 			try {
-				info = jedis.hget(set, md5);
+				info = jedis.get().hget(set, md5);
 			} catch (JedisConnectionException e) {
 				try {
 					Thread.sleep(1000);
@@ -499,10 +504,10 @@ public class StorePhoto {
 				return null;
 			} finally {
 				if (err < 0) {
-					jedis = RedisFactory.putBrokenInstance(jedis);
+					jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 					ServerProfile.readErr.incrementAndGet();
 				} else
-					jedis = RedisFactory.putInstance(jedis);
+					jedis.set(RedisFactory.putInstance(jedis.get()));
 			}
 			
 			if (info == null) {
@@ -616,7 +621,7 @@ public class StorePhoto {
 		}
 		
 		try {
-			r = jedis.hkeys(set);
+			r = jedis.get().hkeys(set);
 		} catch (JedisConnectionException e) {
 			try {
 				Thread.sleep(1000);
@@ -628,9 +633,9 @@ public class StorePhoto {
 			err = -1;
 		} finally {
 			if (err < 0)
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 			else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 		return r;
 	}
@@ -659,15 +664,15 @@ public class StorePhoto {
 		}
 		TreeMap<String, SetStats> temp = new TreeMap<String, SetStats>();
 		try {
-			Set<String> keys = jedis.keys("*.blk.*");
+			Set<String> keys = jedis.get().keys("*.blk.*");
 			
 			if (keys != null && keys.size() > 0) {
 				String[] keya = keys.toArray(new String[0]);
-				List<String> vals = jedis.mget(keya);
+				List<String> vals = jedis.get().mget(keya);
 				
 				for (int i = 0; i < keya.length; i++) {
 					String set = keya[i].split("\\.")[0];
-					temp.put(set, new SetStats(jedis.hlen(set), temp.containsKey(set) ? temp.get(set).fnr + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 ));
+					temp.put(set, new SetStats(jedis.get().hlen(set), temp.containsKey(set) ? temp.get(set).fnr + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 ));
 				}
 			}
 		} catch (JedisConnectionException e) {
@@ -683,9 +688,9 @@ public class StorePhoto {
 			temp = null;
 		} finally {
 			if (err < 0)
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 			else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 		
 		return temp;
@@ -757,8 +762,7 @@ public class StorePhoto {
 			return null;
 		}
 		try {
-			Map<String, String> di = jedis.hgetAll("mm.dedup.info");
-			
+			Map<String, String> di = jedis.get().hgetAll("mm.dedup.info");
 			return di;
 		} catch (JedisConnectionException e) {
 			e.printStackTrace();
@@ -768,18 +772,17 @@ public class StorePhoto {
 			err = -1;
 		} finally {
 			if (err < 0)
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 			else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
-		
+
 		return null;
 	}
-	
-	public String getClientConfig(String field)
-	{
+
+	public String getClientConfig(String field) {
 		int err = 0;
-		
+
 		try {
 			reconnectJedis();
 		} catch (IOException e2) {
@@ -787,8 +790,7 @@ public class StorePhoto {
 			return null;
 		}
 		try {
-			String di = jedis.hget("mm.client.conf",field);
-			
+			String di = jedis.get().hget("mm.client.conf", field);
 			return di;
 		} catch (JedisConnectionException e) {
 			e.printStackTrace();
@@ -798,14 +800,14 @@ public class StorePhoto {
 			err = -1;
 		} finally {
 			if (err < 0)
-				jedis = RedisFactory.putBrokenInstance(jedis);
+				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 			else
-				jedis = RedisFactory.putInstance(jedis);
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
-		
+
 		return null;
 	}
-	
+
 	//关闭jedis连接,关闭文件访问流
 	public void close() {
 		try {
@@ -817,8 +819,8 @@ public class StorePhoto {
 		} catch(IOException e){
 			e.printStackTrace();
 		} finally {
-			if (jedis != null)
-				RedisFactory.putInstance(jedis);
+			if (jedis.get() != null)
+				RedisFactory.putInstance(jedis.get());
 		}
 	}
 	

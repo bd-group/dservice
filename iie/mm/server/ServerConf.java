@@ -1,6 +1,7 @@
 package iie.mm.server;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -56,7 +57,14 @@ public class ServerConf {
 	private RedisMode redisMode;
 	private Set<String> sentinels;
 	private String outsideIP;
+	private boolean isHTTPOnly = false;
 
+	public ServerConf(int httpPort) throws Exception {
+		this.nodeName = InetAddress.getLocalHost().getHostName();
+		this.httpPort = httpPort;
+		setRedisMode(RedisMode.SENTINEL);
+	}
+	
 	public ServerConf(String nodeName, int serverPort, Set<String> sentinels, 
 			int blockSize, int period, int httpPort) throws Exception {
 		if (nodeName == null)
@@ -268,6 +276,14 @@ public class ServerConf {
 
 	public void setOutsideIP(String outsideIP) {
 		this.outsideIP = outsideIP;
+	}
+
+	public boolean isHTTPOnly() {
+		return isHTTPOnly;
+	}
+
+	public void setHTTPOnly(boolean isHTTPOnly) {
+		this.isHTTPOnly = isHTTPOnly;
 	}
 	
 }

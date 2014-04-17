@@ -319,8 +319,6 @@ public class PhotoClient {
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
 		rf = new RedisFactory(conf);
-		RedisInstance ri = conf.getRedisInstance();
-		jedis.set(rf.getNewInstance(ri));
 	}
 	
 	public ClientConf getConf() {
@@ -533,8 +531,8 @@ public class PhotoClient {
 				
 				if (info != null) {
 					// NOTE: the delete unit is SET, thus, do NOT need reference 
-					//System.out.println(set + "." + md5 + " exists in MM server");
-					jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
+					if (conf.isLogDupInfo())
+						jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
 
 					return info;
 				}
@@ -587,13 +585,11 @@ public class PhotoClient {
 
 			if (info == null) {
 				__asyncStorePhoto(set, md5, content, she);
-			} /* else { 
-				// FIXME: this should increase reference in Server.
-				System.out.println(set + "." + md5 + " exists in redis server");
-				jedis.hincrBy(set, "r." + md5, 1);
-
-				return info;
-			}*/
+			} else { 
+				// NOTE: log the dup info
+				if (conf.isLogDupInfo())
+					jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
+			}
 		} else {
 			throw new IOException("Invalid Operation Mode.");
 		}

@@ -23,15 +23,19 @@ import org.eclipse.jetty.server.handler.ResourceHandler;
 public class MonitorHandler extends AbstractHandler {
 
 	private HashMap<String, String> cityip = new HashMap<String, String>();
+	private HashMap<String, String> mmcityip = new HashMap<String, String>();
 	private ConcurrentHashMap<String, Long> uidtime = new ConcurrentHashMap<String, Long>();
-	private String targetPath;
+	private String targetPath, mmPath;
 	
-	public MonitorHandler(Map<String, String> addrMap, String targetPath) {
+	public MonitorHandler(Map<String, String> addrMap, Map<String, String> mmAddrMap, String targetPath, String mmPath) {
 		cityip.putAll(addrMap);
+		mmcityip.putAll(mmAddrMap);
 		this.targetPath = targetPath;
+		this.mmPath = mmPath;
 		Timer t = new Timer();
 		t.schedule(new EvictThread(10 * 1000), 10 * 1000, 10 * 1000);
 	}
+	
 	private class EvictThread extends TimerTask {
 		private long expireTime;	//单位ms
 		
@@ -84,16 +88,25 @@ public class MonitorHandler extends AbstractHandler {
 						+ " ./doplot.sh " + id + "/" + city + "." + name + " " + id + "/";
 				System.out.println(cmd);
 				String error = runCmd(cmd);
-				if(error != null) {
+				if (error != null) {
 					badResponse(baseRequest, response, "#FAIL: "+error);
 					return;
 				}
-				cmd = "cd monitor; ./doplot2.sh " + id + "/ " + "../log/sysinfo-" + date;
-				System.out.println(cmd);
-				error = runCmd(cmd);
-				if(error != null) {
-					badResponse(baseRequest, response, "#FAIL: "+error);
-					return;
+				if (mmcityip.get(city) != null) {
+					cmd = "cd monitor;"
+							+ "expect data.exp " + mmcityip.get(city) + " " + mmPath + "/sysinfo-" + date + " " + id + "/" + city + ".sysinfo-" + date + ";"
+							+ " ./doplot2.sh " + id + "/ " + id  + "/" + city + ".sysinfo-" + date;
+					System.out.println(cmd);
+					error = runCmd(cmd);
+					if (error != null) {
+						badResponse(baseRequest, response, "#FAIL: "+error);
+						return;
+					}
+				} else {
+					cmd = "cd monitor;"
+							+ "rm -rf " + id + "/mms_*.png";
+					System.out.println(cmd);
+					runCmd(cmd);
 				}
 			}
 		}

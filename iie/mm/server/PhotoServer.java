@@ -36,8 +36,29 @@ public class PhotoServer {
 		this.conf = conf;
 		serverport = conf.getServerPort();
 		period = conf.getPeriod();
-		ss = new ServerSocket(serverport);
-		pool = Executors.newCachedThreadPool();
+		if (!conf.isHTTPOnly()) {
+			ss = new ServerSocket(serverport);
+			pool = Executors.newCachedThreadPool();
+		}
+	}
+	
+	public void startUpHttp() throws Exception {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		if (jedis != null) {
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					ServerConf.servers.put((long)t.getScore(), t.getElement());
+					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+				}
+			}
+			jedis = RedisFactory.putInstance(jedis);
+		}
+		
+		//启动http服务
+		Server server = new Server(conf.getHttpPort());
+		server.setHandler(new HTTPHandler(conf));
+		server.start();
 	}
 	
 	public void startUp() throws Exception {

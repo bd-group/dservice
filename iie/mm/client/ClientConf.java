@@ -24,6 +24,7 @@ public class ClientConf {
 	private int dupNum;			//一个文件存储份数
 	private int sockPerServer;
 	private boolean autoConf = false;
+	private boolean logDupInfo = true;
 	
 	public static enum MODE {
 		DEDUP, NODEDUP,
@@ -161,5 +162,13 @@ public class ClientConf {
 
 	public void setGetkeys_do_sort(boolean getkeys_do_sort) {
 		this.getkeys_do_sort = getkeys_do_sort;
+	}
+
+	public boolean isLogDupInfo() {
+		return logDupInfo;
+	}
+
+	public void setLogDupInfo(boolean logDupInfo) {
+		this.logDupInfo = logDupInfo;
 	}
 }

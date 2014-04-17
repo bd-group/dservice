@@ -12,7 +12,9 @@ import org.eclipse.jetty.server.Server;
 public class MonitorServer {
 	public static void main(String[] args) {
 		HashMap<String, String> addrMap = new HashMap<String, String>();
+		HashMap<String, String> mmAddrMap = new HashMap<String, String>();
 		String targetPath = "sotstore/sotstore/reports";
+		String mmPath = "sotstore/dservice/log";
 		File f;
 		int port = 33333;
 		
@@ -45,7 +47,11 @@ public class MonitorServer {
 			while (line != null) {
 				String[] pair = line.split("=");
 				if (pair.length == 2) {
-					addrMap.put(pair[0], pair[1]);
+					if (pair[0].startsWith("mm.")) {
+						mmAddrMap.put(pair[0].substring(3), pair[1]);
+					} else {
+						addrMap.put(pair[0], pair[1]);
+					}
 				}
 				line = br.readLine();
 			}
@@ -65,7 +71,7 @@ public class MonitorServer {
 		}
 		
 		Server s = new Server(port);
-		s.setHandler(new MonitorHandler(addrMap, targetPath));
+		s.setHandler(new MonitorHandler(addrMap, mmAddrMap, targetPath, mmPath));
 		try {
 			s.start();
 		} catch (Exception e) {

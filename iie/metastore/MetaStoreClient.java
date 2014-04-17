@@ -1940,8 +1940,8 @@ public class MetaStoreClient {
 							if (r2.length >= 4) {
 								ScrubRule sr = new ScrubRule();
 								sr.type = r2[0].substring(1);
-								sr.soft = Integer.parseInt(r2[2]) * 24;
-								sr.hard = Integer.parseInt(r2[3]) * 24;
+								sr.soft = new Double(Double.parseDouble(r2[2])).intValue() * 24;
+								sr.hard = new Double(Double.parseDouble(r2[3])).intValue() * 24;
 								if (r2[1].equalsIgnoreCase("del")) {
 									sr.action = ScrubRule.ScrubAction.DELETE;
 								} else if (r2[1].equalsIgnoreCase("drep")) {
@@ -3610,5 +3610,8 @@ public class MetaStoreClient {
 				}
 			}
 	    }
+	    
+	    if (cli != null && cli.client != null)
+	    	cli.client.close();
 	}
 }

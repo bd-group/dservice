@@ -81,6 +81,7 @@ public class MMServer {
 				System.out.println("-sa   : storage array.");
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				System.out.println("-ip   : IP hint exported to outside service.");
+				System.out.println("-http : http mode only.");
 				
 				System.exit(0);
 			}
@@ -181,6 +182,22 @@ public class MMServer {
 				for (int i = 0; i < stls.length; i++) {
 					sentinels.add(stls[i]);
 				}
+			}
+		}
+		
+		for (Option o : optsList) {
+			if (o.flag.equals("-http")) {
+				try {
+					conf = new ServerConf(httpPort);
+					conf.setHTTPOnly(true);
+					conf.setSentinels(sentinels);
+					PhotoServer ps = new PhotoServer(conf);
+					ps.startUpHttp();
+				} catch (Exception e) {
+					e.printStackTrace();
+					System.exit(0);
+				}
+				return;
 			}
 		}
 		
