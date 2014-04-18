@@ -304,6 +304,10 @@ public class PhotoClient {
 	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
 	private Map<String, SocketHashEntry> igetSH = new HashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
+	public Map<Long, String> getServers() {
+		return servers;
+	}
+
 	private final ThreadLocal<Jedis> jedis =
          new ThreadLocal<Jedis>() {
              @Override protected Jedis initialValue() {

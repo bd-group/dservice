@@ -466,6 +466,44 @@ public class ClientAPI {
 		}*/
 	}
 	
+	public String makeDup(String key, String info) throws IOException, Exception
+	{
+		if (key == null || keyList.size() == 0) {
+			throw new Exception("Key can not be null or no active MMServer (" + keyList.size() + ").");
+		}
+		String[] keys = key.split("@");
+		if (keys.length != 2)
+			throw new Exception("Wrong format of key: " + key);
+		
+		byte[] content = this.get(info);
+		boolean nodedup = false;
+		int dupnum = Math.min(keyList.size(), pc.getConf().getDupNum());
+		
+		// roundrobin select dupnum servers from keyList, if error in put, random select in remain servers
+		Set<String> targets = new TreeSet<String>();
+		for (int i = 0; i < dupnum; i++) {
+			targets.add(keyList.get((index + i) % keyList.size()));
+		}
+		
+		String[] infos = info.split("#");
+		for(String s : infos)
+		{
+			long sid = Long.parseLong(s.split("@")[2]);
+			String server = this.getPc().getServers().get(sid);
+			if(server != null)
+				targets.remove(server);
+		}
+		if(targets.size() == 0)
+			return "no more copy can be made: "+key+" --> "+info;
+		
+		index++;
+		if (index >= keyList.size()) {
+			index = 0;
+		}
+		
+		return __put(targets, keys, content, nodedup);
+	}
+	
 	/**
 	 * It is thread-safe
 	 * 同步取，对外提供的接口
