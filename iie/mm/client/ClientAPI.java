@@ -266,7 +266,10 @@ public class ClientAPI {
 	private class MMCTimerTask extends TimerTask {
 		@Override
 		public void run() {
-			refreshActiveMMS(false);
+			try {
+				refreshActiveMMS(false);
+			} catch (Exception e) {
+			}
 		}
 	}
 

@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-03-12 11:48:55 macan>
+ * Time-stamp: <2014-04-18 12:38:57 macan>
  *
  */
 
@@ -859,6 +859,15 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
         }
         bl += bw;
     } while (bl < strlen(buf));
+
+    /* BUG-XXX: we have truncate the fd to actual length */
+    err = ftruncate(fd, bl);
+    if (err) {
+        hvfs_err(lib, "ftruncate() failed w/ %s\n", strerror(errno));
+        err = -errno;
+        goto out;
+    }
+
     err = bl;
     hvfs_info(lib, "WRITE SHM: {%s}\n", buf);
 
