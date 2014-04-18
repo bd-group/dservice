@@ -860,6 +860,7 @@ public class MetaStoreClient {
 	    		System.out.println("-fcr : create a new file and return the fid.");
 	    		System.out.println("-fcl : close the file.");
 	    		System.out.println("-fcd : delete the file.");
+	    		System.out.println("-gbn : get a file by SFL keys.");
 	    		System.out.println("-ofl : offline a file location.");
 	    		System.out.println("-dfl : delete a file location and remove the physical data.");
 	    		System.out.println("-dflf: delete a file location (read from a file).");
@@ -1761,7 +1762,8 @@ public class MetaStoreClient {
 	    		try {
 					boolean res = cli.client.flSelectorWatch(dbName + "." + tableName, fls_op);
 					System.out.println("Control FLSelector OP=" + (fls_op == 0 ? "ADD" :
-						(fls_op == 1 ? "DEL" : "FLUSH")) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
+						(fls_op == 1 ? "DEL" : 
+							(fls_op == 2 ? "FLUSH" : "REPR " + (fls_op >> 8)))) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -2640,6 +2642,36 @@ public class MetaStoreClient {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
 					break;
+				}
+			}
+			if (o.flag.equals("-gbn")) {
+				// get a file by sfl keys
+				if (dfl_dev == null || dfl_location == null) {
+					System.out.println("Please set -dfl_dev and -dfl_location.");
+					System.exit(0);
+				}
+				SFile f;
+				try {
+					f = cli.client.get_file_by_name("", dfl_dev, dfl_location);
+					if (f != null) {
+						System.out.println("Read file: " + toStringSFile(f));
+						// iterator on file locations
+						if (f.getLocationsSize() > 0) {
+							for (SFileLocation sfl : f.getLocations()) {
+								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+								System.out.println("ssh " + sfl.getNode_name() + " ls -l " + mp + "/" + sfl.getLocation());
+							}
+						}
+					}
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-ofl")) {
