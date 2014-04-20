@@ -195,6 +195,8 @@ public class HTTPHandler extends AbstractHandler {
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
 							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + 
 							"logdupinfo = " + jedis.hget("mm.client.conf", "dupinfo") + "<p>" + "</tt>" +
+							"<H2> MMServer DNS: </H2><tt>" +
+							PhotoServer.getDNSHtml(conf) + "</tt><p>" +
 							"<H1> #Useful Links:</H1><tt>" +
 							"<H2><tt><a href=/data>Active Data Sets</a></tt></H2>" +
 							"</tt>" +

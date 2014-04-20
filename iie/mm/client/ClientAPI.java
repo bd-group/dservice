@@ -175,6 +175,14 @@ public class ClientAPI {
 				List<String> active = pc.getActiveMMSByHB();
 				Set<String> activeMMS = new TreeSet<String>();
 				
+				// BUG-XXX: getActiveMMSByHB() return the DNSed server name, it might be different
+				// with saved server name. Thus, if a server changes its ip address, we can't
+				// find it even we put it into socketHash.
+				// Possibly, we get server_name:server_ip pair, and try to find by name and ip.
+				// If server_name in servers, check up socketHash.get(server_name) {free it?}
+				// and check up socketHash.get(server_ip), finally update server_ip to servers?
+				// else if server_ip in servers, it is ok.
+				// else register ourself to servers?
 				if (active.size() > 0) {
 					for (String a : active) {
 						String[] c = a.split(":");

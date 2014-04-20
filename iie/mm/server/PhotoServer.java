@@ -6,6 +6,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
 import java.util.concurrent.BlockingQueue;
@@ -85,6 +86,27 @@ public class PhotoServer {
 				//pool.shutdown();
 			}
 		}
+	}
+	
+	public static String getDNSHtml(ServerConf conf) {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		String r = "";
+		
+		if (jedis == null) 
+			return "#FAIL: Get default jedis instance failed.";
+		
+		// get dns info
+		Map<String, String> dns = jedis.hgetAll("mm.dns");
+
+		if (dns != null && dns.size() > 0) {
+			for (Map.Entry<String, String> e : dns.entrySet()) {
+				r += e.getKey() + " -> " + e.getValue() + "<p/>";
+			}
+		} else {
+			r += "Not available.<p>";
+		}
+		RedisFactory.putInstance(jedis);
+		return r;
 	}
 	
 	public static String getServerInfoHtml(ServerConf conf) {
