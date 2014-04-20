@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-31 14:35:29 macan>
+# Time-stamp: <2014-04-20 17:38:02 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -14,6 +14,8 @@ MAKE = make
 
 GIT = env git
 GIT_SHA = `$(GIT) rev-parse HEAD`
+
+INOTIFY=inotify-tools-3.14
 
 COMPILE_DATE = `date`
 COMPILE_HOST = `hostname`
@@ -29,6 +31,7 @@ DSERVICE = dservice
 DEVMAP = devmap
 DEVMAP_SO = lib$(DEVMAP).so
 JTEST = Test
+WATCHER = watcher
 
 LUCENE_JAR = $(LCHOME)/lucene-core-4.2.1.jar
 LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-queries-4.2.1.jar:$(LCHOME)/lucene-sandbox-4.2.1.jar
@@ -52,7 +55,7 @@ DEMO = build/demo
 IIE = iie
 MSCLI = mscli
 
-OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class
+OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class $(WATCHER)
 
 all: $(OBJS) $(IIE) $(MSCLI)
 	@$(ECHO) -e "Build OK."
@@ -96,6 +99,16 @@ $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@mkdir -p build
 	@$(GCC) $(CFLAGS) -Llib $(DSERVICE).c jsmn.c -o build/$(DSERVICE) $(LDFLAGS)
 
+INOTIFY_DEPEND : 
+	@$(ECHO) -e " " MK INOTIFY
+	@if [ ! -d inotify-tools-3.14 ]; then tar zxvf inotify-tools-3.14.tar.gz; fi
+	@$(MAKE) --no-print-directory -C inotify-tools-3.14
+
+$(WATCHER): INOTIFY_DEPEND $(WATCHER).c
+	@$(ECHO) -e " " CC"\t" $@
+	@mkdir -p build
+	@$(GCC) -DHVFS_TRACING $(CFLAGS) -Llib -I$(INOTIFY)/libinotifytools/src/ $(WATCHER).c $(INOTIFY)/libinotifytools/src/.libs/libinotifytools.a -o build/$(WATCHER) $(LDFLAGS) -lhvfs
+
 $(DEVMAP_SO): $(DEVMAP).c devmap/DevMap.java
 	@javac -d build devmap/DevMap.java 
 	@javah -d build -classpath build devmap.DevMap 
@@ -116,11 +129,12 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@CLASSPATH=$(CP) javac -d build $(IIE)/metastore/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/tools/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/monitor/*.java
 	#@CLASSPATH=$(CP):build javac -d build $(IIE)/databak/*.java
 	@$(ECHO) -e " " JAR"\t" iie.jar
-	#@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/databak/*.class
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class
+	#@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/databak/*.class 
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/mm/tools/*.class
 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
@@ -141,6 +155,7 @@ runcli : $(MSCLI)
 depend_clean:
 	@$(MAKE) --no-print-directory -C redis-2.8.2 clean
 	@$(MAKE) --no-print-directory -C hiredis clean
+	@$(MAKE) --no-print-directory -C inotify-tools-3.14 clean
 
 clean: depend_clean
 	-@rm -rf $(OBJS) *.o devmap_*.h *.class gmon.out *.jar build/*
