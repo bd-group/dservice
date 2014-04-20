@@ -171,6 +171,83 @@ public class MMSClient {
 		}
 	}
 	
+	public static class LMGetThread extends Thread {
+		private ClientAPI ca;
+		public List<String> keys;
+		public long gnr = 0;
+		public long size = 0;
+		public boolean doCheck;
+		
+		public long begin, end;
+		
+		public LMGetThread(ClientAPI ca, List<String> keys, boolean doCheck) {
+			this.ca = ca;
+			this.keys = keys;
+			this.doCheck = doCheck;
+		}
+		
+		public void run() {
+			begin = System.nanoTime();
+
+			try {
+				Map<String, String> cookies = new HashMap<String, String>();
+				long begin, end;
+				
+				long ttime = 0;
+				do {
+					begin = System.nanoTime();
+					List<byte[]> b = ca.mget(keys, cookies);
+					end = System.nanoTime();
+					ttime += (end - begin);
+					gnr += b.size();
+					long len = 0;
+					for (byte[] v : b) {
+						if (v != null)
+							len += v.length;
+					}
+					System.out.println(Thread.currentThread().getId()+" --> Got nr " + b.size() + " vals len " + len + "B in " + ((end - begin) / 1000.0) + " us, BW is " + (len / ((end - begin) / 1000000.0)) + " KB/s.");
+					System.out.flush();
+					size += len;
+
+					// do check now
+					int idx = Integer.parseInt(cookies.get("idx"));
+					if (doCheck) {
+						for (int i = 0; i < b.size(); i++) {
+							MessageDigest md;
+							md = MessageDigest.getInstance("md5");
+							md.update(b.get(i));
+							byte[] mdbytes = md.digest();
+
+							StringBuffer sb = new StringBuffer();
+							for (int j = 0; j < mdbytes.length; j++) {
+								sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+							}
+							if (!sb.toString().equalsIgnoreCase(keys.get(i + (idx - b.size())).split("@")[1])) {
+								System.out.println(Thread.currentThread().getId()+" -->IDX " + i + " : expect " + keys.get(i) + " got " + sb.toString());
+							}
+						}
+					}
+					//if (idx >= r.size() - 1)
+					if (b.size() == 0)
+						break;
+				} while (true);
+				
+				System.out.println(Thread.currentThread().getId()+" --> cookies: " + cookies);
+				System.out.println(Thread.currentThread().getId()+" -->MGET nr " + keys.size() + " size " + size + "B : BW " + 
+						(size / (ttime / 1000000.0)) + " KB/s");
+				
+			} catch (IOException e) {
+				e.printStackTrace();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			
+			end = System.nanoTime();
+			System.out.println(Thread.currentThread().getId() + " --> MGet " + gnr + " objects in " + 
+					((end - begin) / 1000.0) + " us, GPS is " + (gnr * 1000000000.0) / (end - begin) + ", checked=" + doCheck);
+		}
+	}
+	
 	/**
 	 * @param args
 	 */
@@ -215,7 +292,7 @@ public class MMSClient {
 		int serverPort = 0, redisPort = 0;
 		ClientConf.MODE mode = ClientConf.MODE.NODEDUP;
 		long lpt_nr = 1, lpt_size = 1;
-		int lgt_nr = -1, lgt_th = 1, lpt_th = 1;
+		int lgt_nr = -1, lgt_th = 1, lpt_th = 1, lmgt_th = 1;
 		String lpt_type = "", lgt_type = "";
 		int lmpt_nr = -1,lmpt_pack = -1,lmpt_size = -1;
 		boolean lgt_docheck = false;
@@ -314,6 +391,9 @@ public class MMSClient {
 			}
 			if (o.flag.equals("-lgt_th")) {
 				lgt_th = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-lmgt_th")) {
+				lmgt_th = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-lpt_th")) {
 				lpt_th = Integer.parseInt(o.opt);
@@ -617,6 +697,60 @@ public class MMSClient {
 							": BW " + (size * 1000 / 1024.0 / (dur)) + " KBps," + 
 							" LAT " + ((double)dur / lgt_nr) + " ms");
 				} catch(IOException e){
+					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			if (o.flag.equals("-lmgt")) {
+				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
+				System.out.println("get args: type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck + ", lmgt_th="+lmgt_th);
+				
+				try {
+					Thread.sleep(1000 * 1);
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+				List<String> r;
+				try {
+					String rset = null;
+					long begin, end;
+					
+					begin = System.currentTimeMillis();
+					r = pcInfo.getkeys(mget_type, mget_begin_time);
+					end = System.currentTimeMillis();
+					if (r.size() > 0)
+						rset = r.get(0).split("@")[0];
+					System.out.println("Got nr " + r.size() + " keys from Set " + rset + " in " + ((end - begin)) + " ms.");
+					
+					List<LMGetThread> lgets = new ArrayList<LMGetThread>();
+					int n = r.size()/lmgt_th;
+					for (int i = 0; i < lmgt_th; i++) {
+						
+						lgets.add(new LMGetThread(pcInfo, r.subList(i*n, (i+1)*n), lgt_docheck));
+					}
+					
+					for (LMGetThread t : lgets) {
+						t.start();
+					}
+					long nr = 0, size = 0;
+					for (LMGetThread t : lgets) {
+						try {
+							t.join();
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+						nr += t.gnr;
+						size += t.size;
+					}
+					long dur = System.currentTimeMillis() - begin;
+					System.out.println("LGTA nr " + nr + " size " + size + "B " + 
+							": BW " + (size * 1000 / 1024.0 / (dur)) + " KBps," + 
+							" AVG LAT " + ((double)dur / nr) + " ms");
+					
+				} catch (IOException e) {
 					e.printStackTrace();
 				} catch (Exception e) {
 					e.printStackTrace();

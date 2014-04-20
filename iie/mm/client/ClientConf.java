@@ -25,6 +25,7 @@ public class ClientConf {
 	private int sockPerServer;
 	private boolean autoConf = false;
 	private boolean logDupInfo = true;
+	private int mgetTimeout = 60 * 1000;
 	
 	public static enum MODE {
 		DEDUP, NODEDUP,
@@ -170,5 +171,13 @@ public class ClientConf {
 
 	public void setLogDupInfo(boolean logDupInfo) {
 		this.logDupInfo = logDupInfo;
+	}
+
+	public int getMgetTimeout() {
+		return mgetTimeout;
+	}
+
+	public void setMgetTimeout(int mgetTimeout) {
+		this.mgetTimeout = mgetTimeout;
 	}
 }

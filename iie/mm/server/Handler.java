@@ -180,7 +180,7 @@ public class Handler implements Runnable{
 
 					BlockingQueue<WriteTask> bq = sq.get(set);
 					
-					if(bq != null) {
+					if (bq != null) {
 						// 要删除这个集合,把在这个集合上进行写的线程停掉, null作为标志
 						bq.add(new WriteTask(null, null, null, 0, 0));
 						

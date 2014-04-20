@@ -125,13 +125,13 @@ public class StorePhoto {
 	 */
 	public String storePhoto(String set, String md5, byte[] content, int coff, 
 			int clen) {
-		String returnStr = "+FAIL: unknown error.";
+		String returnStr = "#FAIL: unknown error.";
 		int err = 0;
 		
 		try {
 			reconnectJedis();
 		} catch (IOException e2) {
-			return "+FAIL: MMM Server can not be reached.";
+			return "#FAIL: MMM Server can not be reached.";
 		}
 		if (sha == null) {
 			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
@@ -575,11 +575,11 @@ public class StorePhoto {
 	}
 	
 	public void delSet(String set) {
-		for(String d : diskArray)		//删除每个磁盘上的该集合
+		for (String d : diskArray)		//删除每个磁盘上的该集合
 			delFile(new File(d + "/" + destRoot + set));
 		//删除一个集合后,同时删除关于该集合的全局的上下文
 		for(String d : diskArray)
-			writeContextHash.remove(set+":"+d);			
+			writeContextHash.remove(set+ ":" + d);			
 	}
 	
 	/**

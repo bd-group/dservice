@@ -22,13 +22,14 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Tuple;
 
 public class ClientAPI {
 	private PhotoClient pc;
-	private int index;				
+	private AtomicInteger index = new AtomicInteger(0);				
 	private List<String> keyList = Collections.synchronizedList(new ArrayList<String>());
 	//缓存与服务端的tcp连接,服务端名称到连接的映射
 	private ConcurrentHashMap<String, SocketHashEntry> socketHash;
@@ -105,10 +106,17 @@ public class ClientAPI {
 				if (di > 0)
 					conf.setLogDupInfo(true);
 			}
+			String mgetTimeout = jedis.hget("mm.client.conf", "mgetto");
+			if (mgetTimeout != null) {
+				int to = Integer.parseInt(mgetTimeout);
+				if (to > 0)
+					conf.setMgetTimeout(to * 1000);
+			}
 			System.out.println("Auto conf client with: dupMode=" + dupMode + 
 					", dupNum=" + conf.getDupNum() + 
 					", logDupInfo=" + conf.isLogDupInfo() +  
-					", sockPerServer=" + conf.getSockPerServer());
+					", sockPerServer=" + conf.getSockPerServer() +
+					", mgetTimeout=" + conf.getMgetTimeout());
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -277,8 +285,10 @@ public class ClientAPI {
 	 * 连接服务器,进行必要初始化,并与redis服务器建立连接
 	 * 如果初始化本对象时传入了conf，则使用conf中的redis地址，否则使用参数url
 	 * It is not thread-safe!
-	 * @param url redis的主机名:端口
-	 * @return 
+	 * 
+	 * @param url MM STANDARD PROTOCOL: STL:// or STA://
+	 * @return
+	 * @throws Exception
 	 */
 	public int init(String urls) throws Exception {
 		//与jedis建立连接
@@ -377,9 +387,11 @@ public class ClientAPI {
 	/**
 	 * 同步写,对外提供的接口
 	 * It is thread-safe!
+	 * 
 	 * @param key
 	 * @param content
 	 * @return info to locate the file	
+	 * @throws Exception
 	 */
 	public String put(String key, byte[] content) throws Exception {
 		if (key == null || keyList.size() == 0) {
@@ -393,19 +405,21 @@ public class ClientAPI {
 		
 		// roundrobin select dupnum servers from keyList, if error in put, random select in remain servers
 		Set<String> targets = new TreeSet<String>();
+		int idx = index.getAndIncrement();
+		if (idx < 0) {
+			index.compareAndSet(idx, 0);
+			idx = index.get();
+		}
 		for (int i = 0; i < dupnum; i++) {
-			targets.add(keyList.get((index + i) % keyList.size()));
+			targets.add(keyList.get((idx + i) % keyList.size()));
 		}
-		index++;
-		if (index >= keyList.size()) {
-			index = 0;
-		}
-			
+		
 		return __put(targets, keys, content, nodedup);
 	}
 	
 	/**
-	 * 异步写,对外提供的接口
+	 * 异步写,对外提供的接口（暂缓使用）
+	 * 
 	 * @param set
 	 * @param md5
 	 * @param content
@@ -428,34 +442,36 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * 批量同步写,对外提供的接口
+	 * 批量同步写,对外提供的接口（暂缓使用）
+	 * 
 	 * @param set
 	 * @param md5
 	 * @param content
 	 * @return		
 	 */
-	public String[] mPut(String set,String[] md5s, byte[][] content) throws Exception
-	{	
+	public String[] mPut(String set,String[] md5s, byte[][] content) throws Exception {	
 		if (set == null || md5s.length == 0 || content.length == 0){
 			throw new Exception("set or md5s or contents can not be null.");
 		}else if(md5s.length != content.length)
 			throw new  Exception("arguments length mismatch.");
 		String[] r = null;
+		int idx = index.getAndIncrement();
+		
+		if (idx < 0) {
+			index.compareAndSet(idx, 0);
+			idx = index.get();
+		}
 		for (int i = 0; i < pc.getConf().getDupNum(); i++) {
-//			Socket sock = socketHash.get(keyList.get((index + i) % keyList.size()));
-//			r = pc.mPut(set, md5s, content, sock);
-			SocketHashEntry she = socketHash.get(keyList.get((index + i) % keyList.size()));
+			SocketHashEntry she = socketHash.get(keyList.get((idx + i) % keyList.size()));
 			r = pc.mPut(set, md5s, content, she);
 		}
-		index++;
-		if (index >= keyList.size()){
-			index = 0;
-		}
+
 		return r;
 	}
 	
 	/**
-	 * 批量异步写，对外提供的接口
+	 * 批量异步写，对外提供的接口（暂缓使用）
+	 * 
 	 * @param key	redis中的键以set开头+#+md5的字符串形成key
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
 	 */
@@ -470,11 +486,69 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * It is thread-safe
+	 * 根据info从系统中读取对象内容，重新写入到MMServer上仅当info中活动的MMServer个数小于dupnum时
+	 * （should only be used by system tools）
+	 * 
+	 * @param key
+	 * @param info
+	 * @return
+	 * @throws IOException
+	 * @throws Exception
+	 */
+    public String xput(String key, String info) throws IOException, Exception {                                                                                                                                                                       
+        if (key == null || keyList.size() == 0) {
+            throw new Exception("Key can not be null or no active MMServer (" + keyList.size() + ").");
+        }
+        String[] keys = key.split("@");
+        if (keys.length != 2)
+            throw new Exception("Wrong format of key: " + key);
+
+        byte[] content = this.get(info);
+        boolean nodedup = false;
+        int dupnum = Math.min(keyList.size(), pc.getConf().getDupNum());
+
+        if (content == null) {
+        	throw new IOException("Try to get content of KEY: " + key + " failed.");
+        }
+        // roundrobin select dupnum servers from keyList, if error in put, random select in remain servers
+        TreeSet<String> targets = new TreeSet<String>();
+        Set<String> active = new TreeSet<String>();
+        targets.addAll(keyList);
+
+        String[] infos = info.split("#");
+        for (String s : infos) {
+            long sid = Long.parseLong(s.split("@")[2]);
+            String server = this.getPc().getServers().get(sid);
+            if (server != null) {
+                targets.remove(server);
+                active.add(server);
+            }
+        }
+        if (active.size() >= dupnum)
+        	return info;
+        if (targets.size() == 0)
+            throw new IOException("No more copy can be made: " + key + " --> " + info);
+        else if (targets.size() > (dupnum - active.size())) {
+        	Random rand = new Random();
+        	String[] tArray = targets.toArray(new String[0]);
+        	targets.clear();
+        	for (int i = 0; i < dupnum - active.size(); i++) {
+        		targets.add(tArray[rand.nextInt(tArray.length)]);
+        	}
+        }
+
+        return __put(targets, keys, content, nodedup);
+    }
+	
+	/**
 	 * 同步取，对外提供的接口
+	 * It is thread-safe
+	 * 
 	 * @param key	或者是set@md5,或者是文件元信息，可以是拼接后的
 	 * @return		图片内容,如果图片不存在则返回长度为0的byte数组
-	 */
+     * @throws IOException
+     * @throws Exception
+     */
 	public byte[] get(String key) throws IOException, Exception {
 		if (key == null)
 			throw new Exception("key can not be null.");
@@ -490,8 +564,14 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * It is thread-safe
 	 * 批量读取某个集合的所有key
+	 * It is thread-safe
+	 *
+	 * @param type
+	 * @param begin_time
+	 * @return
+	 * @throws IOException
+	 * @throws Exception
 	 */
 	public List<String> getkeys(String type, long begin_time) throws IOException, Exception {
 		String prefix;
@@ -527,8 +607,8 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * it is thread safe.
 	 * 批量获取keys对应的所有多媒体对象内容
+	 * it is thread safe.
 	 * 
 	 * @param keys
 	 * @param cookies
@@ -553,6 +633,9 @@ public class ClientAPI {
 		return pc.mget(keys, cookies);
 	}
 	
+	/**
+	 * 退出多媒体客户端，释放内部资源
+	 */
 	public void quit() {
 		if (pc.getRf() != null) {
 			pc.getRf().putInstance(jedis);

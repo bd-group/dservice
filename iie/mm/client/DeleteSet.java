@@ -167,7 +167,7 @@ public class DeleteSet {
 	}
 	
 	public void closeJedis() {
-		if(jedis != null)
+		if (jedis != null)
 			jedis.quit();
 	}
 }
