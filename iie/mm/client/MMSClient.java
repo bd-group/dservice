@@ -233,7 +233,7 @@ public class MMSClient {
 				} while (true);
 				
 				System.out.println(Thread.currentThread().getId()+" --> cookies: " + cookies);
-				System.out.println(Thread.currentThread().getId()+" -->MGET nr " + keys.size() + " size " + size + "B : BW " + 
+				System.out.println(Thread.currentThread().getId()+" --> MGET nr " + keys.size() + " size " + size + "B : BW " + 
 						(size / (ttime / 1000000.0)) + " KB/s");
 				
 			} catch (IOException e) {
@@ -707,12 +707,6 @@ public class MMSClient {
 				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
 				System.out.println("get args: type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck + ", lmgt_th="+lmgt_th);
 				
-				try {
-					Thread.sleep(1000 * 1);
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
 				List<String> r;
 				try {
 					String rset = null;
@@ -726,10 +720,9 @@ public class MMSClient {
 					System.out.println("Got nr " + r.size() + " keys from Set " + rset + " in " + ((end - begin)) + " ms.");
 					
 					List<LMGetThread> lgets = new ArrayList<LMGetThread>();
-					int n = r.size()/lmgt_th;
+					int n = r.size() / lmgt_th;
 					for (int i = 0; i < lmgt_th; i++) {
-						
-						lgets.add(new LMGetThread(pcInfo, r.subList(i*n, (i+1)*n), lgt_docheck));
+						lgets.add(new LMGetThread(pcInfo, r.subList(i * n, (i + 1) * n), lgt_docheck));
 					}
 					
 					for (LMGetThread t : lgets) {
@@ -836,12 +829,6 @@ public class MMSClient {
 				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
 				System.out.println("get args: " + set + ", type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck);
 				
-				try {
-					Thread.sleep(1000 * 1);
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
 				List<String> r;
 				try {
 					String rset = null;
