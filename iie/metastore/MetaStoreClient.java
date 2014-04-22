@@ -681,6 +681,7 @@ public class MetaStoreClient {
 					e.printStackTrace();
 					System.exit(0);
 				}
+			tcli.client.setTimeout(120);
 			fgts.add(new FgetThread(tcli, fmap, from + i * ((to - from) / lfdc_thread), 
 					from + (i + 1) * ((to - from) / lfdc_thread), getlen));
 		}
@@ -1929,6 +1930,7 @@ public class MetaStoreClient {
 				Double target_ratio = 0.15;
 				List<ScrubRule> srl = new ArrayList<ScrubRule>();
 				
+				cli.client.setTimeout(120);
 				if (scrub_rule != null) {
 					String[] rules = scrub_rule.split(";");
 					for (int i = 0; i < rules.length; i++) {
