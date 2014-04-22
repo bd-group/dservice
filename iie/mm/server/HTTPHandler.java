@@ -367,6 +367,7 @@ public class HTTPHandler extends AbstractHandler {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch (NumberFormatException e){
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
