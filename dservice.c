@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-04-18 12:38:57 macan>
+ * Time-stamp: <2014-04-22 13:36:27 macan>
  *
  */
 
@@ -1749,6 +1749,7 @@ static void *__del_thread_main(void *args)
             if (f == NULL) {
                 hvfs_err(lib, "popen(%s) failed w/ %s\n",
                          cmd, strerror(errno));
+                pos->status = DEL_STATE_ERROR;
                 continue;
             } else {
                 char *line = NULL;
@@ -1924,6 +1925,8 @@ static void *__rep_thread_main(void *args)
             if (f == NULL) {
                 hvfs_err(lib, "popen(%s) failed w/ %s\n",
                          cmd, strerror(errno));
+                /* change state to ERROR? */
+                pos->status = REP_STATE_ERROR;
                 continue;
             } else {
                 char *line = NULL;
