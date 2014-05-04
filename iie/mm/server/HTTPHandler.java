@@ -387,7 +387,7 @@ public class HTTPHandler extends AbstractHandler {
 				b = (num == null ? 0 : num.intValue()) / idn;
 				c = a + b == 0 ? 0 : b / (double)(a + b);
 				if (a != 0 && tnum.get(key) != null) d = tnum.get(key) / (double)a; else d = 0.0;
-				page.append("<td>" + a + " <br> "+ b + "<br>" + (String.format("%.2f%%", c * 100)) + "<br>" + (String.format("%.2f%%", d * 100)) + "</td>");
+				page.append("<td>" + a + "<br>"+ b + "<br>" + (String.format("%.2f%%", c * 100)) + "<br>" + (String.format("%.2f%%", d * 100)) + "</td>");
 			}
 		}
 		page.append("</table></body> </html>");
@@ -567,7 +567,7 @@ public class HTTPHandler extends AbstractHandler {
 				d = dayreal2.get(time).get(getMMTypeSymbol(type));
 				c = a == 0 ? 0 : f/(double)a;
 				g = (b + d) == 0 ? 0 : ((double)b / (d + b));
-				page.append("<td>" + a + "<br>" + d +" <br> "+ f + " <br> "+ b + "<br>" + 
+				page.append("<td>" + a + "<br>" + d +"<br> "+ f + "<br> "+ b + "<br>" + 
 						(String.format("%.2f%%", c * 100)) + "<br>" + 
 						(String.format("%.2f%%", 100 * g)) + "</td>");
 			}
