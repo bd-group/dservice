@@ -295,12 +295,34 @@ public class MetaStoreClient {
 			return "null";
 		
 		for (SplitValue sv : values) {
+			long value = 0;
+			try {
+				value = Long.parseLong(sv.getValue());
+			} catch (Exception e) {
+				value = -1;
+			}
+			String date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(value * 1000));
 			keys += sv.getSplitKeyName() + ",";
-			vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + ",";
+			if (value >= 0)
+				vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + "(" + date + "),";
+			else
+				vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + ",";
 		}
 		r += "KEYS [" + keys + "], VALS [" + vals + "]";
 		
 		return r;
+	}
+	
+	public static String toStringSFLVS(int vs) {
+		switch (vs) {
+		case MetaStoreConst.MFileLocationVisitStatus.OFFLINE:
+			return "offline";
+		case MetaStoreConst.MFileLocationVisitStatus.ONLINE:
+			return "online";
+		case MetaStoreConst.MFileLocationVisitStatus.SUSPECT:
+			return "suspect";
+		}
+		return "unknown";
 	}
 	
 	public static String toStringSFile(SFile file) {
@@ -324,7 +346,7 @@ public class MetaStoreClient {
 			for (SFileLocation loc : file.getLocations()) {
 				r += loc.getNode_name() + ":" + loc.getDevid() + ":"
 						+ loc.getLocation() + ":" + loc.getRep_id() + ":"
-						+ loc.getUpdate_time() + ":" + loc.getVisit_status()
+						+ loc.getUpdate_time() + ":" + toStringSFLVS(loc.getVisit_status())
 						+ ":" + loc.getDigest() + "\n";
 			}
 		} else {
@@ -337,11 +359,15 @@ public class MetaStoreClient {
 	
 	public static class FgetThread extends Thread {
 		private MetaStoreClient cli;
+		public String serverName;
+		public int serverPort;
 		public long begin, end, sum;
 		public boolean getlen = true;
 		public TreeMap<Long, Map<String, FileStat>> fmap;
 		
-		public FgetThread(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, long begin, long end, boolean getlen) {
+		public FgetThread(MetaStoreClient cli, String serverName, int serverPort, 
+				TreeMap<Long, Map<String, FileStat>> fmap, long begin, long end, 
+				boolean getlen) {
 			this.cli = cli;
 			this.begin = begin;
 			this.end = end;
@@ -371,6 +397,10 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				} catch (TException e) {
 					e.printStackTrace();
+					cli = null;
+					while (cli == null) {
+						cli = __reconnect(serverName, serverPort);
+					}
 				}
 				sum = i + 1000;
 			}
@@ -660,6 +690,29 @@ public class MetaStoreClient {
 		}
 	}
 	
+	public static MetaStoreClient __reconnect(String serverName, int serverPort) {
+		MetaStoreClient tcli = null;
+		int err = 0;
+
+		if (serverName == null)
+			try {
+				tcli = new MetaStoreClient();
+			} catch (MetaException e) {
+				e.printStackTrace();
+				err = -1;
+			}
+		else
+			try {
+				tcli = new MetaStoreClient(serverName, serverPort);
+			} catch (MetaException e) {
+				e.printStackTrace();
+				err = -1;
+			}
+		if (err == 0)
+			tcli.client.setTimeout(120);
+		return tcli;
+	}
+	
 	public static void update_fmap(MetaStoreClient cli, int lfdc_thread, String serverName, int serverPort,
 			TreeMap<Long, Map<String, FileStat>> fmap, long from, long to, 
 			boolean getlen) {
@@ -682,7 +735,8 @@ public class MetaStoreClient {
 					System.exit(0);
 				}
 			tcli.client.setTimeout(120);
-			fgts.add(new FgetThread(tcli, fmap, from + i * ((to - from) / lfdc_thread), 
+			fgts.add(new FgetThread(tcli, serverName, serverPort, fmap, 
+					from + i * ((to - from) / lfdc_thread), 
 					from + (i + 1) * ((to - from) / lfdc_thread), getlen));
 		}
 		for (FgetThread t : fgts) {
@@ -2145,6 +2199,10 @@ public class MetaStoreClient {
 						break;
 					} catch (TException e1) {
 						e1.printStackTrace();
+						cli = null;
+						while (cli == null) {
+							cli = __reconnect(serverName, serverPort);
+						}
 						break;
 					}
 				}
