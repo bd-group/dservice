@@ -32,6 +32,7 @@ public class ProfileTimerTask extends TimerTask {
 	private long lastDl = 0;
 	private long lastDnr = 0;
 	private long lastTs = System.currentTimeMillis();
+	private long lastRecycleTs = System.currentTimeMillis();
 	private String profileDir = "log/";
 	private Jedis jedis;
 	private String hbkey;
@@ -114,11 +115,16 @@ public class ProfileTimerTask extends TimerTask {
 		String line = (System.currentTimeMillis() / 1000) + "," + wbw + "," + rbw + ",";
 		
 		if ((dl - lastDl) == 0) {
-			info += ", no read requests.";
+			info += ", no read requests";
 			line += "0,";
 		} else {
 			info += ", avg read latency " + (double)(dl - lastDl) / (dnr - lastDnr) + " ms";
 			line += (double)(dl - lastDl) / (dnr - lastDnr) + ",";
+		}
+		if (cur - lastRecycleTs >= 5 * 60 * 1000) {
+			info += ", recycle Write " + StorePhoto.recycleContextHash() + 
+					", Read " + StorePhoto.recycleRafHash();
+			lastRecycleTs = cur;
 		}
 		System.out.println(info);
 		

@@ -27,6 +27,8 @@ public class ServerConf {
 	public static int DEFAULT_REQNR_TO_FLUSH = 15;
 	public static int DEFAULT_HTTP_PORT = 20202;
 	public static int DEFAULT_SYSINFOSTAT_PORT = 19888;
+	public static long DEFAULT_WRITE_FD_RECYCLE_TO = 4 * 3600 * 1000;
+	public static long DEFAULT_READ_FD_RECYCLE_TO = 2 * 3600 * 1000;
 	
 	private boolean use_junixsocket = false;
 	
@@ -40,6 +42,9 @@ public class ServerConf {
 	
 	private int flush_interval = DEFAULT_FLUSH_INTERVAL;
 	private int reqnr_to_flush = DEFAULT_REQNR_TO_FLUSH;
+	
+	private long write_fd_recycle_to = DEFAULT_WRITE_FD_RECYCLE_TO;
+	private long read_fd_recycle_to = DEFAULT_READ_FD_RECYCLE_TO;
 	
 	public static long serverId = -1l;
 	// this is http servers
@@ -284,6 +289,22 @@ public class ServerConf {
 
 	public void setHTTPOnly(boolean isHTTPOnly) {
 		this.isHTTPOnly = isHTTPOnly;
+	}
+
+	public long getWrite_fd_recycle_to() {
+		return write_fd_recycle_to;
+	}
+
+	public void setWrite_fd_recycle_to(long write_fd_recycle_to) {
+		this.write_fd_recycle_to = write_fd_recycle_to;
+	}
+
+	public long getRead_fd_recycle_to() {
+		return read_fd_recycle_to;
+	}
+
+	public void setRead_fd_recycle_to(long read_fd_recycle_to) {
+		this.read_fd_recycle_to = read_fd_recycle_to;
 	}
 	
 }

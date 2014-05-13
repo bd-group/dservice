@@ -64,6 +64,7 @@ public class MMServer {
 		Set<String> sentinels = new HashSet<String>();
 		String outsideIP = null;
 		boolean isSetOutsideIP = false;
+		int wto = -1, rto = -1;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -82,6 +83,8 @@ public class MMServer {
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				System.out.println("-ip   : IP hint exported to outside service.");
 				System.out.println("-http : http mode only.");
+				System.out.println("-wto  : write fd time out seconds.");
+				System.out.println("-rto  : read  fd time out seconds.");
 				
 				System.exit(0);
 			}
@@ -183,6 +186,20 @@ public class MMServer {
 					sentinels.add(stls[i]);
 				}
 			}
+			if (o.flag.equals("-wto")) {
+				if (o.opt == null) {
+					System.out.println("-wto write_time_out_seconds");
+					System.exit(0);
+				}
+				wto = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-rto")) {
+				if (o.opt == null) {
+					System.out.println("-rto read_time_out_seconds");
+					System.exit(0);
+				}
+				rto = Integer.parseInt(o.opt);
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -227,6 +244,10 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
+			if (wto > 0)
+				conf.setWrite_fd_recycle_to(wto * 1000);
+			if (rto > 0)
+				conf.setRead_fd_recycle_to(rto * 1000);
 			if (isSetOutsideIP)
 				conf.setOutsideIP(outsideIP);
 			if (SysInfoStatServerName != null) {

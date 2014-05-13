@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -14,6 +15,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Response;
@@ -29,11 +31,14 @@ public class StorePhoto {
 	private Set<String> storeArray = new HashSet<String>();
 	private String[] diskArray;						//代表磁盘的数组
 	private long blocksize;							//文件块的大小，单位是B
+	private static long writeTo = -1;
+	private static long readTo = -1;
 	
 	//一级的hash,集合 + 磁盘->上下文
 	//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
-	private static Map<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();		
-	private Map<String, RandomAccessFile> readRafHash;			//读文件时的随机访问流，用哈希来缓存
+	private static ConcurrentHashMap<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();
+	//读文件时的随机访问流，用哈希来缓存
+	private static ConcurrentHashMap<String, ReadContext> readRafHash = new ConcurrentHashMap<String, ReadContext>();
 	private final ThreadLocal<Jedis> jedis =
          new ThreadLocal<Jedis>() {
              @Override protected Jedis initialValue() {
@@ -57,11 +62,100 @@ public class StorePhoto {
 			this.info = info;
 		}
 	}
+	
+	public static int recycleContextHash() {
+		List<String> toDel = new ArrayList<String>();
+		int nr = 0;
+		
+		for (Map.Entry<String, StoreSetContext> entry : writeContextHash.entrySet()) {
+			if (entry.getValue().openTs > 0 && 
+					System.currentTimeMillis() - entry.getValue().openTs > writeTo) {
+				toDel.add(entry.getKey());
+			}
+		}
+		for (String key : toDel) {
+			StoreSetContext ssc = writeContextHash.get(key);
+			if (ssc != null) {
+				synchronized (ssc) {
+					if (ssc.raf != null)
+						try {
+							ssc.raf.close();
+							ssc.raf = null;
+							nr++;
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+				}
+			}
+		}
+		
+		return nr;
+	}
+	
+	public static int recycleRafHash() {
+		List<String> toDel = new ArrayList<String>();
+		int nr = 0;
+		
+		for (Map.Entry<String, ReadContext> entry : readRafHash.entrySet()) {
+			if (entry.getValue().accessTs > 0 && 
+					System.currentTimeMillis() - entry.getValue().accessTs > readTo) {
+				toDel.add(entry.getKey());
+			}
+		}
+		for (String key : toDel) {
+			ReadContext rc = readRafHash.get(key);
+			if (rc != null) {
+				try {
+					nr += rc.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		return nr;
+	}
+	
+	public class ReadContext {
+		public long accessTs = -1;
+		public RandomAccessFile raf = null;
+		public AtomicInteger ref = new AtomicInteger(0);
+		public String name, mode;
+		
+		public ReadContext(String name, String mode) throws FileNotFoundException {
+			raf = new RandomAccessFile(name, mode);
+			this.name = name;
+			this.mode = mode;
+		}
+		
+		public void updateAccessTs() {
+			accessTs = System.currentTimeMillis();
+		}
+		
+		public int close() throws IOException {
+			synchronized (this) {
+				if (raf != null) {
+					raf.close();
+					raf = null;
+					return 1;
+				}
+			}
+			return 0;
+		}
+		
+		public void reopen() throws IOException {
+			synchronized (this) {
+				if (raf == null) {
+					raf = new RandomAccessFile(name, mode);
+				}
+			}
+		}
+	}
 
 	public class StoreSetContext {
 		public String key;
 		public String disk;
 		
+		public long openTs = -1;
 		//当前可写的块
 		private long curBlock = -1;
 		private long offset = 0;
@@ -103,7 +197,8 @@ public class StorePhoto {
 		//jedis = new RedisFactory(conf).getDefaultInstance();
 
 		localHostName = conf.getNodeName();
-		readRafHash = new ConcurrentHashMap<String, RandomAccessFile>();
+		writeTo = conf.getWrite_fd_recycle_to();
+		readTo = conf.getRead_fd_recycle_to();
 	}
 	
 	public void reconnectJedis() throws IOException {
@@ -151,14 +246,15 @@ public class StorePhoto {
 		//随机选一个磁盘
 		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
-		synchronized (writeContextHash) {
+
+		do {
 			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
-			
-			if (ssc == null) {
-				ssc = new StoreSetContext(set, diskArray[diskid]);
-				writeContextHash.put(ssc.key, ssc);
-			}
-		}
+			if (ssc != null)
+				break;
+			ssc = new StoreSetContext(set, diskArray[diskid]);
+			ssc = writeContextHash.putIfAbsent(ssc.key, ssc);
+		} while (ssc == null);
+		
 		synchronized (ssc) {
 			//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
 			//用curBlock缓存当前可写的块，减少查询jedis的次数
@@ -180,18 +276,20 @@ public class StorePhoto {
 						ssc.offset = 0;
 					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.openTs = System.currentTimeMillis();
 					ssc.raf.seek(ssc.offset);
 				}
 				if (ssc.offset + content.length > blocksize) {
 					ssc.curBlock++;
 					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 					//如果换了一个新块,则先把之前的关掉
-					if(ssc.raf != null)
+					if (ssc.raf != null)
 						ssc.raf.close();
-					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 					//当前可写的块号加一
 					jedis.get().incr(set + ".blk." + localHostName + "." + ssc.disk);
 					ssc.offset = 0;
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.openTs = System.currentTimeMillis();
 				}
 				
 				//在每个文件前面写入它的md5和offset length，从而恢复元数据
@@ -214,6 +312,11 @@ public class StorePhoto {
 				//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 				rVal.append(diskArray[diskid]);
 				
+				if (ssc.raf == null) {
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.openTs = System.currentTimeMillis();
+					ssc.raf.seek(ssc.offset);
+				}
 				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
@@ -311,14 +414,14 @@ public class StorePhoto {
 		String[] returnVal = new String[content.length];
 		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
-		synchronized (writeContextHash) {
+		
+		do {
 			ssc = writeContextHash.get(set + ":" + diskArray[diskid]);
-
-			if (ssc == null) {
-				ssc = new StoreSetContext(set, diskArray[diskid]);
-				writeContextHash.put(ssc.key, ssc);
-			}
-		}
+			if (ssc != null)
+				break;
+			ssc = new StoreSetContext(set, diskArray[diskid]);
+			ssc = writeContextHash.putIfAbsent(ssc.key, ssc);
+		} while (ssc == null);
 
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
 		long init_offset = 0;
@@ -354,6 +457,7 @@ public class StorePhoto {
 							ssc.offset = 0;
 						}
 						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						ssc.openTs = System.currentTimeMillis();
 						ssc.raf.seek(ssc.offset);
 					}
 
@@ -366,11 +470,12 @@ public class StorePhoto {
 							ssc.raf.close();
 							baos.reset();
 						}
-						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 						// 当前可写的块号加一
 						jedis.get().incr(set + ".blk." + localHostName + "."
 								+ ssc.disk);
 						ssc.offset = 0;
+						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+						ssc.openTs = System.currentTimeMillis();
 					}
 
 					// 在每个文件前面写入它的md5和offset length，从而恢复元数据
@@ -421,6 +526,11 @@ public class StorePhoto {
 			}
 			// do write now
 			try {
+				if (ssc.raf == null) {
+					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
+					ssc.openTs = System.currentTimeMillis();
+					ssc.raf.seek(ssc.offset);
+				}
 				ssc.raf.write(baos.toByteArray());
 			} catch (IOException e) {
 				e.printStackTrace();
@@ -545,20 +655,30 @@ public class StorePhoto {
 			throw new RedirectException(Long.parseLong(infos[2]), info);
 		}
 		String path = infos[6] + "/" + destRoot + infos[1] + "/b" + infos[3];
-		RandomAccessFile readr = null;
+		ReadContext readr = null;
 		byte[] content = new byte[Integer.parseInt(infos[5])];
 	
 		try {
 			//用哈希缓存打开的文件随机访问流
-			if (readRafHash.containsKey(path)) {
+			do {
 				readr = readRafHash.get(path);
-			} else {
+				if (readr != null)
+					break;
 				//构造路径时加上磁盘 
-				readr = new RandomAccessFile(path, "r");
-				readRafHash.put(path, readr);
+				ReadContext nreadr = new ReadContext(path, "r");
+				readr = readRafHash.putIfAbsent(path, nreadr);
+				if (readr != null) {
+					nreadr.close();
+				}
+			} while (readr == null);
+			
+			synchronized (readr) {
+				if (readr.raf == null)
+					readr.reopen();
+				readr.raf.seek(Long.parseLong(infos[4]));
+				readr.raf.read(content);
+				readr.updateAccessTs();
 			}
-			readr.seek(Long.parseLong(infos[4]));
-			readr.read(content);
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 			return null;
@@ -567,6 +687,7 @@ public class StorePhoto {
 			return null;
 		} catch (IOException e) {
 			e.printStackTrace();
+			readRafHash.remove(path);
 			return null;
 		}
 		ServerProfile.updateRead(content.length, System.currentTimeMillis() - start);
@@ -747,16 +868,9 @@ public class StorePhoto {
 	//关闭jedis连接,关闭文件访问流
 	public void close() {
 		try {
-			//该变量是静态的,因此这段代码会关闭所有的raf,导致其他线程在写入时异常
-
-			for (Map.Entry<String, RandomAccessFile> entry : readRafHash.entrySet()) {
-				entry.getValue().close();
-			}
-		} catch(IOException e){
-			e.printStackTrace();
 		} finally {
 			if (jedis.get() != null)
-				RedisFactory.putInstance(jedis.get());
+				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 	}
 	
