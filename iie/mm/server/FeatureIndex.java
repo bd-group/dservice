@@ -49,7 +49,7 @@ public class FeatureIndex {
 	public static IndexWriter writer = null;
 	public static Analyzer analyzer = null;
 	
-	public static IndexReader reader = null;
+	public static DirectoryReader reader = null;
 	public static IndexSearcher searcher = null;
 	
 	public long reopenTo = 10 * 1000;
@@ -106,11 +106,6 @@ public class FeatureIndex {
 			if (System.currentTimeMillis() - reopenTs >= reopenTo) {
 				try {
 					writer.commit();
-					searcher = null;
-					if (reader != null) {
-						reader.close();
-						reader = null;
-					}
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
@@ -136,12 +131,14 @@ public class FeatureIndex {
 	 * @return
 	 * @throws IOException 
 	 */
-	public static List<String> getObject(String key, String field, int maxEdits) throws IOException {
+	public static List<String> getObject(String key, String field, int maxEdits, int bitDiffInBlock) throws IOException {
 		List<String> r = new ArrayList<String>();
 		HashMap<Integer, Integer> m = new HashMap<Integer, Integer>();
 		
 		if (reader == null) {
 			reader = DirectoryReader.open(dir);
+		} else {
+			reader = DirectoryReader.openIfChanged(reader, writer, true);
 		}
 		if (searcher == null) {
 			searcher = new IndexSearcher(reader);
@@ -150,7 +147,7 @@ public class FeatureIndex {
 		long beginTs = System.currentTimeMillis();
 		for (int i = 0; i < 16; i++) {
 			//Query q = new TermQuery(new Term(field + "_" + i, key.substring(i, i + 4)));
-			Query q = new FuzzyQuery(new Term(field + "_" + i, key.substring(i, i + 4)), 0);
+			Query q = new FuzzyQuery(new Term(field + "_" + i, key.substring(i, i + 4)), bitDiffInBlock);
 			ScoreDoc[] hits = searcher.search(q, searcher.getIndexReader().maxDoc()).scoreDocs;
 			for (int j = 0; j < hits.length; j++) {
 				System.out.println(i + "\t" + j + "\t" + hits[j].doc + "\t" + hits[j].score);

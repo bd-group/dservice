@@ -893,7 +893,10 @@ public class HTTPHandler extends AbstractHandler {
 				// 解析request请求
 				Iterator<FileItem> iter = items.iterator();
 				int distance = 0;
+				int bitDiff = 0;
 				BufferedImage img = null;
+				String filePath = "INVALID";
+				
 				while (iter.hasNext()) {
 					FileItem item = (FileItem) iter.next();
 					if (item.isFormField()) { 				// 如果是表单域 ，就是非文件上传元素
@@ -902,10 +905,13 @@ public class HTTPHandler extends AbstractHandler {
 						// System.out.println(name+"   "+value);
 						if (name.equals("distance"))
 							distance = Integer.parseInt(value);
+						if (name.equals("BitDiff")) 
+							bitDiff = Integer.parseInt(value);
 					} else {
 						String fieldName = item.getFieldName(); // 文件域中name属性的值
 						String fileName = item.getName(); // 文件的全路径，绝对路径名加文件名
 						// okResponse(baseRequest, response, item.get());
+						filePath = fileName;
 						try {
 							img = ImageMatch.readImage(item.get());
 						} catch (IOException e) {
@@ -917,17 +923,17 @@ public class HTTPHandler extends AbstractHandler {
 							badResponse(baseRequest, response,"#FAIL:the file uploaded probably is not an image.");
 							return;
 						}
-
 					}
 				}
 				
-				List<String> dk = sp.imageMatch(img, distance);
-				String page = "<HTML> <HEAD> <TITLE> MM Browser </TITLE> </HEAD>"
-						+ "<BODY><H1> match result </H1><UL>";
+				List<String> dk = sp.imageMatch(img, distance, bitDiff);
+				String page = "<HTML><HEAD> <TITLE> MM Object Search </TITLE> </HEAD>"
+						+ "<BODY><H1>Low Frequency Search Results: </H1><UL>" 
+						+ "<H2>File '" + filePath + "' matches " + dk.size() + " files.</H2>";
 				Iterator<String> iter2 = dk.iterator();
 				while (iter2.hasNext()) {
 					String key = iter2.next();
-					page += "<li>" + "<br><img width=\"100\" height=\"100\" src=\"http://"
+					page += "<li>" + key + "<br><img width=\"100\" height=\"100\" src=\"http://"
 							+ request.getLocalAddr() + ":"
 							+ request.getLocalPort() + "/get?key="
 							+ key + "\"> </li>";
@@ -943,7 +949,6 @@ public class HTTPHandler extends AbstractHandler {
 				badResponse(baseRequest, response, e.getMessage());
 			}
 		}
-
 	}
 
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 

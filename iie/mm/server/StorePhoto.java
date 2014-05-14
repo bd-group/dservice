@@ -888,13 +888,13 @@ public class StorePhoto {
 	 * @return
 	 * @throws IOException 
 	 */
-	public List<String> imageMatch(BufferedImage bi, int d) throws IOException {
+	public List<String> imageMatch(BufferedImage bi, int d, int bitDiff) throws IOException {
 		List<String> r = new ArrayList<String>();
 		
 		for (String feature : conf.getFeatures()) {
 			if (feature.equalsIgnoreCase(ServerConf.FeatureType.PHASH_IMAGE_ES)) {
 				String hc = new ImagePHash().getHash(bi);
-				r.addAll(FeatureIndex.getObject(hc, feature, d));
+				r.addAll(FeatureIndex.getObject(hc, feature, d, bitDiff));
 			}
 		}
 		
