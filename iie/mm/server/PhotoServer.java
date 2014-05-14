@@ -72,6 +72,18 @@ public class PhotoServer {
 		server.setHandler(new HTTPHandler(conf));
 		server.start();
 		
+		//计算图片hash值的线程
+		ImageMatch im = new ImageMatch(conf);
+		im.startWork(4);
+		
+		// shutdown hook
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+			@Override
+			public void run() {
+				ImageMatch.fi.close();
+			}
+		});
+
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();

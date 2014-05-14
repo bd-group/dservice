@@ -1,0 +1,59 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>Image Match</title>
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+</head>
+
+<body>
+
+	<div id="container">
+
+
+<!-- Begin Promotion Box -->
+		<div id="promo">
+		
+			
+			<div class="promocontent">
+			
+			<h1>Image Match</h1>
+			<p>Select JPEG or PNG images to compare.</p>
+			<form method="post" action="/im/" onsubmit="return check_form(this)" enctype="multipart/form-data">
+			<p>distance : 
+			<select name="distance">
+				<option value="1">6.25%</option>
+				<option value="2">12.5%</option>
+				<option value="4" selected>25%</option>
+				<option value="8">50%</option>
+				<option value="12">75%</option>
+				<option value="16">100%-</option>
+			</select>
+				
+			</p>	
+			<p>Image : <input type="file" name="file1"> </p>
+			<p><input type="submit" name="submit" value="Submit" /></p>
+			</form>
+			</div>
+			
+		
+		</div>
+<!-- End Promotion Box -->
+
+
+</body>
+<script type="text/javascript">
+
+function check_form(thisform)
+{
+	if(thisform.file1.value==null || thisform.file1.value=="")
+	{
+		alert("please choose an image.");
+		return false;
+	}
+}
+</script>
+</html>
+

@@ -1,5 +1,6 @@
 package iie.mm.server;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -348,6 +349,9 @@ public class StorePhoto {
 		try {
 			returnStr = rVal.toString();
 			returnStr = jedis.get().evalsha(sha, 1, set, md5, returnStr).toString();
+			for (String feature : conf.getFeatures()) {
+				ImageMatch.add(new ImageMatch.ImgKeyEntry(feature, content, coff, clen, set, md5));
+			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -545,6 +549,9 @@ public class StorePhoto {
 		try {
 			for (int i = 0; i < content.length; i++) {
 				returnVal[i] = jedis.get().evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
+				for (String feature : conf.getFeatures()) {
+					ImageMatch.add(new ImageMatch.ImgKeyEntry(feature, content[i], 0, content[i].length, set, md5[i]));
+				}
 			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in mstoreObject.");
@@ -874,4 +881,24 @@ public class StorePhoto {
 		}
 	}
 	
+	/**
+	 * 
+	 * @param feature
+	 * @param d
+	 * @return
+	 * @throws IOException 
+	 */
+	public List<String> imageMatch(BufferedImage bi, int d) throws IOException {
+		List<String> r = new ArrayList<String>();
+		
+		for (String feature : conf.getFeatures()) {
+			if (feature.equalsIgnoreCase(ServerConf.FeatureType.PHASH_IMAGE_ES)) {
+				String hc = new ImagePHash().getHash(bi);
+				r.addAll(FeatureIndex.getObject(hc, feature, d));
+			}
+		}
+		
+		return r;
+	}
+
 }

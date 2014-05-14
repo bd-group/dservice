@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import iie.mm.server.ServerConf.FeatureType;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.HashSet;
@@ -244,6 +246,11 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
+			conf.addToFeatures(FeatureType.PHASH_IMAGE_ES);
+			if (conf.getStoreArray().size() > 0) {
+				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);
+			} else
+				conf.setFeatureIndexPath(".");
 			if (wto > 0)
 				conf.setWrite_fd_recycle_to(wto * 1000);
 			if (rto > 0)

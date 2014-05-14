@@ -3,6 +3,7 @@ package iie.mm.server;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,9 @@ public class ServerConf {
 	private long write_fd_recycle_to = DEFAULT_WRITE_FD_RECYCLE_TO;
 	private long read_fd_recycle_to = DEFAULT_READ_FD_RECYCLE_TO;
 	
+	private String featureIndexPath = null;
+	private List<String> features = new ArrayList<String>(); 
+	
 	public static long serverId = -1l;
 	// this is http servers
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
@@ -57,6 +61,10 @@ public class ServerConf {
 	
 	public enum RedisMode {
 		SENTINEL, STANDALONE,
+	}
+	
+	public class FeatureType {
+		public static final String PHASH_IMAGE_ES = "phash_imag_es";
 	}
 	
 	private RedisMode redisMode;
@@ -305,6 +313,22 @@ public class ServerConf {
 
 	public void setRead_fd_recycle_to(long read_fd_recycle_to) {
 		this.read_fd_recycle_to = read_fd_recycle_to;
+	}
+
+	public String getFeatureIndexPath() {
+		return featureIndexPath;
+	}
+
+	public void setFeatureIndexPath(String featureIndexPath) {
+		this.featureIndexPath = featureIndexPath + "/feature_index";
+	}
+
+	public List<String> getFeatures() {
+		return features;
+	}
+
+	public void addToFeatures(String features) {
+		this.features.add(features);
 	}
 	
 }
