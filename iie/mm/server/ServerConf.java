@@ -1,5 +1,8 @@
 package iie.mm.server;
 
+import iie.mm.client.Feature.FeatureType;
+import iie.mm.client.Feature.FeatureTypeString;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,7 +51,7 @@ public class ServerConf {
 	private long read_fd_recycle_to = DEFAULT_READ_FD_RECYCLE_TO;
 	
 	private String featureIndexPath = null;
-	private List<String> features = new ArrayList<String>(); 
+	private static List<FeatureType> features = new ArrayList<FeatureType>();
 	
 	public static long serverId = -1l;
 	// this is http servers
@@ -63,14 +66,12 @@ public class ServerConf {
 		SENTINEL, STANDALONE,
 	}
 	
-	public class FeatureType {
-		public static final String PHASH_IMAGE_ES = "phash_imag_es";
-	}
-	
 	private RedisMode redisMode;
 	private Set<String> sentinels;
 	private String outsideIP;
 	private boolean isHTTPOnly = false;
+	
+	private boolean indexFeatures = false;
 
 	public ServerConf(int httpPort) throws Exception {
 		this.nodeName = InetAddress.getLocalHost().getHostName();
@@ -323,12 +324,33 @@ public class ServerConf {
 		this.featureIndexPath = featureIndexPath + "/feature_index";
 	}
 
-	public List<String> getFeatures() {
+	public List<FeatureType> getFeatures() {
 		return features;
 	}
 
 	public void addToFeatures(String features) {
-		this.features.add(features);
+		if (features.equalsIgnoreCase(FeatureTypeString.IMAGE_PHASH_ES))
+			this.features.add(FeatureType.IMAGE_PHASH_ES);
+		if (features.equalsIgnoreCase(FeatureTypeString.IMAGE_LIRE))
+			this.features.add(FeatureType.IMAGE_LIRE);
+	}
+	
+	public static String getFeatureTypeString(FeatureType type) {
+		switch (type) {
+		case IMAGE_PHASH_ES:
+			return FeatureTypeString.IMAGE_PHASH_ES;
+		case IMAGE_LIRE:
+			return FeatureTypeString.IMAGE_LIRE;
+		}			
+		return "none";
+	}
+
+	public boolean isIndexFeatures() {
+		return indexFeatures;
+	}
+
+	public void setIndexFeatures(boolean indexFeatures) {
+		this.indexFeatures = indexFeatures;
 	}
 	
 }

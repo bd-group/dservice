@@ -1,5 +1,10 @@
 package iie.mm.server;
 
+import iie.mm.client.Feature.FeatureLIREType;
+import iie.mm.client.ResultSet;
+import iie.mm.client.ResultSet.Result;
+
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
@@ -10,15 +15,46 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Timer;
+import java.util.TimerTask;
+
+import net.semanticmetadata.lire.DocumentBuilder;
+import net.semanticmetadata.lire.ImageSearchHits;
+import net.semanticmetadata.lire.ImageSearcher;
+import net.semanticmetadata.lire.ImageSearcherFactory;
+import net.semanticmetadata.lire.SearchHitsFilter;
+import net.semanticmetadata.lire.filter.LsaFilter;
+import net.semanticmetadata.lire.filter.RerankFilter;
+import net.semanticmetadata.lire.imageanalysis.AutoColorCorrelogram;
+import net.semanticmetadata.lire.imageanalysis.CEDD;
+import net.semanticmetadata.lire.imageanalysis.ColorLayout;
+import net.semanticmetadata.lire.imageanalysis.EdgeHistogram;
+import net.semanticmetadata.lire.imageanalysis.FCTH;
+import net.semanticmetadata.lire.imageanalysis.Gabor;
+import net.semanticmetadata.lire.imageanalysis.JCD;
+import net.semanticmetadata.lire.imageanalysis.JpegCoefficientHistogram;
+import net.semanticmetadata.lire.imageanalysis.LireFeature;
+import net.semanticmetadata.lire.imageanalysis.LuminanceLayout;
+import net.semanticmetadata.lire.imageanalysis.OpponentHistogram;
+import net.semanticmetadata.lire.imageanalysis.PHOG;
+import net.semanticmetadata.lire.imageanalysis.ScalableColor;
+import net.semanticmetadata.lire.imageanalysis.SimpleColorHistogram;
+import net.semanticmetadata.lire.imageanalysis.joint.JointHistogram;
+import net.semanticmetadata.lire.impl.VisualWordsImageSearcher;
+import net.semanticmetadata.lire.indexing.LireCustomCodec;
+import net.semanticmetadata.lire.utils.LuceneUtils;
+import net.semanticmetadata.lire.utils.LuceneUtils.AnalyzerType;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.core.LowerCaseFilter;
+import org.apache.lucene.analysis.core.SimpleAnalyzer;
 import org.apache.lucene.analysis.ngram.NGramTokenizer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
+import org.apache.lucene.document.BinaryDocValuesField;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StringField;
@@ -39,18 +75,51 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.Version;
 import java.io.Reader;
 
 public class FeatureIndex {
-
-	public static Directory dir = null;
-	public static IndexWriterConfig iwc = null;
-	public static IndexWriter writer = null;
-	public static Analyzer analyzer = null;
 	
-	public static DirectoryReader reader = null;
-	public static IndexSearcher searcher = null;
+	public class LIndex {
+		public static final int SIMPLE = 0;
+		public static final int LIRE = 1;
+		
+		public Directory dir = null;
+		public IndexWriterConfig iwc = null;
+		public IndexWriter writer = null;
+		public Analyzer analyzer = null;
+
+		public DirectoryReader reader = null;
+		public Object searcher = null;
+		private FeatureLIREType sType = null, fType = null;
+		private int sMaxHit = 0;
+		private SearchHitsFilter filter = null; 
+		
+		public boolean isDirty = false;
+		
+		public LIndex(String path, int mode) throws IOException {
+			dir = FSDirectory.open(new File(path));
+			switch (mode) {
+			case SIMPLE:
+				analyzer = new StandardAnalyzer(Version.LUCENE_CURRENT);
+				iwc = new IndexWriterConfig(Version.LUCENE_CURRENT, analyzer);
+				iwc.setOpenMode(OpenMode.CREATE_OR_APPEND);
+				writer = new IndexWriter(dir, iwc);
+				break;
+			case LIRE:
+				/*analyzer = new SimpleAnalyzer(Version.LUCENE_CURRENT);
+				iwc = new IndexWriterConfig(Version.LUCENE_CURRENT, analyzer);
+				iwc.setOpenMode(OpenMode.CREATE_OR_APPEND);
+				iwc.setCodec(new LireCustomCodec());
+				writer = new IndexWriter(dir, iwc);*/
+				writer = LuceneUtils.createIndexWriter(dir, false, AnalyzerType.SimpleAnalyzer);
+				break;
+			}
+		}
+	};
+
+	public static List<LIndex> indexs = new ArrayList<LIndex>();
 	
 	public long reopenTo = 10 * 1000;
 	public long reopenTs = System.currentTimeMillis();
@@ -59,11 +128,10 @@ public class FeatureIndex {
 	public int gramSize = 4;
 	
 	public FeatureIndex(ServerConf conf) throws IOException {
-		dir = FSDirectory.open(new File(conf.getFeatureIndexPath()));
-		analyzer = new StandardAnalyzer(Version.LUCENE_CURRENT);
-		iwc = new IndexWriterConfig(Version.LUCENE_CURRENT, analyzer);
-		iwc.setOpenMode(OpenMode.CREATE_OR_APPEND);
-		writer = new IndexWriter(dir, iwc);
+		indexs.add(new LIndex(conf.getFeatureIndexPath() + "/simple", LIndex.SIMPLE));
+		indexs.add(new LIndex(conf.getFeatureIndexPath() + "/lire", LIndex.LIRE));
+		Timer t = new Timer();
+		t.schedule(new CommitTask(), 1 * 1000, 5 * 1000);
 	}
 	
 	public static class NGramAnalyzer extends Analyzer {
@@ -81,6 +149,30 @@ public class FeatureIndex {
 		}
 	}
 	
+	private class CommitTask extends TimerTask {
+
+		@Override
+		public void run() {
+			do_commit();
+		}
+	}
+	
+	private void do_commit() {
+		if (System.currentTimeMillis() - reopenTs >= reopenTo) {
+			for (LIndex li : indexs) {
+				try {
+					if (li.isDirty) {
+						li.writer.commit();
+						li.isDirty = false;
+					}
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				reopenTs = System.currentTimeMillis();
+			}
+		}
+	}
+	
 	/**
 	 * 
 	 * @param key     feature hash value
@@ -90,6 +182,7 @@ public class FeatureIndex {
 	 */
 	public boolean addObject(String key, String field, String value) {
 		boolean r = false;
+		IndexWriter writer = indexs.get(LIndex.SIMPLE).writer;
 		
 		if (writer != null) {
 			Document doc = new Document();
@@ -100,16 +193,9 @@ public class FeatureIndex {
 			try {
 				writer.addDocument(doc);
 				r = true;
+				indexs.get(LIndex.SIMPLE).isDirty = true;
 			} catch (IOException e) {
 				e.printStackTrace();
-			}
-			if (System.currentTimeMillis() - reopenTs >= reopenTo) {
-				try {
-					writer.commit();
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				reopenTs = System.currentTimeMillis();
 			}
 			System.out.println("AddObj " + field + "=" + key + " -> " + value + " r=" + r);
 		}
@@ -117,10 +203,28 @@ public class FeatureIndex {
 		return r;
 	}
 	
-	private final static Comparator<Entry<Integer, Integer>> comp = new Comparator<Entry<Integer, Integer>>() {
+	public boolean addObjectLIRE(Document doc, String field, String value) {
+		boolean r = false;
+		IndexWriter writer = indexs.get(LIndex.LIRE).writer;
+		
+		if (writer != null) {
+			try {
+				writer.addDocument(doc);
+				r = true;
+				indexs.get(LIndex.LIRE).isDirty = true;
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			System.out.println("AddObj " + field + "=" + doc.getFields() + " -> " + value + " r=" + r);
+		}
+		
+		return r;
+	}
+	
+	private final static Comparator<Entry<Integer, Result>> comp = new Comparator<Entry<Integer, Result>>() {
 		@Override
-		public int compare(Entry<Integer, Integer> o1, Entry<Integer, Integer> o2) {
-			return (o2.getValue() - o1.getValue()) > 0 ? 1 : -1;
+		public int compare(Entry<Integer, Result> o1, Entry<Integer, Result> o2) {
+			return (o2.getValue().getScore() - o1.getValue().getScore()) > 0 ? 1 : -1;
 		}
 	};
 	
@@ -131,17 +235,25 @@ public class FeatureIndex {
 	 * @return
 	 * @throws IOException 
 	 */
-	public static List<String> getObject(String key, String field, int maxEdits, int bitDiffInBlock) throws IOException {
-		List<String> r = new ArrayList<String>();
-		HashMap<Integer, Integer> m = new HashMap<Integer, Integer>();
+	public static ResultSet getObject(String key, String field, int maxEdits, int bitDiffInBlock) throws IOException {
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.ADD);
+		// docId -> Result
+		HashMap<Integer, Result> m = new HashMap<Integer, Result>();
+		IndexWriter writer = indexs.get(LIndex.SIMPLE).writer;
+		DirectoryReader reader = indexs.get(LIndex.SIMPLE).reader;
+		IndexSearcher searcher = (IndexSearcher)indexs.get(LIndex.SIMPLE).searcher;
 		
 		if (reader == null) {
-			reader = DirectoryReader.open(dir);
+			reader = DirectoryReader.open(indexs.get(LIndex.SIMPLE).dir);
 		} else {
-			reader = DirectoryReader.openIfChanged(reader, writer, true);
+			DirectoryReader changed = DirectoryReader.openIfChanged(reader, writer, true);
+			if (changed != null)
+				reader = changed;
 		}
-		if (searcher == null) {
+		indexs.get(LIndex.SIMPLE).reader = reader;
+		if (searcher == null || searcher.getIndexReader() != reader) {
 			searcher = new IndexSearcher(reader);
+			indexs.get(LIndex.SIMPLE).searcher = searcher;
 		}
 
 		long beginTs = System.currentTimeMillis();
@@ -151,40 +263,218 @@ public class FeatureIndex {
 			ScoreDoc[] hits = searcher.search(q, searcher.getIndexReader().maxDoc()).scoreDocs;
 			for (int j = 0; j < hits.length; j++) {
 				System.out.println(i + "\t" + j + "\t" + hits[j].doc + "\t" + hits[j].score);
-				Integer nr = m.get(hits[j].doc);
+				Result nr = m.get(hits[j].doc);
 				if (nr == null)
-					m.put(hits[j].doc, 1);
-				else
-					m.put(hits[j].doc, nr + 1);
+					m.put(hits[j].doc, new Result(1, hits[j].score));
+				else {
+					nr.setAuxScore(hits[j].score, ResultSet.ScoreMode.PROD);
+					rs.updateScore(nr, 1);
+					m.put(hits[j].doc, nr);
+				}
 			}
 		}
 		long endTs = System.currentTimeMillis();
-		List<Entry<Integer, Integer>> entries = new LinkedList<Entry<Integer, Integer>>();
+		List<Entry<Integer, Result>> entries = new LinkedList<Entry<Integer, Result>>();
 		entries.addAll(m.entrySet());
 
 		Collections.sort(entries, comp);
 		
-		for (Entry<Integer, Integer> en : entries) {
-			if (en.getValue() >= 16 - maxEdits) {
+		rs.setMode(ResultSet.ScoreMode.PROD);
+		for (Entry<Integer, Result> en : entries) {
+			if (en.getValue().getScore() >= 16 - maxEdits) {
 				Document doc = searcher.doc(en.getKey());
 				String objkey = doc.get("objkey");
-				if (objkey != null)
-					r.add(objkey);
+				if (objkey != null) {
+					en.getValue().setValue(objkey);
+					if (bitDiffInBlock > 0) {
+						en.getValue().setScore(1 / en.getValue().getAuxScore());
+					} else 
+						en.getValue().setScore(16 / en.getValue().getScore());
+					rs.addToResults(en.getValue());
+				}
 			}
 		}
 		
 		System.out.println("Search " + field + "=" + key + " maxEdits=" + maxEdits + " -> hits " + 
-				r.size() + " objs in " + searcher.getIndexReader().maxDoc() + " objs in "+ (endTs - beginTs) + " ms.");
-		return r;
+				rs.getSize() + " objs in " + searcher.getIndexReader().maxDoc() + " objs in "+ (endTs - beginTs) + " ms.");
+		return rs;
+	}
+	
+	public static ResultSet getObjectLIRE(FeatureLIREType sType, FeatureLIREType fType, 
+			BufferedImage bi, int maxHits) throws IOException {
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.ADD);
+		ImageSearcher searcher;
+		IndexWriter writer = indexs.get(LIndex.LIRE).writer;
+		DirectoryReader reader = indexs.get(LIndex.LIRE).reader;
+		SearchHitsFilter filter = null;
+		
+		if (fType != indexs.get(LIndex.LIRE).fType) {
+			switch (fType) {
+			case JCD:
+				filter = new RerankFilter(JCD.class, DocumentBuilder.FIELD_NAME_JCD);
+				break;
+			case AUTO_COLOR_CORRELOGRAM:
+				filter = new RerankFilter(AutoColorCorrelogram.class, DocumentBuilder.FIELD_NAME_AUTOCOLORCORRELOGRAM);
+				break;
+			case CEDD:
+				filter = new RerankFilter(CEDD.class, DocumentBuilder.FIELD_NAME_CEDD);
+				break;
+			case CEDD_HASHING:
+				filter = null;
+				break;
+			case COLOR_HISTOGRAM:
+				filter = new RerankFilter(SimpleColorHistogram.class, DocumentBuilder.FIELD_NAME_COLORHISTOGRAM);
+				break;
+			case COLOR_LAYOUT:
+				filter = new LsaFilter(ColorLayout.class, DocumentBuilder.FIELD_NAME_COLORLAYOUT);
+				break;
+			case EDGE_HISTOGRAM:
+				filter = new LsaFilter(EdgeHistogram.class, DocumentBuilder.FIELD_NAME_EDGEHISTOGRAM);
+				break;
+			case FCTH:
+				filter = new LsaFilter(FCTH.class, DocumentBuilder.FIELD_NAME_FCTH);
+				break;
+			case GABOR:
+				filter = new LsaFilter(Gabor.class, DocumentBuilder.FIELD_NAME_GABOR);
+				break;
+			case JOINT_HISTOGRAM:
+				filter = new LsaFilter(JointHistogram.class, DocumentBuilder.FIELD_NAME_JOINT_HISTOGRAM);
+				break;
+			case JPEG_COEFF_HISTOGRAM:
+				filter = new LsaFilter(JpegCoefficientHistogram.class, DocumentBuilder.FIELD_NAME_JPEGCOEFFS);
+				break;
+			case LUMINANCE_LAYOUT:
+				filter = new LsaFilter(LuminanceLayout.class, DocumentBuilder.FIELD_NAME_LUMINANCE_LAYOUT);
+				break;
+			case NONE:
+				filter = null;
+				break;
+			case OPPONENT_HISTOGRAM:
+				filter = new LsaFilter(OpponentHistogram.class, DocumentBuilder.FIELD_NAME_OPPONENT_HISTOGRAM);
+				break;
+			case PHOG:
+				filter = new LsaFilter(PHOG.class, DocumentBuilder.FIELD_NAME_PHOG);
+				break;
+			case SCALABLE_COLOR:
+				filter = new LsaFilter(ScalableColor.class, DocumentBuilder.FIELD_NAME_SCALABLECOLOR);
+				break;
+			case SURF:
+			case TAMURA:
+			default:
+				filter = null;
+				break;
+			}
+			indexs.get(LIndex.LIRE).filter = filter;
+			indexs.get(LIndex.LIRE).fType = fType;
+		} else {
+			filter = indexs.get(LIndex.LIRE).filter;
+		}
+
+		if (sType != indexs.get(LIndex.LIRE).sType || 
+				maxHits >= indexs.get(LIndex.LIRE).sMaxHit) {
+			switch (sType) {
+			default:
+				searcher = ImageSearcherFactory.createDefaultSearcher();
+				break;
+			case CEDD:
+				searcher = ImageSearcherFactory.createCEDDImageSearcher(maxHits);
+				break;
+			case AUTO_COLOR_CORRELOGRAM:
+				searcher = ImageSearcherFactory.createAutoColorCorrelogramImageSearcher(maxHits);
+				break;
+			case COLOR_HISTOGRAM:
+				searcher = ImageSearcherFactory.createColorHistogramImageSearcher(maxHits);
+				break;
+			case COLOR_LAYOUT:
+				searcher = ImageSearcherFactory.createColorLayoutImageSearcher(maxHits);
+				break;
+			case EDGE_HISTOGRAM:
+				searcher = ImageSearcherFactory.createEdgeHistogramImageSearcher(maxHits);
+				break;
+			case FCTH:
+				searcher = ImageSearcherFactory.createFCTHImageSearcher(maxHits);
+				break;
+			case GABOR:
+				searcher = ImageSearcherFactory.createGaborImageSearcher(maxHits);
+				break;
+			case CEDD_HASHING:
+				searcher = ImageSearcherFactory.createHashingCEDDImageSearcher(maxHits);
+				break;
+			case JCD:
+				searcher = ImageSearcherFactory.createJCDImageSearcher(maxHits);
+				break;
+			case JOINT_HISTOGRAM:
+				searcher = ImageSearcherFactory.createJointHistogramImageSearcher(maxHits);
+				break;
+			case JPEG_COEFF_HISTOGRAM:
+				searcher = ImageSearcherFactory.createJpegCoefficientHistogramImageSearcher(maxHits);
+				break;
+			case LUMINANCE_LAYOUT:
+				searcher = ImageSearcherFactory.createLuminanceLayoutImageSearcher(maxHits);
+				break;
+			case OPPONENT_HISTOGRAM:
+				searcher = ImageSearcherFactory.createOpponentHistogramSearcher(maxHits);
+				break;
+			case PHOG:
+				searcher = ImageSearcherFactory.createPHOGImageSearcher(maxHits);
+				break;
+			case SCALABLE_COLOR:
+				searcher = ImageSearcherFactory.createScalableColorImageSearcher(maxHits);
+				break;
+			case TAMURA:
+				searcher = ImageSearcherFactory.createTamuraImageSearcher(maxHits);
+				break;
+			case SURF:
+				searcher = new VisualWordsImageSearcher(maxHits, DocumentBuilder.FIELD_NAME_SURF_VISUAL_WORDS);
+				break;
+			}
+			indexs.get(LIndex.LIRE).sType = sType;
+			indexs.get(LIndex.LIRE).sMaxHit = maxHits;
+			indexs.get(LIndex.LIRE).searcher = searcher;
+		} else {
+			searcher = (ImageSearcher)indexs.get(LIndex.LIRE).searcher;
+		}
+		if (reader == null) {
+			reader = DirectoryReader.open(indexs.get(LIndex.LIRE).dir);
+		} else {
+			DirectoryReader changed = DirectoryReader.openIfChanged(reader, writer, true);
+			if (changed != null)
+				reader = changed;
+		}
+		indexs.get(LIndex.LIRE).reader = reader;
+
+		long beginTs = System.currentTimeMillis();
+		ImageSearchHits hits = searcher.search(bi, reader);
+		if (filter != null)
+			hits = filter.filter(hits, hits.doc(0));
+		for (int i = 0; i < hits.length() && i < maxHits; i++) {
+			Result r = new Result(hits.doc(i).get("descriptorImageIdentifier"), 
+					hits.score(i));
+			rs.addToResults(r);
+		}
+		long endTs = System.currentTimeMillis();
+		System.out.println("Search LIRE " + sType + " filter " + fType + " -> hits " + rs.getSize() + " objs in " + reader.maxDoc() + " objs in "+ (endTs - beginTs) + " ms.");
+		return rs;
 	}
 	
 	public void close() {
-		if (writer != null)
-			try {
-				writer.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+		for (LIndex li : indexs) {
+			IndexWriter writer = li.writer;
+
+			if (writer != null)
+				try {
+					writer.commit();
+					writer.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			if (li.reader != null)
+				try {
+					li.reader.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+		}
 	}
 	
 	public static void main(String[] args) {

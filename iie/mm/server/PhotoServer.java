@@ -73,14 +73,15 @@ public class PhotoServer {
 		server.start();
 		
 		//计算图片hash值的线程
-		ImageMatch im = new ImageMatch(conf);
+		FeatureSearch im = new FeatureSearch(conf);
 		im.startWork(4);
 		
 		// shutdown hook
 		Runtime.getRuntime().addShutdownHook(new Thread() {
 			@Override
 			public void run() {
-				ImageMatch.fi.close();
+				System.out.println("Shutdown search server, release resources.");
+				FeatureSearch.fi.close();
 			}
 		});
 

@@ -1,4 +1,4 @@
-package iie.mm.server;
+package iie.mm.client;
 
 import java.awt.Graphics2D;
 import java.awt.color.ColorSpace;
@@ -176,25 +176,5 @@ public class ImagePHash {
 			}
 		}
 		return F;
-	}
-
-	public static void main(String[] args) throws FileNotFoundException, Exception {
-
-		ImagePHash p = new ImagePHash();
-		String s1 = null, s2 = null;
-		s1 =  p.getHash(new FileInputStream("/home/zhaoyang/workspace_javaee/ImageSearch/src/image/person.jpg"));
-		//s1 =  getFingerprint("F:\\image processing\\测试图片素材\\images(0).jpg");
-		System.out.println("source: " + s1);
-		Scanner sc = new Scanner(System.in);
-		sc.next();
-		long start = System.currentTimeMillis();
-		for(int i=1; i<=11; i++) {
-			s2 =  p.getHash(new FileInputStream("/home/zhaoyang/workspace_javaee/ImageSearch/src/image/person"+ i + ".jpg"));
-			//s2 =  getFingerprint("F:\\image processing\\测试图片素材\\images ("+ i + ").jpg");
-			//System.out.println("example:" +s2);
-			System.out.println(i+":"+s2+"\t"+p.distance(ImageMatch.hexToBin(s1), ImageMatch.hexToBin(s2)) );
-			//			System.out.println(s2.length());
-		}
-		System.out.println("time:"+(System.currentTimeMillis()-start));
 	}
 } 

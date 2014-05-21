@@ -878,79 +878,6 @@ public class HTTPHandler extends AbstractHandler {
 		}
 	}
 
-	private void doImageMatch(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
-			throws IOException, ServletException {
-		if (target.equalsIgnoreCase("/im/index.html")) {
-			ResourceHandler rh = new ResourceHandler();
-			rh.setResourceBase(".");
-			rh.handle(target, baseRequest, request, response);
-		} else {
-			DiskFileItemFactory factory = new DiskFileItemFactory();
-			ServletFileUpload upload = new ServletFileUpload(factory);
-			List<FileItem> items;
-			try {
-				items = upload.parseRequest(request);
-				// 解析request请求
-				Iterator<FileItem> iter = items.iterator();
-				int distance = 0;
-				int bitDiff = 0;
-				BufferedImage img = null;
-				String filePath = "INVALID";
-				
-				while (iter.hasNext()) {
-					FileItem item = (FileItem) iter.next();
-					if (item.isFormField()) { 				// 如果是表单域 ，就是非文件上传元素
-						String name = item.getFieldName(); // 获取name属性的值
-						String value = item.getString(); // 获取value属性的值
-						// System.out.println(name+"   "+value);
-						if (name.equals("distance"))
-							distance = Integer.parseInt(value);
-						if (name.equals("BitDiff")) 
-							bitDiff = Integer.parseInt(value);
-					} else {
-						String fieldName = item.getFieldName(); // 文件域中name属性的值
-						String fileName = item.getName(); // 文件的全路径，绝对路径名加文件名
-						// okResponse(baseRequest, response, item.get());
-						filePath = fileName;
-						try {
-							img = ImageMatch.readImage(item.get());
-						} catch (IOException e) {
-							badResponse(baseRequest, response,"#FAIL:" + e.getMessage());
-							e.printStackTrace();
-							return;
-						}
-						if (img == null) {
-							badResponse(baseRequest, response,"#FAIL:the file uploaded probably is not an image.");
-							return;
-						}
-					}
-				}
-				
-				List<String> dk = sp.imageMatch(img, distance, bitDiff);
-				String page = "<HTML><HEAD> <TITLE> MM Object Search </TITLE> </HEAD>"
-						+ "<BODY><H1>Low Frequency Search Results: </H1><UL>" 
-						+ "<H2>File '" + filePath + "' matches " + dk.size() + " files.</H2>";
-				Iterator<String> iter2 = dk.iterator();
-				while (iter2.hasNext()) {
-					String key = iter2.next();
-					page += "<li>" + key + "<br><img width=\"100\" height=\"100\" src=\"http://"
-							+ request.getLocalAddr() + ":"
-							+ request.getLocalPort() + "/get?key="
-							+ key + "\"> </li>";
-				}
-				page += "</UL></BODY> </HTML>";
-				response.setContentType("text/html;charset=utf-8");
-				response.setStatus(HttpServletResponse.SC_OK);
-				baseRequest.setHandled(true);
-				response.getWriter().write(page);
-				response.getWriter().flush();
-			} catch (FileUploadException e) {
-				e.printStackTrace();
-				badResponse(baseRequest, response, e.getMessage());
-			}
-		}
-	}
-
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
 //		System.out.println(target);
@@ -967,12 +894,8 @@ public class HTTPHandler extends AbstractHandler {
 			doData(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/b")) {
 			doBrowse(target, baseRequest, request, response);
-		} else if (target.startsWith("/im/")){
-			try {
-				doImageMatch(target, baseRequest, request, response);
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
+		} else if (target.startsWith("/im/")) {
+			badResponse(baseRequest, response, "#FAIL: Please use MM Object Searcher instead.");
 		} else if (target.startsWith("/dedup")){
 			doDedup(target, baseRequest, request, response);
 		} else if (target.startsWith("/topdup")){

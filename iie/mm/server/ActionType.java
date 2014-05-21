@@ -5,10 +5,14 @@ package iie.mm.server;
 
 public class ActionType {
 	public static final byte SYNCSTORE = 1;
+	// key based search
 	public static final byte SEARCH = 2;
 	public static final byte DELSET = 3;
 	public static final byte ASYNCSTORE = 4;
 	public static final byte SERVERINFO = 5;
+	// send request and return, wait reply in total
 	public static final byte IGET = 6;
 	public static final byte MPUT = 7;
+	// feature based search
+	public static final byte FEATURESEARCH = 8;
 }

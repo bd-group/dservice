@@ -59,6 +59,8 @@ public class ProfileTimerTask extends TimerTask {
 		// update mm.dns for IP info
 		if (conf.getOutsideIP() != null) {
 			jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getServerPort(), conf.getOutsideIP() + ":" + conf.getServerPort());
+			// BUG-XXX: add HTTP port dns service
+			jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getHttpPort(), conf.getOutsideIP() + ":" + conf.getHttpPort());
 			System.out.println("Update mm.dns for " + conf.getNodeName() + " -> " + conf.getOutsideIP());
 		}
 

@@ -1,6 +1,6 @@
 package iie.mm.server;
 
-import iie.mm.server.ServerConf.FeatureType;
+import iie.mm.client.Feature.FeatureTypeString;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -65,7 +65,7 @@ public class MMServer {
 		Set<String> sa = new HashSet<String>();
 		Set<String> sentinels = new HashSet<String>();
 		String outsideIP = null;
-		boolean isSetOutsideIP = false;
+		boolean isSetOutsideIP = false, indexFeatures = false;
 		int wto = -1, rto = -1;
 		
 		for (Option o : optsList) {
@@ -87,6 +87,7 @@ public class MMServer {
 				System.out.println("-http : http mode only.");
 				System.out.println("-wto  : write fd time out seconds.");
 				System.out.println("-rto  : read  fd time out seconds.");
+				System.out.println("-idx  : index image features.");
 				
 				System.exit(0);
 			}
@@ -202,6 +203,9 @@ public class MMServer {
 				}
 				rto = Integer.parseInt(o.opt);
 			}
+			if (o.flag.equals("-idx")) {
+				indexFeatures = true;
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -246,7 +250,9 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
-			conf.addToFeatures(FeatureType.PHASH_IMAGE_ES);
+			conf.addToFeatures(FeatureTypeString.IMAGE_PHASH_ES);
+			conf.addToFeatures(FeatureTypeString.IMAGE_LIRE);
+			conf.setIndexFeatures(indexFeatures);
 			if (conf.getStoreArray().size() > 0) {
 				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);
 			} else

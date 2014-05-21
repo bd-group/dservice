@@ -8,4 +8,5 @@ public class ActionType {
 	public static final byte SERVERINFO = 5;
 	public static final byte IGET = 6;
 	public static final byte MPUT = 7;
+	public static final byte FEATURESEARCH = 8;
 }

@@ -1,19 +1,30 @@
 package iie.mm.server;
 
+import iie.mm.client.Feature;
+import iie.mm.client.ResultSet;
+import iie.mm.client.ResultSet.Result;
 import iie.mm.server.StorePhoto.RedirectException;
 
+import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import javax.imageio.ImageIO;
 
 import org.hyperic.sigar.SigarException;
 
@@ -49,7 +60,8 @@ public class Handler implements Runnable{
 				byte[] header = new byte[4];
 				
 				dis.readFully(header);
-				if (header[0] == ActionType.SYNCSTORE) {
+				switch (header[0]) {
+				case ActionType.SYNCSTORE: {
 					int setlen = header[1];
 					int md5len = header[2];
 					int contentlen = dis.readInt();
@@ -72,8 +84,9 @@ public class Handler implements Runnable{
 						dos.writeInt(result.getBytes().length);
 						dos.write(result.getBytes());
 					}
-					dos.flush();
-				} else if(header[0] == ActionType.ASYNCSTORE){
+					break;
+				} 
+				case ActionType.ASYNCSTORE: {
 					int setlen = header[1];
 					int md5len = header[2];
 					int contentlen = dis.readInt();
@@ -97,7 +110,9 @@ public class Handler implements Runnable{
 						WriteThread wt = new WriteThread(conf,set, sq);
 						new Thread(wt).start();
 					}
-				} else if(header[0] == ActionType.MPUT){
+					break;
+				}
+				case ActionType.MPUT: {
 					int setlen = header[1];
 					int n = dis.readInt();		
 					String set = new String(readBytes(setlen, dis));
@@ -127,10 +142,11 @@ public class Handler implements Runnable{
 							dos.write(r[i].getBytes());
 						}
 					}
-					dos.flush();
-				} else if (header[0] == ActionType.SEARCH) {
+					break;
+				}
+				case ActionType.SEARCH: {
 					//这样能把byte当成无符号的用，拼接的元信息长度最大可以255
-					int infolen = header[1]&0xff;		
+					int infolen = header[1] & 0xff;		
 
 					if (infolen > 0) {
 						String infos = new String(readBytes(infolen, dis));		
@@ -149,8 +165,9 @@ public class Handler implements Runnable{
 					} else {
 						dos.writeInt(-1);
 					}
-					dos.flush();
-				} else if(header[0] == ActionType.IGET){
+					break;
+				}
+				case ActionType.IGET: {
 					int infolen = header[1] & 0xff;
 					int gid = dis.readInt();
 					int seqno = dis.readInt();
@@ -174,8 +191,9 @@ public class Handler implements Runnable{
 					else {
 						dos.writeInt(-1);
 					}
-					dos.flush();
-				} else if (header[0] == ActionType.DELSET) {
+					break;
+				}
+				case ActionType.DELSET: {
 					String set = new String(readBytes(header[1], dis));
 
 					BlockingQueue<WriteTask> bq = sq.get(set);
@@ -187,8 +205,9 @@ public class Handler implements Runnable{
 					}
 					sp.delSet(set);
 					dos.write(1);			//返回一个字节1,代表删除成功
-					dos.flush();
-				} else if(header[0] == ActionType.SERVERINFO) {
+					break;
+				}
+				case ActionType.SERVERINFO: {
 					ServerInfo si = new ServerInfo();
 					String str = "";
 					try {
@@ -203,8 +222,40 @@ public class Handler implements Runnable{
 					
 					dos.writeInt(str.length());
 					dos.write(str.getBytes());
-					dos.flush();
+					break;
 				}
+				case ActionType.FEATURESEARCH: {
+					int feature_size = dis.readInt();
+					int obj_len = dis.readInt();
+					List<Feature> features = new ArrayList<Feature>(feature_size);
+					ObjectInputStream ois = new ObjectInputStream(dis);
+					
+					for (int i = 0; i < feature_size; i++) {
+						features.add((Feature)ois.readObject());
+					}
+					try {
+						BufferedImage bi = null;
+						
+						if (obj_len > 0) {
+							byte[] obj = readBytes(obj_len, dis);
+							ByteArrayInputStream bais = new ByteArrayInputStream(obj);
+							bi = ImageIO.read(bais);
+						}
+						ResultSet rs = sp.featureSearch(bi, features);
+						if (rs != null && rs.getSize() > 0) {
+							dos.writeInt(1);
+							ObjectOutputStream oos = new ObjectOutputStream(dos);
+							oos.writeObject(rs);
+						} else 
+							dos.writeInt(-1);
+					} catch (IOException e) {
+						e.printStackTrace();
+						dos.writeInt(-1);
+					}
+					break;	
+				}
+				}
+				dos.flush();
 			}
 		} catch (EOFException e) {
 			// socket close, it is ok

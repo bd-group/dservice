@@ -1,5 +1,12 @@
 package iie.mm.server;
 
+import iie.mm.client.Feature;
+import iie.mm.client.Feature.FeatureLIREType;
+import iie.mm.client.ImagePHash;
+import iie.mm.client.Feature.FeatureType;
+import iie.mm.client.ResultSet;
+import iie.mm.client.ResultSet.Result;
+
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -349,9 +356,8 @@ public class StorePhoto {
 		try {
 			returnStr = rVal.toString();
 			returnStr = jedis.get().evalsha(sha, 1, set, md5, returnStr).toString();
-			for (String feature : conf.getFeatures()) {
-				ImageMatch.add(new ImageMatch.ImgKeyEntry(feature, content, coff, clen, set, md5));
-			}
+			FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
+					conf.getFeatures(), content, coff, clen, set, md5));
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -549,9 +555,9 @@ public class StorePhoto {
 		try {
 			for (int i = 0; i < content.length; i++) {
 				returnVal[i] = jedis.get().evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
-				for (String feature : conf.getFeatures()) {
-					ImageMatch.add(new ImageMatch.ImgKeyEntry(feature, content[i], 0, content[i].length, set, md5[i]));
-				}
+				FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
+						conf.getFeatures(), 
+						content[i], 0, content[i].length, set, md5[i]));
 			}
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in mstoreObject.");
@@ -882,23 +888,79 @@ public class StorePhoto {
 	}
 	
 	/**
-	 * 
+	 * Image Search based BufferedImage 
 	 * @param feature
 	 * @param d
 	 * @return
 	 * @throws IOException 
 	 */
-	public List<String> imageMatch(BufferedImage bi, int d, int bitDiff) throws IOException {
-		List<String> r = new ArrayList<String>();
+	public ResultSet imageSearch(BufferedImage bi, int d, int bitDiff) throws IOException {
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.PROD);
 		
-		for (String feature : conf.getFeatures()) {
-			if (feature.equalsIgnoreCase(ServerConf.FeatureType.PHASH_IMAGE_ES)) {
+		for (FeatureType feature : conf.getFeatures()) {
+			switch (feature) {
+			case IMAGE_PHASH_ES:
 				String hc = new ImagePHash().getHash(bi);
-				r.addAll(FeatureIndex.getObject(hc, feature, d, bitDiff));
+				rs.addAll(FeatureIndex.getObject(hc, 
+						ServerConf.getFeatureTypeString(feature), d, bitDiff));
+				break;
 			}
 		}
 		
-		return r;
+		return rs;
+	}
+	
+	/**
+	 * Search by features
+	 * 
+	 * @param features
+	 * @return
+	 * @throws IOException
+	 */
+	public ResultSet featureSearch(BufferedImage bi, List<Feature> features) throws IOException {
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.PROD);
+		
+		for (Feature feature : features) {
+			switch (feature.type) {
+			case IMAGE_PHASH_ES: {
+				int maxEdits = 4, bitDiffInBlock = 0;
+				
+				if (feature.args != null && feature.args.size() >= 2) {
+					maxEdits = Integer.parseInt(feature.args.get(0));
+					bitDiffInBlock = Integer.parseInt(feature.args.get(1));
+				}
+				rs.addAll(FeatureIndex.getObject(feature.value, 
+						ServerConf.getFeatureTypeString(feature.type), 
+						maxEdits, bitDiffInBlock));
+				break;
+			}
+			case IMAGE_LIRE: {
+				int maxHits = 100;
+				FeatureLIREType sType = FeatureLIREType.CEDD;
+				FeatureLIREType fType = FeatureLIREType.NONE;
+				
+				if (feature.args != null) {
+					if (feature.args.size() >= 3) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+						sType = Feature.getFeatureLIREType(feature.args.get(1));
+						fType = Feature.getFeatureLIREType(feature.args.get(2));
+					} else if (feature.args.size() >= 2) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+						sType = Feature.getFeatureLIREType(feature.args.get(1));
+					} else if (feature.args.size() >= 1) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+					}
+				}
+				if (bi != null) {
+					rs.addAll(FeatureIndex.getObjectLIRE(sType, fType, 
+							bi, maxHits));
+				}
+				break;
+			}
+			}
+		}
+		
+		return rs;
 	}
 
 }

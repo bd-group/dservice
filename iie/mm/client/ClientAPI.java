@@ -641,6 +641,12 @@ public class ClientAPI {
 		return pc.mget(keys, cookies);
 	}
 	
+	public ResultSet objectSearch(List<Feature> features, byte[] obj, List<String> specified_servers) throws IOException, Exception {
+		if (features == null || features.size() == 0) 
+			throw new Exception("Invalid or empty features list.");
+		return pc.objectSearch(features, obj, specified_servers);
+	}
+	
 	/**
 	 * 退出多媒体客户端，释放内部资源
 	 */
