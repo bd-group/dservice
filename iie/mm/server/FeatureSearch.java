@@ -70,6 +70,7 @@ public class FeatureSearch {
 	
 	public static void add(ServerConf conf, ImgKeyEntry en) {
 		if (conf.isIndexFeatures()) {
+			ServerProfile.queuedIndex.incrementAndGet();
 			entries.add(en);
 			sem.release();
 		}
@@ -144,6 +145,7 @@ public class FeatureSearch {
 					}
 					if (en == null)
 						continue;
+					ServerProfile.handledIndex.incrementAndGet();
 					
 					if (en.getImg() == null) {
 						BufferedImage bi;
@@ -151,11 +153,13 @@ public class FeatureSearch {
 							bi = FeatureSearch.readImage(en.content, en.coff, en.clen);
 						} catch (IOException e2) {
 							e2.printStackTrace();
+							ServerProfile.ignoredIndex.incrementAndGet();
 							continue;
 						}
-						if (bi == null)
+						if (bi == null) {
+							ServerProfile.ignoredIndex.incrementAndGet();
 							continue;
-						else
+						} else
 							en.setImg(bi);
 					}
 					
@@ -181,6 +185,7 @@ public class FeatureSearch {
 						}
 						}
 					}
+					ServerProfile.completedIndex.incrementAndGet();
 				} catch (Exception e) {
 					e.printStackTrace();
 				}

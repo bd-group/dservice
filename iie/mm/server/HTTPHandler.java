@@ -192,6 +192,7 @@ public class HTTPHandler extends AbstractHandler {
 							"Uptime              (S): " + ((System.currentTimeMillis() - PhotoServer.upts) / 1000) + "<p>" +
 							"Writes (#): total " + ServerProfile.writeN.longValue() + ", error <font color=\"red\">" + ServerProfile.writeErr.longValue() + "</font><p>" +
 							"Reads  (#): total " + ServerProfile.readN.longValue() + ", error <font color=\"red\">" + ServerProfile.readErr.longValue() + "</font><p>" +
+							"Indexs (#): queued " + ServerProfile.queuedIndex.longValue() + ", handled " + ServerProfile.handledIndex.longValue() + ", ignored " + ServerProfile.ignoredIndex.longValue() + ", completed " + ServerProfile.completedIndex.longValue() + "</font><p>" +
 							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
 							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
 							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +

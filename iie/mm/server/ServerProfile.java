@@ -10,6 +10,10 @@ public class ServerProfile {
 	public static AtomicLong readErr = new AtomicLong(0);
 	public static AtomicLong writeN = new AtomicLong(0);
 	public static AtomicLong writeErr = new AtomicLong(0);
+	public static AtomicLong queuedIndex = new AtomicLong(0);
+	public static AtomicLong handledIndex = new AtomicLong(0);
+	public static AtomicLong ignoredIndex = new AtomicLong(0);
+	public static AtomicLong completedIndex = new AtomicLong(0);
 	
 	public static void addWrite(int n) {
 		writtenBytes.addAndGet(n);
