@@ -205,7 +205,8 @@ public class FeatureSearch {
         builder.addBuilder(new GenericDocumentBuilder(AutoColorCorrelogram.class, DocumentBuilder.FIELD_NAME_AUTOCOLORCORRELOGRAM));
         builder.addBuilder(new GenericDocumentBuilder(EdgeHistogram.class, DocumentBuilder.FIELD_NAME_EDGEHISTOGRAM));
         */
-        builder.addBuilder(DocumentBuilderFactory.getHashingCEDDDocumentBuilder());
+        //builder.addBuilder(DocumentBuilderFactory.getHashingCEDDDocumentBuilder());
+        builder.addBuilder(DocumentBuilderFactory.getCEDDDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getAutoColorCorrelogramDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getFCTHDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getJCDDocumentBuilder());
@@ -215,7 +216,6 @@ public class FeatureSearch {
         builder.addBuilder(DocumentBuilderFactory.getColorLayoutBuilder());
         builder.addBuilder(DocumentBuilderFactory.getEdgeHistogramBuilder());
         
-        //builder.addBuilder(DocumentBuilderFactory.getCEDDDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getScalableColorBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getTamuraDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getGaborDocumentBuilder());

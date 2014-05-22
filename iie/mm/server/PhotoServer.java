@@ -64,7 +64,7 @@ public class PhotoServer {
 	
 	public void startUp() throws Exception {
 		//服务端每隔一段时间进行一次读写速率统计,1秒后开始统计，每10秒输出一次平均信息
-		Timer t = new Timer();
+		Timer t = new Timer("ProfileTimer");
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
 		
 		//启动http服务

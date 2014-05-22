@@ -103,6 +103,7 @@ public class ProfileTimerTask extends TimerTask {
 
 	@Override
 	public void run() {
+		try {
 		long cur = System.currentTimeMillis();
 		double wn = ServerProfile.writtenBytes.longValue() / 1024.0;
 		double rn = ServerProfile.readBytes.longValue() / 1024.0;
@@ -207,5 +208,8 @@ public class ProfileTimerTask extends TimerTask {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	} catch (Exception e) {
+		e.printStackTrace();
+	}
 	}
 }
