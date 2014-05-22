@@ -28,5 +28,9 @@ plot "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \"
      "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $39;}' FIXME_REPORT_FILE" \
 	using 1:2 t "Queued File Rep Y2" w linesp ls 3 axes x1y2, \
      "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $40;}' FIXME_REPORT_FILE" \
-	using 1:2 t "Queued File Del Y2" w linesp ls 4 axes x1y2
+	using 1:2 t "Queued File Del Y2" w linesp ls 4 axes x1y2, \
+     "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $33;}' FIXME_REPORT_FILE" \
+	using 1:2 t "repQ Size       Y2" w linesp ls 5 axes x1y2, \
+     "< awk -F, 'BEGIN{cts=0;} {if (cts == 0) cts = $42; print ($42 - cts) \" \" $34;}' FIXME_REPORT_FILE" \
+	using 1:2 t "cleanQ Size     Y2" w linesp ls 6 axes x1y2
 

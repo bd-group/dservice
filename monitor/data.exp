@@ -1,6 +1,7 @@
 set dataname [lindex $argv 1]
 set destpath [lindex $argv 2]
 set ip [lindex $argv 0]
+set timeout 60
 spawn scp -r metastore@$ip:~/$dataname $destpath
 expect_before "no)?" {
 send "yes\r" }
