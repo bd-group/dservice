@@ -2150,150 +2150,153 @@ public class MetaStoreClient {
 				System.out.println("Get File Info upto FID " + last_got);
 				
 				while (true) {
-					Double ratio = 0.0;
 					try {
-						Thread.sleep(sleepnr * 1000);
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}
-					if (System.currentTimeMillis() - last_fetch >= 3600 * 1000) {
-						// do fetch now
-						try {
-							scrub_max = cli.client.getMaxFid();
-						} catch (Exception e) {
-							scrub_max = last_got;
-						}
-						if (scrub_max > last_got) {
-							update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
-							last_got = scrub_max;
-							System.out.println("Get File Info upto FID " + last_got);
-						}
-						last_fetch = System.currentTimeMillis();
-					}
-					try {
-						String dms = cli.client.getDMStatus();
-						BufferedReader bufReader = new BufferedReader(new StringReader(dms));
-						String line = null;
-						while ((line = bufReader.readLine()) != null) {
-							if (line.startsWith("True  space")) {
-								String[] ls = line.split(" ");
-								ratio = Double.parseDouble(ls[ls.length - 1]);
-								break;
-							}
-						}
-						System.out.println(" -> Current free ratio " + ratio + ", target ratio " + target_ratio);
-						if (target_ratio < ratio) {
-							sleepnr = Math.min(sleepnr * 2, 60);
-							continue;
-						} else {
-							sleepnr = Math.max(sleepnr / 2, 10);
-						}
-						
-						// sort by time
-						boolean stop = false;
-						long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
-						List<Long> fsmapToDel = new ArrayList<Long>();
-						
-						for (Long k : fmap.keySet()) {
-							Map<String, FileStat> fsmap = fmap.get(k);
-							long hours = (cur_hour - k) / 3600;
-							long total_free = 0;
-
-							System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
-							// iterate on each rule
-							for (ScrubRule sr : srl) {
-								if (hours > sr.soft || hours < -10000) {
-									// act on each table
-									List<String> toDel = new ArrayList<String>();
-									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
-										if (sr.type.equalsIgnoreCase("hlw")) {
-											if (e.getKey().contains("t_gkrz") || 
-													e.getKey().contains("t_gzrz") ||
-													e.getKey().contains("t_jcrz") ||
-													e.getKey().contains("t_ybrz")) {
-												// ok
-											} else
-												continue;
-										} else if (sr.type.equalsIgnoreCase(e.getKey())) {
-											// ok
-										} else if (sr.type.equalsIgnoreCase("all")) {
-											// ok
-										} else {
-											continue;
-										}
-										
-										Set<Long> idToDel = new TreeSet<Long>();
-										System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
-										for (Long fid : e.getValue().fids) {
-											try {
-												SFile f = cli.client.get_file_by_id(fid);
-	
-												switch (sr.action) {
-												case DELETE:
-													cli.client.rm_file_physical(f);
-													total_free += e.getValue().space * f.getRep_nr();
-													toDel.add(e.getKey());
-													System.out.print(f.getFid() + ",");
-													break;
-												case DOWNREP:
-													//total_free += e.getValue().space;
-													if (f.getRep_nr() > 1) {
-														cli.client.set_file_repnr(f.getFid(), f.getRep_nr() - 1);
-														System.out.print(f.getFid() + ",");
-													}
-													break;
-												}
-											} catch (FileOperationException foe) {
-												idToDel.add(fid);
-											} catch (Exception foe) {
-											}
-										}
-										System.out.println("]");
-										if (idToDel.size() > 0) {
-											for (Long fid : idToDel) {
-												e.getValue().fids.remove(fid);
-											}
-										}
-									}
-									for (String s : toDel) {
-										fsmap.remove(s);
-									}
-									FreeSpace fs = __get_free_space_ratio(cli);
-									if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
-										stop = true;
-										break;
-									}
-								}
-							}
-							if (fsmap.size() == 0)
-								fsmapToDel.add(k);
-							if (stop)
-								break;
-						}
-						if (fsmapToDel.size() > 0) {
-							for (Long k : fsmapToDel) {
-								fmap.remove(k);
-							}
-						}
-					} catch (MetaException e1) {
-						e1.printStackTrace();
-						if (e1.getCause() instanceof ConnectException) {
-							cli = null;
-							while (cli == null) {
-								cli = __reconnect(serverName, serverPort);
-							}
-							continue;
-						}
-						break;
-					} catch (TException e1) {
-						e1.printStackTrace();
-						cli = null;
 						while (cli == null) {
 							cli = __reconnect(serverName, serverPort);
 						}
+
+						Double ratio = 0.0;
+						try {
+							Thread.sleep(sleepnr * 1000);
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+						if (System.currentTimeMillis() - last_fetch >= 3600 * 1000) {
+							// do fetch now
+							try {
+								scrub_max = cli.client.getMaxFid();
+							} catch (Exception e) {
+								scrub_max = last_got;
+							}
+							if (scrub_max > last_got) {
+								update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
+								last_got = scrub_max;
+								System.out.println("Get File Info upto FID " + last_got);
+							}
+							last_fetch = System.currentTimeMillis();
+						}
+						try {
+							String dms = cli.client.getDMStatus();
+							BufferedReader bufReader = new BufferedReader(new StringReader(dms));
+							String line = null;
+							while ((line = bufReader.readLine()) != null) {
+								if (line.startsWith("True  space")) {
+									String[] ls = line.split(" ");
+									ratio = Double.parseDouble(ls[ls.length - 1]);
+									break;
+								}
+							}
+							System.out.println(" -> Current free ratio " + ratio + ", target ratio " + target_ratio);
+							if (target_ratio < ratio) {
+								sleepnr = Math.min(sleepnr * 2, 60);
+								continue;
+							} else {
+								sleepnr = Math.max(sleepnr / 2, 10);
+							}
+
+							// sort by time
+							boolean stop = false;
+							long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
+							List<Long> fsmapToDel = new ArrayList<Long>();
+
+							for (Long k : fmap.keySet()) {
+								Map<String, FileStat> fsmap = fmap.get(k);
+								long hours = (cur_hour - k) / 3600;
+								long total_free = 0;
+
+								System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
+								// iterate on each rule
+								for (ScrubRule sr : srl) {
+									if (hours > sr.soft || hours < -10000) {
+										// act on each table
+										List<String> toDel = new ArrayList<String>();
+										for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+											if (sr.type.equalsIgnoreCase("hlw")) {
+												if (e.getKey().contains("t_gkrz") || 
+														e.getKey().contains("t_gzrz") ||
+														e.getKey().contains("t_jcrz") ||
+														e.getKey().contains("t_ybrz")) {
+													// ok
+												} else
+													continue;
+											} else if (sr.type.equalsIgnoreCase(e.getKey())) {
+												// ok
+											} else if (sr.type.equalsIgnoreCase("all")) {
+												// ok
+											} else {
+												continue;
+											}
+
+											Set<Long> idToDel = new TreeSet<Long>();
+											System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
+											for (Long fid : e.getValue().fids) {
+												try {
+													SFile f = cli.client.get_file_by_id(fid);
+
+													switch (sr.action) {
+													case DELETE:
+														cli.client.rm_file_physical(f);
+														total_free += e.getValue().space * f.getRep_nr();
+														toDel.add(e.getKey());
+														System.out.print(f.getFid() + ",");
+														break;
+													case DOWNREP:
+														//total_free += e.getValue().space;
+														if (f.getRep_nr() > 1) {
+															cli.client.set_file_repnr(f.getFid(), f.getRep_nr() - 1);
+															System.out.print(f.getFid() + ",");
+														}
+														break;
+													}
+												} catch (FileOperationException foe) {
+													idToDel.add(fid);
+												} catch (Exception foe) {
+												}
+											}
+											System.out.println("]");
+											if (idToDel.size() > 0) {
+												for (Long fid : idToDel) {
+													e.getValue().fids.remove(fid);
+												}
+											}
+										}
+										for (String s : toDel) {
+											fsmap.remove(s);
+										}
+										FreeSpace fs = __get_free_space_ratio(cli);
+										if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
+											stop = true;
+											break;
+										}
+									}
+								}
+								if (fsmap.size() == 0)
+									fsmapToDel.add(k);
+								if (stop)
+									break;
+							}
+							if (fsmapToDel.size() > 0) {
+								for (Long k : fsmapToDel) {
+									fmap.remove(k);
+								}
+							}
+						} catch (MetaException e1) {
+							e1.printStackTrace();
+							if (e1.getCause() instanceof ConnectException) {
+								cli = null;
+								continue;
+							}
+							break;
+						} catch (TException e1) {
+							e1.printStackTrace();
+							cli = null;
+						}
+					} catch (Exception e) {
+						e.printStackTrace();
+						cli = null;
 					}
 				}
-			}	
+			}
 			if (o.flag.equals("-avglen")) {
 				// get avg length and record number of each table in some time range
 				long end = 0;
