@@ -1,5 +1,0 @@
-How to build?
-
-1. cd lib; make; cd ..
-2. make
-3. make jtest
