@@ -1,5 +1,7 @@
 package iie.mm.server;
 
+import iie.mm.client.Feature.FeatureTypeString;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.HashSet;
@@ -63,7 +65,8 @@ public class MMServer {
 		Set<String> sa = new HashSet<String>();
 		Set<String> sentinels = new HashSet<String>();
 		String outsideIP = null;
-		boolean isSetOutsideIP = false;
+		boolean isSetOutsideIP = false, indexFeatures = false;
+		int wto = -1, rto = -1;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -82,6 +85,9 @@ public class MMServer {
 				System.out.println("-stl  : sentinels <host:port;host:port>.");
 				System.out.println("-ip   : IP hint exported to outside service.");
 				System.out.println("-http : http mode only.");
+				System.out.println("-wto  : write fd time out seconds.");
+				System.out.println("-rto  : read  fd time out seconds.");
+				System.out.println("-idx  : index image features.");
 				
 				System.exit(0);
 			}
@@ -183,6 +189,23 @@ public class MMServer {
 					sentinels.add(stls[i]);
 				}
 			}
+			if (o.flag.equals("-wto")) {
+				if (o.opt == null) {
+					System.out.println("-wto write_time_out_seconds");
+					System.exit(0);
+				}
+				wto = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-rto")) {
+				if (o.opt == null) {
+					System.out.println("-rto read_time_out_seconds");
+					System.exit(0);
+				}
+				rto = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-idx")) {
+				indexFeatures = true;
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -227,6 +250,17 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
+			conf.addToFeatures(FeatureTypeString.IMAGE_PHASH_ES);
+			conf.addToFeatures(FeatureTypeString.IMAGE_LIRE);
+			conf.setIndexFeatures(indexFeatures);
+			if (conf.getStoreArray().size() > 0) {
+				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);
+			} else
+				conf.setFeatureIndexPath(".");
+			if (wto > 0)
+				conf.setWrite_fd_recycle_to(wto * 1000);
+			if (rto > 0)
+				conf.setRead_fd_recycle_to(rto * 1000);
 			if (isSetOutsideIP)
 				conf.setOutsideIP(outsideIP);
 			if (SysInfoStatServerName != null) {

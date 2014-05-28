@@ -3,17 +3,22 @@ package iie.mm.client;
 import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry.SEntry;
 
+import java.awt.image.BufferedImage;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -24,6 +29,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Map.Entry;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Tuple;
@@ -82,7 +88,7 @@ public class PhotoClient {
 		}
 		
 		public boolean isTimedout() {
-			if (System.currentTimeMillis() - bts >= 60 * 1000) {
+			if (System.currentTimeMillis() - bts >= conf.getMgetTimeout()) {
 				return true;
 			} else
 				return false;
@@ -301,9 +307,10 @@ public class PhotoClient {
 		}
 	};
 	
-	private Map<String, SocketHashEntry> socketHash = new HashMap<String, SocketHashEntry>();
-	private Map<String, SocketHashEntry> igetSH = new HashMap<String, SocketHashEntry>();
+	private ConcurrentHashMap<String, SocketHashEntry> socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
+	private ConcurrentHashMap<String, SocketHashEntry> igetSH = new ConcurrentHashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
+
 	public Map<Long, String> getServers() {
 		return servers;
 	}
@@ -339,7 +346,7 @@ public class PhotoClient {
 	public Map<String, SocketHashEntry> getSocketHash() {
 		return socketHash;
 	}
-	public void setSocketHash(Map<String, SocketHashEntry> socketHash) {
+	public void setSocketHash(ConcurrentHashMap<String, SocketHashEntry> socketHash) {
 		this.socketHash = socketHash;
 	}
 
@@ -408,6 +415,27 @@ public class PhotoClient {
 				return null;
 			default:
 				return readBytes(count, dis);
+			}
+		}
+	}
+	
+	private ResultSet __handleInput4ResultSet(DataInputStream dis) throws IOException {
+		int count;
+
+		synchronized (dis) {
+			count = dis.readInt();
+			switch (count) {
+			case -1:
+				return null;
+			default: {
+				ObjectInputStream ois = new ObjectInputStream(dis);
+				try {
+					return (ResultSet)ois.readObject();
+				} catch (ClassNotFoundException e) {
+					e.printStackTrace();
+					return null;
+				}
+			}
 			}
 		}
 	}
@@ -713,9 +741,9 @@ public class PhotoClient {
 		String server = servers.get(Long.parseLong(infos[2]));
 		if (server == null)
 			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
-		if (socketHash.containsKey(server)) {
-			searchSocket = socketHash.get(server);
-		} else {
+		
+		searchSocket = socketHash.get(server);
+		if (searchSocket == null) {
 			String[] s = server.split(":");
 			if (s.length == 2) {
 				Socket socket = new Socket(); 
@@ -728,7 +756,11 @@ public class PhotoClient {
 						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
 						//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
 						
-				socketHash.put(server, searchSocket);
+				SocketHashEntry old = socketHash.putIfAbsent(server, searchSocket);
+				if (old != null) {
+					searchSocket.clear();
+					searchSocket = old;
+				}
 			} else 
 				throw new IOException("Invalid server name or port.");
 		}
@@ -761,8 +793,6 @@ public class PhotoClient {
 		else
 			return r;
 	}
-	
-		
 	
 	/**
 	 * 从输入流中读取count个字节
@@ -894,9 +924,8 @@ public class PhotoClient {
 		String server = servers.get(Long.parseLong(infos[2]));
 		if (server == null)
 			throw new IOException("Server idx " + infos[2] + " can't be resolved.");
-		if (igetSH.containsKey(server)) {
-			igetSocket = igetSH.get(server);
-		} else {
+		igetSocket = igetSH.get(server);
+		if (igetSocket == null) {
 			String[] s = server.split(":");
 			if (s.length == 2) {
 				Socket socket = new Socket(); 
@@ -1289,5 +1318,119 @@ public class PhotoClient {
 			else
 				jedis.set(rf.putInstance(jedis.get()));
 		}
+	}
+	
+	private final static Comparator<Entry<String, Integer>> comp = new Comparator<Entry<String, Integer>>() {
+		@Override
+		public int compare(Entry<String, Integer> o1, Entry<String, Integer> o2) {
+			return (o2.getValue() - o1.getValue()) > 0 ? 1 : -1;
+		}
+	};
+	
+	private class ObjectSearchThread extends Thread {
+		private Entry<Long, String> entry;
+		private List<Feature> features;
+		private ResultSet rs;
+		private byte[] obj;
+		
+		public ObjectSearchThread(byte[] obj, List<Feature> features, Entry<Long, String> entry, 
+				ResultSet rs) {
+			this.obj = obj;
+			this.features = features;
+			this.entry = entry;
+			this.rs = rs;
+		}
+		
+		public void run() {
+			try {
+				String server = entry.getValue();
+				SocketHashEntry searchSocket = null;
+
+				searchSocket = socketHash.get(server);
+				if (searchSocket == null) {
+					String[] s = server.split(":");
+					if (s.length == 2) {
+						Socket socket = new Socket(); 
+						socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
+						socket.setTcpNoDelay(true);
+						searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+						searchSocket.addToSocketsAsUsed(socket,
+								new DataInputStream(socket.getInputStream()),
+								new DataOutputStream(socket.getOutputStream()));
+						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
+						//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
+
+						SocketHashEntry old = socketHash.putIfAbsent(server, searchSocket);
+						if (old != null) {
+							searchSocket.clear();
+							searchSocket = old;
+						}
+					} else 
+						throw new IOException("Invalid server name or port.");
+				}
+
+				byte[] header = new byte[4];
+				header[0] = ActionType.FEATURESEARCH;
+				long id = searchSocket.getFreeSocket();
+				if (id == -1) 
+					throw new IOException("Could not get free socket for server " + server);
+				ResultSet result = null;
+				try {
+					searchSocket.map.get(id).dos.write(header);
+					searchSocket.map.get(id).dos.writeInt(features.size());
+					searchSocket.map.get(id).dos.writeInt(obj.length);
+					ObjectOutputStream oos = new ObjectOutputStream(searchSocket.map.get(id).dos);
+					for (Feature f : features) {
+						oos.writeObject(f);
+					}
+					searchSocket.map.get(id).dos.write(obj);
+					searchSocket.map.get(id).dos.flush();
+
+					result = __handleInput4ResultSet(searchSocket.map.get(id).dis);
+					searchSocket.setFreeSocket(id);
+				} catch (Exception e) {
+					e.printStackTrace();
+					// remove this socket do reconnect?
+					searchSocket.delFromSockets(id);
+				}
+				if (result != null)  {
+					rs.addAll(result);
+				}
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	public ResultSet objectSearch(List<Feature> features, byte[] obj, List<String> specified_servers) throws IOException {
+		List<ObjectSearchThread> ost = new ArrayList<ObjectSearchThread>();
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.PROD);
+		Map<Long, String> sToSearch = null;
+	
+		if (specified_servers != null) {
+			long i = 0;
+			sToSearch = new HashMap<Long, String>();
+			for (String s : specified_servers) {
+				sToSearch.put(i++, s);
+			}
+		} else {
+			sToSearch = servers;
+		}
+		for (Map.Entry<Long, String> entry : sToSearch.entrySet()) {
+			ost.add(new ObjectSearchThread(obj, features, entry, rs));
+		}
+		for (ObjectSearchThread t : ost) {
+			t.start();
+		}
+		
+		for (ObjectSearchThread t : ost) {
+			try {
+				t.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		return rs;
 	}
 }

@@ -6,6 +6,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
 import java.util.concurrent.BlockingQueue;
@@ -72,9 +73,18 @@ public class PhotoServer {
 		server.start();
 		
 		//计算图片hash值的线程
-		ImageMatch im = new ImageMatch(conf);
-		im.startWork(3);
+		FeatureSearch im = new FeatureSearch(conf);
+		im.startWork(4);
 		
+		// shutdown hook
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+			@Override
+			public void run() {
+				System.out.println("Shutdown search server, release resources.");
+				FeatureSearch.fi.close();
+			}
+		});
+
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();
@@ -89,6 +99,27 @@ public class PhotoServer {
 				//pool.shutdown();
 			}
 		}
+	}
+	
+	public static String getDNSHtml(ServerConf conf) {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		String r = "";
+		
+		if (jedis == null) 
+			return "#FAIL: Get default jedis instance failed.";
+		
+		// get dns info
+		Map<String, String> dns = jedis.hgetAll("mm.dns");
+
+		if (dns != null && dns.size() > 0) {
+			for (Map.Entry<String, String> e : dns.entrySet()) {
+				r += e.getKey() + " -> " + e.getValue() + "<p/>";
+			}
+		} else {
+			r += "Not available.<p>";
+		}
+		RedisFactory.putInstance(jedis);
+		return r;
 	}
 	
 	public static String getServerInfoHtml(ServerConf conf) {

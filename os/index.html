@@ -1,0 +1,152 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>Image Searching</title>
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+</head>
+
+<body>
+
+	<div id="container">
+
+
+<!-- Begin Promotion Box -->
+		<div id="promo">
+			
+			<div class="promocontent">
+			
+			<h1>Image Search</h1>
+			
+			<p>Upload JPEG or PNG images to search.</p>
+			
+			<p>We support two types of features: SIMPLE and LIRE.</p>
+			
+			<form method="post" action="/os/" onsubmit="return check_form(this)" enctype="multipart/form-data">
+			
+			<p>
+				Choose Features :
+				<select name="feature">
+					<option value="0" selected>Simple_pHash_DCT</option>
+					<option value="1">LIRE</option>
+					<option value="-1">ALL</option>
+				</select>
+			</p>
+			
+			<p> SIMPLE Similarity : 
+				<select name="distance">
+					<option value="1">6.25%</option>
+					<option value="2">12.5%</option>
+					<option value="4" selected>25%</option>
+					<option value="8">50%</option>
+					<option value="12">75%</option>
+					<option value="16">100%-</option>
+				</select>
+			</p>
+			
+			<p>
+				SIMPLE FuzzyInBlocks :
+				<select name="BitDiff">
+					<option value="0" selected>Zero</option>
+					<option value="1">One</option>
+					<option value="2">Two</option>
+				</select>
+			</p>
+			
+			<p>
+				LIRE Result Size :
+				<select name="maxhits">
+					<option value="5">5</option>
+					<option value="10" selected>10</option>
+					<option value="20">20</option>
+					<option value="30">30</option>
+					<option value="40">40</option>
+					<option value="50">50</option>
+					<option value="100">100</option>
+				</select>
+			</p>
+			
+			<p>
+				LIRE Searchers :
+				<select name="searcher">
+					<option value="CEDD_HASHING">CEDD_HASHING</option>
+					<option value="CEDD" selected>CEDD</option>
+					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
+					<option value="FCTH">FCTH</option>
+					<option value="JCD">JCD</option>
+					<option value="PHOG">PHOG</option>
+					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
+					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
+					<option value="COLOR_LAYOUT">COLOR_LAYOUT</option>
+					<option value="EDGE_HISTOGRAM">EDGE_HISTOGRAM</option>
+					<option value="SURF">SURF BoVW</option>
+					
+					<!--
+					<option value="COLOR_HISTOGRAM">COLOR_HISTOGRAM</option>
+					<option value="GABOR">GABOR</option>
+					<option value="JPEG_COEFF_HISTOGRAM">JPEG_COEFF_HISTOGRAM</option>
+					<option value="LUMINANCE_LAYOUT">LUMINANCE_LAYOUT</option>
+					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
+					<option value="TAMURA">TAMURA</option>
+					-->
+				</select>
+			</p>
+			
+			<p>
+				LIRE Filter :
+				<select name="filter">
+					<option value="NONE" selected>None</option>
+					<option value="CEDD">CEDD</option>
+					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
+					<option value="FCTH">FCTH</option>
+					<option value="JCD">JCD</option>
+					<option value="PHOG">PHOG</option>
+					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
+					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
+					<option value="COLOR_LAYOUT">COLOR_LAYOUT</option>
+					<option value="EDGE_HISTOGRAM">EDGE_HISTOGRAM</option>
+
+					<!--
+					<option value="COLOR_HISTOGRAM">COLOR_HISTOGRAM</option>
+					<option value="GABOR">GABOR</option>
+					<option value="JPEG_COEFF_HISTOGRAM">JPEG_COEFF_HISTOGRAM</option>
+					<option value="LUMINANCE_LAYOUT">LUMINANCE_LAYOUT</option>
+					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
+					<option value="TAMURA">TAMURA</option>
+					-->
+				</select>
+			</p>
+			
+			<p>
+				Servers To Search :
+				<input type="text" name="servers"> </p>
+			</p>
+
+			<p>Image : <input type="file" name="file1"> </p>
+			
+			<p><input type="submit" name="submit" value="Submit" /></p>
+			
+			</form>
+			
+			</div>
+		
+		</div>
+<!-- End Promotion Box -->
+
+
+</body>
+<script type="text/javascript">
+
+function check_form(thisform)
+{
+	if (thisform.file1.value==null || thisform.file1.value=="")
+	{
+		alert("please choose an image.");
+		return false;
+	}
+}
+</script>
+</html>
+

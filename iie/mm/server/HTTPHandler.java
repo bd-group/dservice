@@ -201,6 +201,8 @@ public class HTTPHandler extends AbstractHandler {
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
 							"sockperserver = " + jedis.hget("mm.client.conf", "sockperserver") + "<p>" + 
 							"logdupinfo = " + jedis.hget("mm.client.conf", "dupinfo") + "<p>" + "</tt>" +
+							"<H2> MMServer DNS: </H2><tt>" +
+							PhotoServer.getDNSHtml(conf) + "</tt><p>" +
 							"<H1> #Useful Links:</H1><tt>" +
 							"<H2><tt><a href=/data>Active Data Sets</a></tt></H2>" +
 							"</tt>" +
@@ -386,32 +388,31 @@ public class HTTPHandler extends AbstractHandler {
 	}
 
 	private void doDedup(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
+		String volume = request.getParameter("vol");
 		Map<String, String> di = sp.getDedupInfo();
 		if (di == null)
 			return;
-		
 		TreeMap<String, SetStats> m = sp.getSetBlks();
 		if (m == null)
 			return;
+		int vol = 24, j = 0;
 		
 		String sdn = sp.getClientConfig("dupnum");
-		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
+		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		
 		//get all timestamp
 		TreeSet<String> allts = new TreeSet<String>();          
-		for (String setname : m.keySet()) {
-			if (Character.isDigit(setname.charAt(0)))
-				allts.add(setname);
-			else
-		   		allts.add(setname.substring(1));
-		}
 
 		//get all sets dup num
 		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
 		HashMap<String, Integer> tnum = new HashMap<String, Integer>();
 		for (Map.Entry<String, String> en : di.entrySet()) {
 			String setname = en.getKey().split("@")[0];
+			if (Character.isDigit(setname.charAt(0)))
+				allts.add(setname);
+			else
+				allts.add(setname.substring(1));
 			Integer n = dupnum.get(setname);
 			Integer t = tnum.get(setname);
 			int i = n == null ? 0 : n.intValue();
@@ -422,10 +423,18 @@ public class HTTPHandler extends AbstractHandler {
 
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Dedup Info</title> </head> <body>");
 		page.append("<H1> #Server Dedup Info </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + "} </H3> ");
+		page.append("<h3> 数据含义说明 </h3>");
+		page.append("A: 实际存储对象个数 <br>");
+		page.append("B: 检测到重复对象个数<br>");
+		page.append("C: 检测到重复对象占总写入量的百分比<br>");
+		page.append("D: 检测到重复对象（去重后）占实际存储对象个数的百分比<br><p/>");
 		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
 		Iterator<String> iter = allts.descendingIterator();
 
 		while (iter.hasNext()) {
+			if (vol > 0 && ++j > vol)
+				break;
 			String ts = iter.next();
 			Date date = null;
 			try {
@@ -434,6 +443,7 @@ public class HTTPHandler extends AbstractHandler {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch (NumberFormatException e){
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
@@ -453,10 +463,195 @@ public class HTTPHandler extends AbstractHandler {
 				b = (num == null ? 0 : num.intValue()) / idn;
 				c = a + b == 0 ? 0 : b / (double)(a + b);
 				if (a != 0 && tnum.get(key) != null) d = tnum.get(key) / (double)a; else d = 0.0;
-				page.append("<td>" + a + " <br> "+ b + "<br>" + (String.format("%.2f%%", c * 100)) + "<br>" + (String.format("%.2f%%", d * 100)) + "</td>");
+				page.append("<td>" + a + "<br>"+ b + "<br>" + (String.format("%.2f%%", c * 100)) + "<br>" + (String.format("%.2f%%", d * 100)) + "</td>");
 			}
 		}
 		page.append("</table></body> </html>");
+
+		response.setContentType("text/html;charset=utf-8");
+		response.setStatus(HttpServletResponse.SC_OK);
+		baseRequest.setHandled(true);
+		try {
+			response.getWriter().write(page.toString());
+			response.getWriter().flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+			try {
+				badResponse(baseRequest, response, e.getMessage());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+		}
+	}
+	
+	private void doDailydup(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
+		String volume = request.getParameter("vol");
+		int vol = 7, j = 0;
+		
+		Map<String, String> di = sp.getDedupInfo();
+		if (di == null)
+			return;
+
+		TreeMap<String, SetStats> m = sp.getSetBlks();
+		if (m == null)
+			return;
+
+		if (volume != null) {
+			if (volume.equalsIgnoreCase("all")) {
+				vol = -1;
+			} else {
+				try {
+					vol = Integer.parseInt(volume);
+				} catch (Exception e) {
+				}
+			}
+		}
+		String sdn = sp.getClientConfig("dupnum");
+		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+		DateFormat df2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+		//映射关系time -> type -> 
+		//一天存入系统的对象的数量，经过md5去重
+		TreeMap<String, HashMap<String, Set<String>>> dayreal = new TreeMap<String, HashMap<String, Set<String>>>();
+		//一天存入系统的对象的数量，不去重，把每个小时的对象数量相加
+		HashMap<String, HashMap<String, Integer>> daydup = new HashMap<String, HashMap<String, Integer>>();
+		//一天的重复数，mm.dedup.info的value相加的结果
+		HashMap<String, HashMap<String, Integer>> dayreal2 = new HashMap<String, HashMap<String, Integer>>();
+		//一天里发生重复的对象的个数
+		HashMap<String, HashMap<String, Set<String>>> daydup2 = new HashMap<String, HashMap<String, Set<String>>>();
+		//get all timestamp
+		TreeSet<String> allts = new TreeSet<String>();          
+		for (String setname : m.keySet()) {
+			if (Character.isDigit(setname.charAt(0)))
+				allts.add(setname);
+			else
+				allts.add(setname.substring(1));
+		}
+
+		//get all sets dup num
+		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
+		for (Map.Entry<String, String> en : di.entrySet()) {
+			String[] setmd5 = en.getKey().split("@");
+			String setname = setmd5[0];
+			String md5 = setmd5[1];
+			Integer n = dupnum.get(setname);
+			int i = n == null ? 0 : n.intValue();
+			i += Integer.parseInt(en.getValue());
+			dupnum.put(setname, i);
+
+			Date date = null;
+			long ts;
+			String type;
+			try {
+				if (Character.isDigit(setname.charAt(0))) {
+					type = "";
+					ts = Long.parseLong(setname);
+				} else {
+					type = setname.charAt(0) + "";
+					ts = Long.parseLong(setname.substring(1));
+				}
+				date = new Date(ts * 1000);
+			} catch(NumberFormatException e) {
+				System.out.println("Ignore timestamp " + setname);
+				continue;
+			}
+			String time = df.format(date);
+			if (!daydup2.containsKey(time))
+				daydup2.put(time, new HashMap<String, Set<String>>());
+			Set<String> md5s = daydup2.get(time).get(type); 
+			if (md5s == null)
+				md5s = new HashSet<String>();
+			md5s.add(md5);
+			daydup2.get(time).put(type, md5s);
+		}
+
+		String lastTs = null;
+		Iterator<String> iter = allts.descendingIterator();
+		while (iter.hasNext()) {
+			String ts = iter.next();
+			Date date = null;
+			try {
+				date = new Date(Long.parseLong(ts) * 1000);
+			} catch (NumberFormatException e){
+				System.out.println("Ignore timestamp " + ts);
+				continue;
+			}
+			lastTs = df2.format(date);
+			String time = df.format(date);
+			if (dayreal.size() == vol && !dayreal.containsKey(time))
+				break;
+			if (!dayreal.containsKey(time))
+				dayreal.put(time, new HashMap<String, Set<String>>());
+			if (!dayreal2.containsKey(time))
+				dayreal2.put(time, new HashMap<String, Integer>());
+			if (!daydup.containsKey(time))
+				daydup.put(time, new HashMap<String, Integer>());
+			Integer num = null;
+			String key = null;
+
+			for (MMType type : MMType.values()) {
+				key = getMMTypeSymbol(type) + ts;
+				Set<String> md5s = dayreal.get(time).get(getMMTypeSymbol(type));
+				if (md5s == null)
+					md5s = new HashSet<String>();
+				md5s.addAll(sp.getSetElements(key));
+
+				dayreal.get(time).put(getMMTypeSymbol(type), md5s);
+
+				Integer in = daydup.get(time).get(getMMTypeSymbol(type));
+				if (in == null)
+					in = 0;
+				num = dupnum.get(key);
+				in += (num == null ? 0 : num.intValue()) / idn;
+				daydup.get(time).put(getMMTypeSymbol(type), in);
+
+				Integer in2 = dayreal2.get(time).get(getMMTypeSymbol(type));
+				if (in2 == null)
+					in2 = 0;
+				SetStats ss = m.get(key);
+				int a = (int) (ss == null ? 0 : ss.rnr);
+				in2 += a;
+				dayreal2.get(time).put(getMMTypeSymbol(type), in2);
+			}
+		}
+		
+		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Daily Dup Info</title> </head> <body>");
+		page.append("<H1> #Server Daily Dup Info </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + "} </H3> ");
+		page.append("<h3> 数据含义说明 </h3>");
+		page.append("A: 真正对象个数（跨集合去重） <br>");
+		page.append("B: 实际存储象个数（多集合合并）<br>");
+		page.append("C: 检测到的重复的对象个数（跨集合去重） <br>");
+		page.append("D: 检测到的对象的重复次数 <br>");
+		page.append("E: 检测到的重复的对象个数占真正对象个数的百分比<br>");
+		page.append("F: 检测到的重复占总访问量的百分比<br><p/>");
+		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
+		int a = 0, b = 0 ,d, f;        
+		double c, g;
+		
+		for (String time : dayreal.descendingKeySet()) {
+			page.append("<tr align=\"right\"><td>" + time + "</td>");
+			for (MMType type : MMType.values()) {
+				a = dayreal.get(time).get(getMMTypeSymbol(type)).size();
+				b = daydup.get(time).get(getMMTypeSymbol(type));
+				if (daydup2.get(time) != null) {
+					Set<String> s1 = daydup2.get(time).get(getMMTypeSymbol(type));
+					f = s1 == null ? 0 :s1.size();
+				} else 
+					f = 0;
+				d = dayreal2.get(time).get(getMMTypeSymbol(type));
+				c = a == 0 ? 0 : f/(double)a;
+				g = (b + d) == 0 ? 0 : ((double)b / (d + b));
+				page.append("<td>" + a + "<br>" + d +"<br> "+ f + "<br> "+ b + "<br>" + 
+						(String.format("%.2f%%", c * 100)) + "<br>" + 
+						(String.format("%.2f%%", 100 * g)) + "</td>");
+			}
+			page.append("</tr>");
+		}
+		page.append("</table>");
+		page.append("<p>Last Checked Set Timestamp is : <font color=\"red\">" + lastTs + "</font> (not included)");
+		page.append("</p></body></html>");
 
 		response.setContentType("text/html;charset=utf-8");
 		response.setStatus(HttpServletResponse.SC_OK);
@@ -478,13 +673,24 @@ public class HTTPHandler extends AbstractHandler {
 		Map<String, String> di = sp.getDedupInfo();
 		TreeSet<String> tset = new TreeSet<String>();
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		String volume = request.getParameter("vol");
 		String sk = request.getParameter("k");
-		int k = 5;
+		int k = 5, vol = 24, j = 0;
 		
 		if (sk != null) {
 			try {
 				k = Integer.parseInt(sk);
 			} catch (NumberFormatException nfe) {
+			}
+		}
+		if (volume != null) {
+			if (volume.equalsIgnoreCase("all")) {
+				vol = -1;
+			} else {
+				try {
+					vol = Integer.parseInt(volume);
+				} catch (Exception e) {
+				}
 			}
 		}
 		TreeMap<String, Set<String>> allsets = new TreeMap<String, Set<String>>();
@@ -495,6 +701,7 @@ public class HTTPHandler extends AbstractHandler {
 				if (elements == null)
 					elements = new TreeSet<String>();
 				elements.add(keys[1]);
+				allsets.put(keys[0], elements);
 				if (Character.isDigit(keys[0].charAt(0)))
 					tset.add(keys[0]);
 				else
@@ -504,16 +711,20 @@ public class HTTPHandler extends AbstractHandler {
 		
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server P2P Info</title> </head> <body>");
 		page.append("<H1> #Server P2P CX Info </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + ",k=" + k + "} </H3> ");
 		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
 		Random rand = new Random();
 
 		for (String ts : tset.descendingSet()) {
 			Date date = null;
 			
+			if (vol > 0 && ++j > vol)
+				break;
 			try {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch (NumberFormatException e) {
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
@@ -577,13 +788,24 @@ public class HTTPHandler extends AbstractHandler {
 		TreeMap<String, HashMap<String, TopKeySet>> topd = new TreeMap<String, HashMap<String, TopKeySet>>();
 		String sdn = sp.getClientConfig("dupnum");
 		int idn = sdn == null ? 1 : Integer.parseInt(sdn);
+		String volume = request.getParameter("vol");
 		String sk = request.getParameter("k");
-		int k = 5;
+		int k = 5, vol = 24, j = 0;
 		
 		if (sk != null) {
 			try {
 				k = Integer.parseInt(sk);
 			} catch (NumberFormatException nfe) {
+			}
+		}
+		if (volume != null) {
+			if (volume.equalsIgnoreCase("all")) {
+				vol = -1;
+			} else {
+				try {
+					vol = Integer.parseInt(volume);
+				} catch (Exception e) {
+				}
 			}
 		}
 		for (Map.Entry<String, String> en : di.entrySet()) {
@@ -635,6 +857,7 @@ public class HTTPHandler extends AbstractHandler {
 
 		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Top Dup</title> </head> <body>");
 		page.append("<H1> #Server Top Dup </H1> ");
+		page.append("<H3> #Args:{vol=" + vol + ",k=" + k + "} </H3> ");
 		page.append("<table rules=\"all\" border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Set Timestamp</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td></tr>");
 
 		Iterator<String> iter = topd.descendingKeySet().iterator();
@@ -642,10 +865,14 @@ public class HTTPHandler extends AbstractHandler {
 		while (iter.hasNext()) {
 			String ts = iter.next();
 			Date date = null;
+			
+			if (vol > 0 && ++j > vol)
+				break;
 			try {
 				date = new Date(Long.parseLong(ts) * 1000);
 			} catch(NumberFormatException e){
 				System.out.println("Ignore timestamp " + ts);
+				--j;
 				continue;
 			}
 			String time = df.format(date);
@@ -720,170 +947,6 @@ public class HTTPHandler extends AbstractHandler {
 		}
 	}
 	
-	private void doDailydup(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) {
-		Map<String, String> di = sp.getDedupInfo();
-		if (di == null)
-			return;
-		
-		TreeMap<String, SetStats> m = sp.getSetBlks();
-		if (m == null)
-			return;
-		
-		String sdn = sp.getClientConfig("dupnum");
-		int idn = sdn==null ? 1 : Integer.parseInt(sdn);
-		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
-		
-		//映射关系time -> type -> 
-		//一天存入系统的对象的数量，经过md5去重
-		TreeMap<String, HashMap<String, Set<String>>> dayreal = new TreeMap<String, HashMap<String, Set<String>>>();
-		//一天存入系统的对象的数量，不去重，把每个小时的对象数量相加
-		HashMap<String, HashMap<String, Integer>> daydup = new HashMap<String, HashMap<String, Integer>>();
-		//一天的重复数，mm.dedup.info的value相加的结果
-		HashMap<String, HashMap<String, Integer>> dayreal2 = new HashMap<String, HashMap<String, Integer>>();
-		//一天里发生重复的对象的个数
-		HashMap<String, HashMap<String, Set<String>>> daydup2 = new HashMap<String, HashMap<String, Set<String>>>();
-		//get all timestamp
-		TreeSet<String> allts = new TreeSet<String>();          
-		for (String setname : m.keySet()) {
-			if (Character.isDigit(setname.charAt(0)))
-				allts.add(setname);
-			else
-		   		allts.add(setname.substring(1));
-		}
-
-		//get all sets dup num
-		HashMap<String, Integer> dupnum = new HashMap<String, Integer>();
-		for (Map.Entry<String, String> en : di.entrySet()) {
-			String[] setmd5 = en.getKey().split("@");
-			String setname = setmd5[0];
-			String md5 = setmd5[1];
-			Integer n = dupnum.get(setname);
-			int i = n == null ? 0 : n.intValue();
-			i += Integer.parseInt(en.getValue());
-			dupnum.put(setname, i);
-			
-			Date date = null;
-			long ts;
-			String type;
-			try{
-				if(Character.isDigit(setname.charAt(0)))
-				{
-					type = "";
-					ts = Long.parseLong(setname);
-				}
-				else {
-					type = setname.charAt(0)+"";
-					ts = Long.parseLong(setname.substring(1));
-				}
-				date = new Date(ts * 1000);
-			}catch(NumberFormatException e){
-				System.out.println("Ignore timestamp " + setname);
-				continue;
-			}
-			String time = df.format(date);
-			if(!daydup2.containsKey(time))		
-				daydup2.put(time, new HashMap<String, Set<String>>());
-			Set<String> md5s = daydup2.get(time).get(type);
-			if(md5s == null)
-				md5s = new HashSet<String>();
-			md5s.add(md5);
-			daydup2.get(time).put(type, md5s);
-		}
-		
-		Iterator<String> iter = allts.descendingIterator();
-		while (iter.hasNext()) {
-			String ts = iter.next();
-			Date date = null;
-			try{
-				if(Integer.parseInt(ts) < 1397095200)
-					continue;
-				date = new Date(Long.parseLong(ts) * 1000);
-			}catch(NumberFormatException e){
-				System.out.println("Ignore timestamp " + ts);
-				continue;
-			}
-			String time = df.format(date);
-			if(!dayreal.containsKey(time))		
-				dayreal.put(time, new HashMap<String, Set<String>>());
-			if(!dayreal2.containsKey(time))		
-				dayreal2.put(time, new HashMap<String, Integer>());
-			if(!daydup.containsKey(time))		
-				daydup.put(time, new HashMap<String, Integer>());
-			Integer num = null;
-			String key = null;
-			
-			for (MMType type : MMType.values()) {
-				key = getMMTypeSymbol(type) + ts;
-//				
-				Set<String> md5s = dayreal.get(time).get(getMMTypeSymbol(type));
-				if(md5s == null)
-					md5s = new HashSet<String>();
-				md5s.addAll(sp.getSetElements(key));
-				dayreal.get(time).put(getMMTypeSymbol(type), md5s);
-				
-				Integer in = daydup.get(time).get(getMMTypeSymbol(type));
-				if(in == null)
-					in = 0;
-				num = dupnum.get(key);
-				in += (num == null ? 0 : num.intValue()) / idn;
-				daydup.get(time).put(getMMTypeSymbol(type), in);
-				
-				Integer in2 = dayreal2.get(time).get(getMMTypeSymbol(type));
-				if(in2 == null)
-					in2 = 0;
-				SetStats ss = m.get(key);
-				int a = (int) (ss == null ? 0 : ss.rnr);
-				in2 += a;
-				dayreal2.get(time).put(getMMTypeSymbol(type), in2);
-//				a = (int) (ss == null ? 0 : ss.rnr);
-//				b = (num == null ? 0 : num.intValue()) / idn;
-//				c = a + b == 0 ? 0 : b / (double)(a + b);
-			}
-		}
-		StringBuilder page = new StringBuilder("<html> <head> <title>MM Server Daily Dup Info</title> </head> <body>");
-		page.append("<H1> #Server Daily Dup Info </H1> ");
-		page.append("<h3> 数据含义说明 </h3>");
-		page.append("对象个数，经过去重，相同的对象算一个 <br>实际存入系统的对象数量，未去重<br>");
-		page.append("发生重复的对象的个数<br>所有对象的重复次数<br>发生重复的对象的个数占实际对象数量的百分比<br>");
-		page.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr align=\"center\"> <td>Time</td><td>Text</td><td>Video</td><td>Audio</td><td>Image</td><td>Thumbnail</td><td>Application</td><td>Other</td> </tr>  ");
-		int a = 0, b = 0 ,d,f;        
-		double c;
-		for(String time : dayreal.descendingKeySet())
-		{
-			page.append("<tr align=\"right\"><td>" + time + "</td>");
-			for (MMType type : MMType.values()) {
-				a = dayreal.get(time).get(getMMTypeSymbol(type)).size();
-				b = daydup.get(time).get(getMMTypeSymbol(type));
-//				c = a + b == 0 ? 0 : b / (double)(a + b);
-				if(daydup2.get(time) != null){
-					Set<String> s1 = daydup2.get(time).get(getMMTypeSymbol(type));
-					f = s1 == null ? 0 :s1.size();
-				}else 
-					f = 0;
-				d = dayreal2.get(time).get(getMMTypeSymbol(type));
-				c = a == 0 ? 0 : f/(double)a;
-				page.append("<td>" + a + "<br>" + d +" <br> "+ f + " <br> "+ b + "<br>" + (String.format("%.2f%%", c * 100)) +  "</td>");
-			}
-			page.append("</tr>");
-		}
-		page.append("</table></body> </html>");
-
-		response.setContentType("text/html;charset=utf-8");
-		response.setStatus(HttpServletResponse.SC_OK);
-		baseRequest.setHandled(true);
-		try {
-			response.getWriter().write(page.toString());
-			response.getWriter().flush();
-		} catch (IOException e) {
-			e.printStackTrace();
-			try {
-				badResponse(baseRequest, response, e.getMessage());
-			} catch (IOException e1) {
-				e1.printStackTrace();
-			}
-		}
-	}
-	
 	public void handle(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
 //		System.out.println(target);
@@ -902,21 +965,17 @@ public class HTTPHandler extends AbstractHandler {
 			doData(target, baseRequest, request, response);
 		} else if (target.equalsIgnoreCase("/b")) {
 			doBrowse(target, baseRequest, request, response);
-		} else if (target.startsWith("/im/")){
-			doImageMatch(target, baseRequest, request, response);
+		} else if (target.startsWith("/im/")) {
+			badResponse(baseRequest, response, "#FAIL: Please use MM Object Searcher instead.");
 		} else if (target.startsWith("/dedup")){
 			doDedup(target, baseRequest, request, response);
 		} else if (target.startsWith("/topdup")){
 			doTopdup(target, baseRequest, request, response);
-		} else if (target.startsWith("/dailydup")){
-			try{
-				doDailydup(target, baseRequest, request, response);
-			}catch(Exception e){
-				e.printStackTrace();
-			}
+		} else if (target.startsWith("/dailydup")) {
+			doDailydup(target, baseRequest, request, response);
 		} else if (target.startsWith("/p2p")) {
 			try {
-			doP2p(target, baseRequest, request, response);
+				doP2p(target, baseRequest, request, response);
 			} catch (Exception e) {
 				e.printStackTrace();
 			}

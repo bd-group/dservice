@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2013-12-31 14:35:29 macan>
+# Time-stamp: <2014-04-20 17:38:02 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -14,6 +14,8 @@ MAKE = make
 
 GIT = env git
 GIT_SHA = `$(GIT) rev-parse HEAD`
+
+INOTIFY=inotify-tools-3.14
 
 COMPILE_DATE = `date`
 COMPILE_HOST = `hostname`
@@ -29,6 +31,7 @@ DSERVICE = dservice
 DEVMAP = devmap
 DEVMAP_SO = lib$(DEVMAP).so
 JTEST = Test
+WATCHER = watcher
 
 LUCENE_JAR = $(LCHOME)/lucene-core-4.2.1.jar
 LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-queries-4.2.1.jar:$(LCHOME)/lucene-sandbox-4.2.1.jar
@@ -40,9 +43,9 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
-MM_CP = $(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/*
+MM_CP = $(shell pwd)/lib/jedis-2.2.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool-1.6.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar
 
-CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP)
+CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/
 
 MMCC = build/libmmcc.so
 MMHC = build/libmmhc.so
@@ -52,7 +55,7 @@ DEMO = build/demo
 IIE = iie
 MSCLI = mscli
 
-OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class
+OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class $(WATCHER)
 
 all: $(OBJS) $(IIE) $(MSCLI)
 	@$(ECHO) -e "Build OK."
@@ -95,6 +98,16 @@ $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@
 	@mkdir -p build
 	@$(GCC) $(CFLAGS) -Llib $(DSERVICE).c jsmn.c -o build/$(DSERVICE) $(LDFLAGS)
+
+INOTIFY_DEPEND : 
+	@$(ECHO) -e " " MK INOTIFY
+	@if [ ! -d inotify-tools-3.14 ]; then tar zxvf inotify-tools-3.14.tar.gz; fi
+	@$(MAKE) --no-print-directory -C inotify-tools-3.14
+
+$(WATCHER): INOTIFY_DEPEND $(WATCHER).c
+	@$(ECHO) -e " " CC"\t" $@
+	@mkdir -p build
+	@$(GCC) -DHVFS_TRACING $(CFLAGS) -Llib -I$(INOTIFY)/libinotifytools/src/ $(WATCHER).c $(INOTIFY)/libinotifytools/src/.libs/libinotifytools.a -o build/$(WATCHER) $(LDFLAGS) -lhvfs
 
 $(DEVMAP_SO): $(DEVMAP).c devmap/DevMap.java
 	@javac -d build devmap/DevMap.java 
@@ -142,6 +155,7 @@ runcli : $(MSCLI)
 depend_clean:
 	@$(MAKE) --no-print-directory -C redis-2.8.2 clean
 	@$(MAKE) --no-print-directory -C hiredis clean
+	@$(MAKE) --no-print-directory -C inotify-tools-3.14 clean
 
 clean: depend_clean
 	-@rm -rf $(OBJS) *.o devmap_*.h *.class gmon.out *.jar build/*

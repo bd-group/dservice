@@ -1,7 +1,10 @@
 package iie.mm.client;
 
+import iie.mm.client.Feature.FeatureType;
+
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.UnknownHostException;
@@ -14,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+
+import javax.imageio.ImageIO;
 
 public class MMSClient {
 
@@ -233,7 +238,7 @@ public class MMSClient {
 				} while (true);
 				
 				System.out.println(Thread.currentThread().getId()+" --> cookies: " + cookies);
-				System.out.println(Thread.currentThread().getId()+" -->MGET nr " + keys.size() + " size " + size + "B : BW " + 
+				System.out.println(Thread.currentThread().getId()+" --> MGET nr " + keys.size() + " size " + size + "B : BW " + 
 						(size / (ttime / 1000000.0)) + " KB/s");
 				
 			} catch (IOException e) {
@@ -301,6 +306,7 @@ public class MMSClient {
 		String uri = null;
 		String mget_type = "all";
 		long mget_begin_time = 0;
+		List<String> osServers = null;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -446,6 +452,22 @@ public class MMSClient {
 					System.exit(0);
 				}
 				mget_begin_time = Long.parseLong(o.opt);
+			}
+			if (o.flag.equals("-os_servers")) {
+				if (o.opt == null) {
+					System.out.println("-os_servers SERVER");
+					System.exit(0);
+				}
+				String[] _t = o.opt.split(";");
+				if (_t != null) {
+					for (String t : _t) {
+						if (t != null && t.contains(":")) {
+							if (osServers == null)
+								osServers = new ArrayList<String>();
+							osServers.add(t);
+						}
+					}
+				}
 			}
 		}
 		
@@ -707,12 +729,7 @@ public class MMSClient {
 				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
 				System.out.println("get args: type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck + ", lmgt_th="+lmgt_th);
 				
-				try {
-					Thread.sleep(1000 * 1);
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
+
 				List<String> r;
 				try {
 					String rset = null;
@@ -726,10 +743,10 @@ public class MMSClient {
 					System.out.println("Got nr " + r.size() + " keys from Set " + rset + " in " + ((end - begin)) + " ms.");
 					
 					List<LMGetThread> lgets = new ArrayList<LMGetThread>();
-					int n = r.size()/lmgt_th;
+
+					int n = r.size() / lmgt_th;
 					for (int i = 0; i < lmgt_th; i++) {
-						
-						lgets.add(new LMGetThread(pcInfo, r.subList(i*n, (i+1)*n), lgt_docheck));
+						lgets.add(new LMGetThread(pcInfo, r.subList(i * n, (i + 1) * n), lgt_docheck));
 					}
 					
 					for (LMGetThread t : lgets) {
@@ -836,12 +853,6 @@ public class MMSClient {
 				System.out.println("Provide the set name, type(text,image,audio,video,application,thumbnail,other) and begin_time.");
 				System.out.println("get args: " + set + ", type " + mget_type + ", begin_time " + mget_begin_time + ", docheck=" + lgt_docheck);
 				
-				try {
-					Thread.sleep(1000 * 1);
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
 				List<String> r;
 				try {
 					String rset = null;
@@ -920,6 +931,46 @@ public class MMSClient {
 					} catch (IOException e) {
 						e.printStackTrace();
 					}
+				}
+			}
+			if (o.flag.equals("-fs")) {
+				if (o.opt == null) {
+					System.out.println("Provide the object path.");
+					break;
+				}
+				System.out.println("get args: " + o.opt);
+				File nf = new File(o.opt);
+				byte[] obj = new byte[(int) (nf.length())];
+				FileInputStream fis;
+				try {
+					fis = new FileInputStream(nf);
+					fis.read(obj);
+					fis.close();
+				} catch (FileNotFoundException e1) {
+					e1.printStackTrace();
+					break;
+				} catch (IOException e) {
+					e.printStackTrace();
+					break;
+				}
+				
+				List<Feature> features = new ArrayList<Feature>();
+				String hc;
+				try {
+					hc = new ImagePHash().getHash(ImageIO.read(nf));
+				} catch (IOException e1) {
+					e1.printStackTrace();
+					break;
+				}
+				features.add(new Feature(FeatureType.IMAGE_PHASH_ES, hc));
+				features.add(new Feature(FeatureType.IMAGE_LIRE));
+				try {
+					ResultSet rs = pcInfo.objectSearch(features, obj, osServers);
+					System.out.println(rs);
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-del")) {

@@ -5,6 +5,8 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
+import org.apache.commons.pool.impl.GenericObjectPool.Config;
+
 public class RedisFactory {
 	// for each ClientAPI, there should be one redisfactory
 	private ClientConf conf;

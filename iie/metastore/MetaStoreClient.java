@@ -16,6 +16,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
+import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.text.ParseException;
@@ -295,12 +296,34 @@ public class MetaStoreClient {
 			return "null";
 		
 		for (SplitValue sv : values) {
+			long value = 0;
+			try {
+				value = Long.parseLong(sv.getValue());
+			} catch (Exception e) {
+				value = -1;
+			}
+			String date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(value * 1000));
 			keys += sv.getSplitKeyName() + ",";
-			vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + ",";
+			if (value >= 0)
+				vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + "(" + date + "),";
+			else
+				vals += "L:" + sv.getLevel() + ":V:" + sv.getVerison() + ":" + sv.getValue() + ",";
 		}
 		r += "KEYS [" + keys + "], VALS [" + vals + "]";
 		
 		return r;
+	}
+	
+	public static String toStringSFLVS(int vs) {
+		switch (vs) {
+		case MetaStoreConst.MFileLocationVisitStatus.OFFLINE:
+			return "offline";
+		case MetaStoreConst.MFileLocationVisitStatus.ONLINE:
+			return "online";
+		case MetaStoreConst.MFileLocationVisitStatus.SUSPECT:
+			return "suspect";
+		}
+		return "unknown";
 	}
 	
 	public static String toStringSFile(SFile file) {
@@ -324,7 +347,7 @@ public class MetaStoreClient {
 			for (SFileLocation loc : file.getLocations()) {
 				r += loc.getNode_name() + ":" + loc.getDevid() + ":"
 						+ loc.getLocation() + ":" + loc.getRep_id() + ":"
-						+ loc.getUpdate_time() + ":" + loc.getVisit_status()
+						+ loc.getUpdate_time() + ":" + toStringSFLVS(loc.getVisit_status())
 						+ ":" + loc.getDigest() + "\n";
 			}
 		} else {
@@ -337,11 +360,15 @@ public class MetaStoreClient {
 	
 	public static class FgetThread extends Thread {
 		private MetaStoreClient cli;
+		public String serverName;
+		public int serverPort;
 		public long begin, end, sum;
 		public boolean getlen = true;
 		public TreeMap<Long, Map<String, FileStat>> fmap;
 		
-		public FgetThread(MetaStoreClient cli, TreeMap<Long, Map<String, FileStat>> fmap, long begin, long end, boolean getlen) {
+		public FgetThread(MetaStoreClient cli, String serverName, int serverPort, 
+				TreeMap<Long, Map<String, FileStat>> fmap, long begin, long end, 
+				boolean getlen) {
 			this.cli = cli;
 			this.begin = begin;
 			this.end = end;
@@ -371,6 +398,10 @@ public class MetaStoreClient {
 					e.printStackTrace();
 				} catch (TException e) {
 					e.printStackTrace();
+					cli = null;
+					while (cli == null) {
+						cli = __reconnect(serverName, serverPort);
+					}
 				}
 				sum = i + 1000;
 			}
@@ -660,6 +691,29 @@ public class MetaStoreClient {
 		}
 	}
 	
+	public static MetaStoreClient __reconnect(String serverName, int serverPort) {
+		MetaStoreClient tcli = null;
+		int err = 0;
+
+		if (serverName == null)
+			try {
+				tcli = new MetaStoreClient();
+			} catch (MetaException e) {
+				e.printStackTrace();
+				err = -1;
+			}
+		else
+			try {
+				tcli = new MetaStoreClient(serverName, serverPort);
+			} catch (MetaException e) {
+				e.printStackTrace();
+				err = -1;
+			}
+		if (err == 0)
+			tcli.client.setTimeout(120);
+		return tcli;
+	}
+	
 	public static void update_fmap(MetaStoreClient cli, int lfdc_thread, String serverName, int serverPort,
 			TreeMap<Long, Map<String, FileStat>> fmap, long from, long to, 
 			boolean getlen) {
@@ -681,7 +735,9 @@ public class MetaStoreClient {
 					e.printStackTrace();
 					System.exit(0);
 				}
-			fgts.add(new FgetThread(tcli, fmap, from + i * ((to - from) / lfdc_thread), 
+			tcli.client.setTimeout(120);
+			fgts.add(new FgetThread(tcli, serverName, serverPort, fmap, 
+					from + i * ((to - from) / lfdc_thread), 
 					from + (i + 1) * ((to - from) / lfdc_thread), getlen));
 		}
 		for (FgetThread t : fgts) {
@@ -807,6 +863,7 @@ public class MetaStoreClient {
 	    String dfl_dev = null, dfl_location = null;
 	    String dfl_file = null;
 	    int fls_op = -1;
+	    int old_port = 8111, new_port = 10101;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -860,6 +917,7 @@ public class MetaStoreClient {
 	    		System.out.println("-fcr : create a new file and return the fid.");
 	    		System.out.println("-fcl : close the file.");
 	    		System.out.println("-fcd : delete the file.");
+	    		System.out.println("-gbn : get a file by SFL keys.");
 	    		System.out.println("-ofl : offline a file location.");
 	    		System.out.println("-dfl : delete a file location and remove the physical data.");
 	    		System.out.println("-dflf: delete a file location (read from a file).");
@@ -902,6 +960,7 @@ public class MetaStoreClient {
 	    		System.out.println("-avglen : get avg len by table split value.");
 	    		System.out.println("-scrub  : into scrub mode, do auto clean.");
 	    		System.out.println("-fls    : control FLSelector watch list.");
+	    		System.out.println("-statchk: do OldMS/NewMS file/filelocation status check.");
 	    		
 	    		System.out.println("\n[Test]");
 	    		System.out.println("-pp    : ping pong latency test.");
@@ -1761,7 +1820,86 @@ public class MetaStoreClient {
 	    		try {
 					boolean res = cli.client.flSelectorWatch(dbName + "." + tableName, fls_op);
 					System.out.println("Control FLSelector OP=" + (fls_op == 0 ? "ADD" :
-						(fls_op == 1 ? "DEL" : "FLUSH")) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
+						(fls_op == 1 ? "DEL" : 
+							(fls_op == 2 ? "FLUSH" : "REPR " + (fls_op >> 8)))) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
+				} catch (MetaException e) {
+					e.printStackTrace();
+					break;
+				} catch (TException e) {
+					e.printStackTrace();
+					break;
+				}
+	    	}
+	    	if (o.flag.equals("-statchk")) {
+	    		// do OldMS/NewMS file/filelocation status check
+	    		if (old_port < 0 || new_port < 0) {
+	    			System.out.println("Please provide -old_port # and -new_port #");
+	    			System.exit(0);
+	    		}
+	    		System.out.println("OldMS port " + old_port + ", NewMS port " + new_port);
+	    		MetaStoreClient oldms, newms;
+	    		try {
+					oldms = new MetaStoreClient(serverName, old_port);
+					newms = new MetaStoreClient(serverName, new_port);
+					long maxfid = 0;
+					
+					maxfid = newms.client.getMaxFid();
+					for (long i = 0; i < maxfid; i++) {
+						SFile nf = null, of = null;
+						boolean isOldExist = true, isNewExist = true;
+						boolean isSFLOk = false;
+						
+						try { 
+							nf = newms.client.get_file_by_id(i);
+						} catch (Exception e) {
+							isNewExist = false;
+						}
+						try {
+							of = oldms.client.get_file_by_id(i);
+						} catch (Exception e) {
+							isOldExist = false;
+						}
+						if (isOldExist != isNewExist) {
+							System.out.println("Mismatch SFile " + i + " by EXIST {OLD " + 
+									isOldExist + ", NEW " + isNewExist + "}");
+							continue;
+						}
+						if (nf == null || of == null) 
+							continue;
+						if (nf.getStore_status() != of.getStore_status()) {
+							System.out.println("Mismatch SFile " + i + " by STORE_STATUS {OLD " + 
+									of.getStore_status() + ", NEW " + nf.getStore_status() + "}");
+						}
+						if (nf.getLocationsSize() != of.getLocationsSize()) {
+							System.out.println("Mismatch SFile " + i + " by SFL SIZE {OLD " + 
+									of.getLocationsSize() + ", NEW " + nf.getLocationsSize() + "}");
+						}
+						if (nf.getLocations() == null && of.getLocations() == null)
+							isSFLOk = true;
+						if (nf.getLocations() == null || of.getLocations() == null)
+							continue;
+						isSFLOk = true;
+						for (SFileLocation nsfl : nf.getLocations()) {
+							boolean isOK = false;
+							for (SFileLocation osfl: of.getLocations()) {
+								if (nsfl.getDevid().equals(osfl.getDevid()) && 
+										nsfl.getLocation().equals(osfl.getLocation()) && 
+										nsfl.getRep_id() == osfl.getRep_id() &&
+										nsfl.getVisit_status() == osfl.getVisit_status()) {
+									isOK = true;
+									break;
+								}
+							}
+							if (!isOK) {
+								isSFLOk = false;
+								break;
+							}
+						}
+						if (!isSFLOk) {
+							System.out.println("Mismatch SFile " + i + " by SFL {OLD " + 
+									of.getLocations() + ", NEW " + nf.getLocations() + "}");
+						}
+					}
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -1927,6 +2065,7 @@ public class MetaStoreClient {
 				Double target_ratio = 0.15;
 				List<ScrubRule> srl = new ArrayList<ScrubRule>();
 				
+				cli.client.setTimeout(120);
 				if (scrub_rule != null) {
 					String[] rules = scrub_rule.split(";");
 					for (int i = 0; i < rules.length; i++) {
@@ -1940,8 +2079,8 @@ public class MetaStoreClient {
 							if (r2.length >= 4) {
 								ScrubRule sr = new ScrubRule();
 								sr.type = r2[0].substring(1);
-								sr.soft = new Double(Double.parseDouble(r2[2])).intValue() * 24;
-								sr.hard = new Double(Double.parseDouble(r2[3])).intValue() * 24;
+								sr.soft = new Double(Double.parseDouble(r2[2]) * 24.0).intValue();
+								sr.hard = new Double(Double.parseDouble(r2[3]) * 24.0).intValue();
 								if (r2[1].equalsIgnoreCase("del")) {
 									sr.action = ScrubRule.ScrubAction.DELETE;
 								} else if (r2[1].equalsIgnoreCase("drep")) {
@@ -2138,10 +2277,20 @@ public class MetaStoreClient {
 						}
 					} catch (MetaException e1) {
 						e1.printStackTrace();
+						if (e1.getCause() instanceof ConnectException) {
+							cli = null;
+							while (cli == null) {
+								cli = __reconnect(serverName, serverPort);
+							}
+							continue;
+						}
 						break;
 					} catch (TException e1) {
 						e1.printStackTrace();
-						break;
+						cli = null;
+						while (cli == null) {
+							cli = __reconnect(serverName, serverPort);
+						}
 					}
 				}
 			}	
@@ -2518,11 +2667,15 @@ public class MetaStoreClient {
 							for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
 								System.out.print(e.getKey() + ":" + e.getValue().fids + "; ");
 								for (Long fid : e.getValue().fids) {
-									SFile f = cli.client.get_file_by_id(fid);
-									if (statfs2_del)
-										cli.client.rm_file_physical(f);
-									else
-										cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
+									try {
+										SFile f = cli.client.get_file_by_id(fid);
+										if (statfs2_del)
+											cli.client.rm_file_physical(f);
+										else
+											cli.client.set_file_repnr(f.getFid(), f.getRep_nr() > 1 ? f.getRep_nr() - 1 : 1);
+									} catch (FileOperationException foe) {
+										// ignore it
+									}
 								}
 							}
 							System.out.println();
@@ -2640,6 +2793,36 @@ public class MetaStoreClient {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
 					break;
+				}
+			}
+			if (o.flag.equals("-gbn")) {
+				// get a file by sfl keys
+				if (dfl_dev == null || dfl_location == null) {
+					System.out.println("Please set -dfl_dev and -dfl_location.");
+					System.exit(0);
+				}
+				SFile f;
+				try {
+					f = cli.client.get_file_by_name("", dfl_dev, dfl_location);
+					if (f != null) {
+						System.out.println("Read file: " + toStringSFile(f));
+						// iterator on file locations
+						if (f.getLocationsSize() > 0) {
+							for (SFileLocation sfl : f.getLocations()) {
+								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+								System.out.println("ssh " + sfl.getNode_name() + " ls -l " + mp + "/" + sfl.getLocation());
+							}
+						}
+					}
+				} catch (FileOperationException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (MetaException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
 			}
 			if (o.flag.equals("-ofl")) {
