@@ -65,6 +65,10 @@ import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocolException;
 import org.apache.thrift.transport.TTransportException;
 
+import com.alibaba.fastjson.JSON;
+
+import redis.clients.jedis.Jedis;
+
 import devmap.DevMap;
 import devmap.DevMap.DevStat;
 
@@ -324,6 +328,22 @@ public class MetaStoreClient {
 			return "suspect";
 		}
 		return "unknown";
+	}
+	
+	public static String toStringSFileLocation(SFileLocation sfl) {
+		String r = "<";
+		
+		r += "fid:" + sfl.getFid() + 
+				", node:" + sfl.getNode_name() + 
+				", dev:" + sfl.getDevid() + 
+				", location:" + sfl.getLocation() + 
+				", repid:" + sfl.getRep_id() + 
+				", updateTs:" + sfl.getUpdate_time() + 
+				", visit_status:" + toStringSFLVS(sfl.getVisit_status()) + 
+				", digest:" + sfl.getDigest();
+		r += ">";
+		
+		return r;
 	}
 	
 	public static String toStringSFile(SFile file) {
@@ -961,6 +981,8 @@ public class MetaStoreClient {
 	    		System.out.println("-scrub  : into scrub mode, do auto clean.");
 	    		System.out.println("-fls    : control FLSelector watch list.");
 	    		System.out.println("-statchk: do OldMS/NewMS file/filelocation status check.");
+	    		System.out.println("-rchk   : NewMS redis index/content check.");
+	    		System.out.println("-rfix   : NewMS redis index/content check and fix.");
 	    		
 	    		System.out.println("\n[Test]");
 	    		System.out.println("-pp    : ping pong latency test.");
@@ -1829,6 +1851,276 @@ public class MetaStoreClient {
 					e.printStackTrace();
 					break;
 				}
+	    	}
+	    	if (o.flag.equals("-rchk")) {
+	    		// NewMS redis index/content check
+	    		String rhost;
+	    		int rport;
+	    		
+	    		if (o.opt == null) {
+	    			System.out.println("Usage: -rchk redis_server:redis_port");
+	    			break;
+	    		}
+	    		String[] sp = o.opt.split(":");
+	    		if (sp.length < 2) {
+	    			System.out.println("Usage: -rchk redis_server:redis_port");
+	    			break;
+	    		}
+	    		rhost = sp[0];
+	    		rport = Integer.parseInt(sp[1]);
+	    		try {
+	    			Jedis jedis = new Jedis(rhost, rport, 120 * 1000);
+	    			int i = 0, sfnr = 0, sflnr = 0;
+	    			
+	    			// Step 0: check list table index/content
+	    			System.out.println("Checking list table index/content ...");
+	    			Set<String> tables = jedis.keys("sf.ltf.*");
+	    			for (String table : tables) {
+	    				Set<String> fids = jedis.zrange(table, 0, -1);
+	    				if (fids != null && fids.size() > 0) {
+	    					System.out.println("Table " + table.substring(7) + " contains " + fids.size() + " files.");
+	    					for (String fid : fids) {
+	    						SFile f = cli.client.get_file_by_id(Integer.parseInt(fid));
+	    						if (!table.substring(7).equalsIgnoreCase(f.getDbName() + "." + f.getTableName())) {
+	    							System.out.println("FID " + f.getFid() + " table from " + table.substring(7) + 
+	    									" to " + f.getDbName() + "." + f.getTableName());
+	    						}
+	    					}
+	    				}
+	    			}
+	    			
+	    			// Step 1: check file index/content
+	    			System.out.println("Checking sfile index/content ...");
+	    			for (i = 0; i < 5; i++) {
+	    				Set<String> sfstat = jedis.smembers("sf.stat." + i);
+	    				long nr = jedis.scard("sf.stat." + i);
+	    				if (sfstat == null && nr != 0) {
+	    					System.out.println("[SUSPECT] SF Index " + i + " is inconsistent [null].");
+	    				} else {
+	    					System.out.println("[INFO]    SF Index " + i + " smembers " + sfstat.size() + " scard " + nr);
+	    				}
+	    				if (sfstat != null && sfstat.size() > 0) {
+	    					System.out.println("sf.stat." + i + " member size = " + sfstat.size());
+	    					for (String fid : sfstat) {
+	    						SFile f = null;
+
+	    						try {
+	    							f = cli.client.get_file_by_id(Long.parseLong(fid));
+	    						} catch (FileOperationException foe) {
+	    						}
+	    						if (f == null) {
+	    							System.out.println("SF  Index " + i + " fid " + fid + " not exists.");
+	    							// ignore it, delete it manually.
+	    						} else if (i != f.getStore_status()) {
+	    							sfnr++;
+	    							System.out.println("SF  Index " + i + ", SFile " + toStringSFile(f));
+	    							// if sf.index == 0 && sf.content.status == 0, ok
+	    							// if sf.index == 0 && sf.content.status == 1, ignore it
+	    							// if sf.index == 0 && sf.content.status == 2/3/4, fix it
+	    							// if sf.index == 1 && sf.content.status == 0, ignore it
+	    							// if sf.index == 1 && sf.content.status == 1, ok
+	    							// if sf.index == 1 && sf.content.status == 2, ignore it
+	    							// if sf.index == 2 && sf.content.status == 0, ignore it
+	    							// if sf.index == 2 && sf.content.status == 1, ignore it
+	    							// if sf.index == 2 && sf.content.status == 2, ok
+	    							// if sf.index == 4 && sf.content.status != 4, fix it
+	    						}
+	    					}
+	    				}
+	    			}
+	    			System.out.println("---> SF  check failed " + sfnr);
+	    			// Step 2: check SFL  index/content
+	    			System.out.println("Checking sfilelocation index/content ...");
+	    			for (i = 0; i < 3; i++) {
+	    				Set<String> sflstat = jedis.smembers("sfl.stat." + i);
+	    				long nr = jedis.scard("sfl.stat." + i);
+	    				if (sflstat == null && nr != 0) {
+	    					System.out.println("[SUSPECT] SFL Index " + i + " is inconsistent [null].");
+	    				} else {
+	    					System.out.println("[INFO]    SFL Index " + i + " smembers " + sflstat.size() + " scard " + nr);
+	    				}
+	    				if (sflstat != null && sflstat.size() > 0) {
+	    					System.out.println("sfl.stat." + i + " member size = " + sflstat.size());
+	    					for (String sfl : sflstat) {
+	    						String js = jedis.hget("sfilelocation", sfl);
+	    						if (js != null) {
+	    							SFileLocation l = JSON.parseObject(js, SFileLocation.class);
+	    							if (l != null && l.getVisit_status() != i) {
+	    								System.out.println("SFL Index " + i + ", SFileLocation " + toStringSFileLocation(l));
+	    								sflnr++;
+	    							}
+	    						}
+	    					}
+	    				}
+	    			}
+	    			System.out.println("---> SFL check failed " + sflnr);
+	    			
+	    			// Step 3: check DEV  index/content
+	    			jedis.quit();
+	    		} catch (Exception e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
+	    	if (o.flag.equals("-rfixltf")) {
+	    		// NewMS redis list table index/content check and fix
+	    		String rhost;
+	    		int rport;
+	    		
+	    		if (o.opt == null) {
+	    			System.out.println("Usage: -rfixltf redis_server:redis_port");
+	    			break;
+	    		}
+	    		String[] sp = o.opt.split(":");
+	    		if (sp.length < 2) {
+	    			System.out.println("Usage: -rfixltf redis_server:redis_port");
+	    			break;
+	    		}
+	    		rhost = sp[0];
+	    		rport = Integer.parseInt(sp[1]);
+	    		try {
+	    			Jedis jedis = new Jedis(rhost, rport, 120 * 1000);
+	    			int i = 0;
+	    			String script = "local score = redis.call('zscore',KEYS[1],ARGV[1]);"
+	    					+ "if not score then "        //lua里只有false和nil被认为是逻辑的非
+	    					+ "local size = redis.call('zcard',KEYS[1]);"
+	    					+ "return redis.call('zadd',KEYS[1],size,ARGV[1]); end";
+	    			String sha = jedis.scriptLoad(script);
+	    			
+	    			// Step 1: check list table index/content
+	    			System.out.println("Checking list table index/content ...");
+	    			Set<String> tables = jedis.keys("sf.ltf.*");
+	    			for (String table : tables) {
+	    				Set<String> fids = jedis.zrange(table, 0, -1);
+	    				if (fids != null && fids.size() > 0) {
+	    					for (String fid : fids) {
+	    						SFile f = cli.client.get_file_by_id(Integer.parseInt(fid));
+	    						if (!table.substring(7).equalsIgnoreCase(f.getDbName() + "." + f.getTableName())) {
+	    							System.out.println("Update FID " + f.getFid() + " table from " + table.substring(7) + 
+	    									" to " + f.getDbName() + "." + f.getTableName());
+	    							jedis.evalsha(sha, 1, new String[]{"sf.ltf." + f.getDbName() + "." + f.getTableName(), fid});
+	    							jedis.zrem(table, fid);
+	    						}
+	    					}
+	    				}
+	    			}
+	    			// Step 3: check DEV  index/content
+	    			jedis.quit();
+	    		} catch (Exception e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
+	    	}
+	    	if (o.flag.equals("-rfix")) {
+	    		// NewMS redis index/content check and fix
+	    		String rhost;
+	    		int rport;
+	    		
+	    		if (o.opt == null) {
+	    			System.out.println("Usage: -rchk redis_server:redis_port");
+	    			break;
+	    		}
+	    		String[] sp = o.opt.split(":");
+	    		if (sp.length < 2) {
+	    			System.out.println("Usage: -rchk redis_server:redis_port");
+	    			break;
+	    		}
+	    		rhost = sp[0];
+	    		rport = Integer.parseInt(sp[1]);
+	    		try {
+	    			Jedis jedis = new Jedis(rhost, rport, 120 * 1000);
+	    			int i = 0;
+	    			
+	    			// Step 1: check file index/content
+	    			System.out.println("Checking sfile index/content ...");
+	    			for (i = 0; i < 5; i++) {
+	    				Set<String> sfstat = jedis.smembers("sf.stat." + i);
+	    				long nr = jedis.scard("sf.stat." + i);
+	    				if (sfstat == null && nr != 0) {
+	    					System.out.println("[SUSPECT] SF Index " + i + " is inconsistent [null].");
+	    				} else {
+	    					System.out.println("[INFO]    SF Index " + i + " smembers " + sfstat.size() + " scard " + nr);
+	    				}
+	    				if (sfstat != null && sfstat.size() > 0) {
+	    					System.out.println("sf.stat." + i + " member size = " + sfstat.size());
+	    					for (String fid : sfstat) {
+	    						SFile f = null;
+
+	    						try {
+	    							f = cli.client.get_file_by_id(Long.parseLong(fid));
+	    						} catch (FileOperationException foe) {
+	    						}
+	    						if (f == null) {
+	    							System.out.println("SF  Index " + i + " fid " + fid + " not exists.");
+	    							// ignore it, delete it manually.
+	    						} else if (i != f.getStore_status()) {
+	    							// if sf.index == 0 && sf.content.status == 2/3/4, fix it
+	    							// if sf.index == 4 && sf.content.status != 4, fix it
+	    							if (i == 0 && (f.getStore_status() == 2 || f.getStore_status() == 3 || f.getStore_status() == 4)) {
+	    								System.out.println("Update fid " + fid + " index state from " + i + " to " + f.getStore_status());
+	    								jedis.srem("sf.stat." + i, fid);
+	    								jedis.sadd("sf.stat." + f.getStore_status(), fid);
+	    							}
+	    							if (i == 1 && (f.getStore_status() == 2 || f.getStore_status() == 1)) {
+	    								do {
+	    									System.out.print("Update fid " + fid + " index state from " + i + " to " + f.getStore_status() + " Y/N?");
+	    									int rd = System.in.read();
+	    									if (rd == 'Y') {
+	    										jedis.srem("sf.stat." + i, fid);
+	    										jedis.sadd("sf.stat." + f.getStore_status(), fid);
+	    										System.in.skip(System.in.available());
+	    										break;
+	    									} else if (rd == 'N') {
+	    										System.in.skip(System.in.available());
+	    										break;
+	    									}
+	    								} while (true);
+	    							}
+	    						}
+	    					}
+	    				}
+	    			}
+	    			// Step 2: check SFL  index/content
+	    			System.out.println("Checking sfilelocation index/content ...");
+	    			for (i = 0; i < 3; i++) {
+	    				Set<String> sflstat = jedis.smembers("sfl.stat." + i);
+	    				long nr = jedis.scard("sfl.stat." + i);
+	    				if (sflstat == null && nr != 0) {
+	    					System.out.println("[SUSPECT] SFL Index " + i + " is inconsistent [null].");
+	    				} else {
+	    					System.out.println("[INFO]    SFL Index " + i + " smembers " + sflstat.size() + " scard " + nr);
+	    				}
+	    				if (sflstat != null && sflstat.size() > 0) {
+	    					System.out.println("sfl.stat." + i + " member size = " + sflstat.size());
+	    					for (String sfl : sflstat) {
+	    						String js = jedis.hget("sfilelocation", sfl);
+	    						if (js != null) {
+	    							SFileLocation l = JSON.parseObject(js, SFileLocation.class);
+	    							if (l != null && l.getVisit_status() != i) {
+	    								do {
+	    									System.out.print("Update FID " + l.getFid() + " SFL Index " + i + " to " + l.getVisit_status() + " Y/N?");
+	    									int rd = System.in.read();
+	    									if (rd == 'Y') {
+	    										jedis.srem("sfl.stat." + i, sfl);
+	    										jedis.sadd("sfl.stat." + l.getVisit_status(), sfl);
+	    										System.in.skip(System.in.available());
+	    										break;
+	    									} else if (rd == 'N') {
+	    										System.in.skip(System.in.available());
+	    										break;
+	    									}
+	    								} while (true);
+	    							}
+	    						}
+	    					}
+	    				}
+	    			}
+	    			// Step 3: check DEV  index/content
+	    			jedis.quit();
+	    		} catch (Exception e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
 	    	}
 	    	if (o.flag.equals("-statchk")) {
 	    		// do OldMS/NewMS file/filelocation status check
