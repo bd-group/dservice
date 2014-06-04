@@ -10,7 +10,7 @@ public class Feature implements Serializable {
 	private static final long serialVersionUID = 6515904314644662715L;
 	
 	public enum FeatureType {
-		IMAGE_PHASH_ES, IMAGE_LIRE,
+		IMAGE_PHASH_ES, IMAGE_LIRE, IMAGE_FACES,
 	}
 	
 	public enum FeatureLIREType {
@@ -18,6 +18,7 @@ public class Feature implements Serializable {
 		EDGE_HISTOGRAM, FCTH, GABOR, CEDD_HASHING, JCD, JOINT_HISTOGRAM,
 		JPEG_COEFF_HISTOGRAM, LUMINANCE_LAYOUT, OPPONENT_HISTOGRAM,
 		PHOG, SCALABLE_COLOR, TAMURA, SURF, NONE,
+		ZH,
 	}
 
 	public static FeatureLIREType getFeatureLIREType(String typeStr) {
@@ -57,6 +58,8 @@ public class Feature implements Serializable {
 			type = FeatureLIREType.TAMURA;
 		} else if (typeStr.equalsIgnoreCase("SURF")) {
 			type = FeatureLIREType.SURF;
+		} else if (typeStr.equalsIgnoreCase("ZH")) {
+			type = FeatureLIREType.ZH;
 		} else if (typeStr.equalsIgnoreCase("NONE")) {
 			type = FeatureLIREType.NONE;
 		}
@@ -67,6 +70,7 @@ public class Feature implements Serializable {
 	public class FeatureTypeString {
 		public static final String IMAGE_PHASH_ES = "image_phash_es";
 		public static final String IMAGE_LIRE = "image_lire";
+		public static final String IMAGE_FACES = "image_faces";
 	}
 
 	public FeatureType type;

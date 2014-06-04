@@ -8,11 +8,19 @@ import iie.mm.client.ResultSet;
 import iie.mm.client.ResultSet.Result;
 
 import java.awt.image.BufferedImage;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 
 import javax.imageio.ImageIO;
@@ -34,6 +42,7 @@ import redis.clients.jedis.Tuple;
 public class MMObjectSearcherHandler extends AbstractHandler {
 	private SearcherConf conf;
 	private ClientAPI ca = new ClientAPI();
+	private static Random rand = new Random();
 	
 	public MMObjectSearcherHandler(SearcherConf conf) throws Exception {
 		this.conf = conf;
@@ -96,6 +105,17 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 		return image;
 	}
 	
+	public static String saveImage(byte[] b) throws IOException {
+		String path = "/cache/" + rand.nextInt(999999999);
+		File f = new File("." + path);
+		FileOutputStream fos = new FileOutputStream(f);
+		BufferedOutputStream bos = new BufferedOutputStream(fos);
+		bos.write(b);
+		bos.flush();
+		bos.close();
+		return path;
+	}
+	
 	public ResultSet imageSearch(int ifeature, byte[] obj, int d, int bitDiff,
 			int lire_maxhits, String lire_searcher, String lire_filter, 
 			List<String> osServers) throws IOException {
@@ -120,20 +140,17 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 			args1.add(lire_filter);
 			features.add(new Feature(FeatureType.IMAGE_LIRE, args1));
 			break;
+		case 2:
+			List<String> args2 = new ArrayList<String>();
+			args2.add(lire_maxhits + "");
+			args2.add(lire_searcher);
+			args2.add(lire_filter);
+			features.add(new Feature(FeatureType.IMAGE_FACES, args2));
+			break;
 		case -1:
 		default:
 			for (FeatureType feature : conf.getFeatures()) {
 				switch (feature) {
-				case IMAGE_PHASH_ES: {
-					List<String> args2 = new ArrayList<String>();
-					ByteArrayInputStream bais = new ByteArrayInputStream(obj);
-					BufferedImage bi = ImageIO.read(bais);
-					String hc = new ImagePHash().getHash(bi);
-					args2.add(d + "");
-					args2.add(bitDiff + "");
-					features.add(new Feature(feature, args2, hc));
-					break;
-				}
 				case IMAGE_LIRE: {
 					List<String> args3 = new ArrayList<String>();
 					args3.add(lire_maxhits + "");
@@ -142,6 +159,16 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 					features.add(new Feature(feature, args3));
 					break;
 				}
+				case IMAGE_FACES: {
+					List<String> args4 = new ArrayList<String>();
+					args4.add(lire_maxhits + "");
+					args4.add(lire_searcher);
+					args4.add(lire_filter);
+					features.add(new Feature(feature, args4));
+					break;
+				}
+				default:
+					break;
 				}
 			}
 		}
@@ -244,13 +271,17 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 				ResultSet rs = imageSearch(feature, obj, distance, bitDiff, lire_maxhits, lire_searcher, lire_filter, osServers);
 				long endTs = System.currentTimeMillis();
 				String page = "<HTML><HEAD> <TITLE> Feature based MM Object Search </TITLE> </HEAD>"
-						+ "<BODY><H1>Search Results: </H1><UL>" 
-						+ "<H2>File '" + filePath + "' matches " + rs.getSize() + " files in " + (endTs - beginTs) + " ms.</H2>";
+						+ "<BODY><H1>Search Results: </H1><ul>";
+				String spath = saveImage(obj);
+				if (spath != null) {
+					page += "<li> Original Image <br><img width=\"100\" height=\"100\" src=\"" + spath + "\"></li>";
+				}
+				page += "</ul><H2>File '" + filePath + "' matches " + rs.getSize() + " files in " + (endTs - beginTs) + " ms.</H2><UL>";
 				if (rs.getSize() > 0) {
 					Iterator<Result> iter2 = rs.getResults().iterator();
 					while (iter2.hasNext()) {
 						Result r = iter2.next();
-						page += "<li> " + String.format("%.2f", r.getScore()) + " -> " + r.getValue() + "<br><img width=\"100\" height=\"100\" src=\"http://"
+						page += "<li> " + String.format("%.4f", r.getScore()) + " -> " + r.getValue() + "<br><img width=\"100\" height=\"100\" src=\"http://"
 								+ SearcherConf.getHttpServer() + "/get?key="
 								+ r.getValue() + "\"> </li>";
 					}
@@ -281,8 +312,31 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
+		} else if (target.startsWith("/cache/")) {
+			doReadCache(target, baseRequest, request, response);
 		} else {
 			badResponse(baseRequest, response, "#FAIL: invalid target=" + target);
+		}
+	}
+
+	private void doReadCache(String target, Request baseRequest,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		File f = new File("." + target);
+		byte[] b = new byte[(int) f.length()];
+		FileInputStream fis;
+		try {
+			fis = new FileInputStream(f);
+			BufferedInputStream bis = new BufferedInputStream(fis);
+			bis.read(b);
+			bis.close();
+			
+			response.setContentType("image");
+			response.setStatus(HttpServletResponse.SC_OK);
+			baseRequest.setHandled(true);
+			response.getOutputStream().write(b);
+			response.getOutputStream().flush();
+		} catch (FileNotFoundException e) {
+			badResponse(baseRequest, response, "#FAIL: invalid cache entry=" + target);
 		}
 	}
 

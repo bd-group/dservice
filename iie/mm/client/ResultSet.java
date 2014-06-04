@@ -140,16 +140,28 @@ public class ResultSet implements Serializable {
 	};
 
 	protected void doSort() {
-		if (__results.size() > 0) {
-			results = new LinkedList<Result>();
-			results.addAll(__results.values());
-			Collections.sort(results, comp);
+		synchronized (this) {
+			if (__results.size() > 0) {
+				results = new LinkedList<Result>();
+				results.addAll(__results.values());
+				Collections.sort(results, comp);
+			}
 		}
 	}
 
 	public List<Result> getResults() {
 		doSort();
 		return results;
+	}
+	
+	public void shrink(int size) {
+		doSort();
+		// shrink result set to new size
+		if (results != null && results.size() > size) {
+			synchronized (this) {
+				results.subList(size, results.size()).clear();
+			}
+		}
 	}
 
 	public ScoreMode getMode() {

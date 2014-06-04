@@ -4,6 +4,7 @@ import iie.mm.client.Feature;
 import iie.mm.client.ImagePHash;
 import iie.mm.client.Feature.FeatureType;
 import iie.mm.client.Feature.FeatureTypeString;
+import iie.mm.server.FeatureIndex.LIndex;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -41,7 +42,14 @@ public class FeatureSearch {
 	private static ConcurrentLinkedQueue<ImgKeyEntry> entries = new ConcurrentLinkedQueue<ImgKeyEntry>();
 
 	private ServerConf conf;
-	public static FeatureIndex fi;
+	private final ThreadLocal<FaceDetector> fd = 
+			new ThreadLocal<FaceDetector>() {
+		@Override
+		protected FaceDetector initialValue() {
+			return null;
+		}
+	};
+	public static FeatureIndex fi = null;
 	public static AtomicInteger isActive = new AtomicInteger(0);
 	private static DocumentBuilder builder = FeatureSearch.getDocumentBuilder();
 
@@ -50,6 +58,12 @@ public class FeatureSearch {
 			fi = new FeatureIndex(conf);
 		}
 		this.conf = conf;
+	}
+	
+	public FaceDetector getFD() {
+		if (fd.get() == null && conf.getFaceDetectorXML() != null)
+			fd.set(new FaceDetector(conf.getFaceDetectorXML()));
+		return fd.get();
 	}
 	
 	public void startWork(int n) {
@@ -177,12 +191,34 @@ public class FeatureSearch {
 						case IMAGE_LIRE: {
 							String key = en.set + "@" + en.md5;
 							Document doc = builder.createDocument(en.getImg(), key);
-							if (!fi.addObjectLIRE(doc, "LIRE", key)) {
+							if (!fi.addObjectLIRE(doc, LIndex.LIRE, key)) {
 								failedq.add(FeatureTypeString.IMAGE_LIRE + "|" + doc.getFields() + "|" + key);
 								System.out.println("Feature " + FeatureTypeString.IMAGE_LIRE + " " + doc.getFields() + " -> " + key);
 							}
 							break;
 						}
+						case IMAGE_FACES: {
+							String key = en.set + "@" + en.md5;
+							// Step 1: detect faces
+							FaceDetector fd = getFD();
+							if (fd == null)
+								break;
+							List<BufferedImage> faces = fd.detect(en.getImg());
+							System.out.println("Detected " + faces.size() + " faces in " + key);
+							// Step 2: use LIRE to index them
+							if (faces != null && faces.size() > 0) {
+								for (BufferedImage face : faces) {
+									Document doc = builder.createDocument(face, key);
+									if (!fi.addObjectLIRE(doc, LIndex.FACES, key)) {
+										failedq.add(FeatureTypeString.IMAGE_FACES + "|" + doc.getFields() + "|" + key);
+										System.out.println("Feature " + FeatureTypeString.IMAGE_FACES + " " + doc.getFields() + " -> " + key);
+									}
+								}
+							}
+							break;
+						}
+						default:
+							break;
 						}
 					}
 					ServerProfile.completedIndex.incrementAndGet();
@@ -211,18 +247,18 @@ public class FeatureSearch {
         builder.addBuilder(DocumentBuilderFactory.getFCTHDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getJCDDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getPHOGDocumentBuilder());        
-        builder.addBuilder(DocumentBuilderFactory.getOpponentHistogramDocumentBuilder());
-        builder.addBuilder(DocumentBuilderFactory.getJointHistogramDocumentBuilder());
+        //builder.addBuilder(DocumentBuilderFactory.getOpponentHistogramDocumentBuilder());
+        //builder.addBuilder(DocumentBuilderFactory.getJointHistogramDocumentBuilder());
         builder.addBuilder(DocumentBuilderFactory.getColorLayoutBuilder());
         builder.addBuilder(DocumentBuilderFactory.getEdgeHistogramBuilder());
+        builder.addBuilder(DocumentBuilderFactory.getScalableColorBuilder());
+        //builder.addBuilder(new SurfDocumentBuilder());
         
-        //builder.addBuilder(DocumentBuilderFactory.getScalableColorBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getTamuraDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getGaborDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getColorHistogramDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getJpegCoefficientHistogramDocumentBuilder());
         //builder.addBuilder(DocumentBuilderFactory.getLuminanceLayoutDocumentBuilder());
-        //builder.addBuilder(new SurfDocumentBuilder());
         
         return builder;
     }

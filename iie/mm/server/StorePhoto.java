@@ -957,6 +957,29 @@ public class StorePhoto {
 				}
 				break;
 			}
+			case IMAGE_FACES: {
+				int maxHits = 100;
+				FeatureLIREType sType = FeatureLIREType.CEDD;
+				FeatureLIREType fType = FeatureLIREType.NONE;
+				
+				if (feature.args != null) {
+					if (feature.args.size() >= 3) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+						sType = Feature.getFeatureLIREType(feature.args.get(1));
+						fType = Feature.getFeatureLIREType(feature.args.get(2));
+					} else if (feature.args.size() >= 2) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+						sType = Feature.getFeatureLIREType(feature.args.get(1));
+					} else if (feature.args.size() >= 1) {
+						maxHits = Integer.parseInt(feature.args.get(0));
+					}
+				}
+				if (bi != null) {
+					rs.addAll(FeatureIndex.getObjectFaces(sType, fType, 
+							bi, maxHits));
+				}
+				break;
+			}
 			}
 		}
 		

@@ -65,6 +65,7 @@ public class MMServer {
 		Set<String> sa = new HashSet<String>();
 		Set<String> sentinels = new HashSet<String>();
 		String outsideIP = null;
+		String faceDetectorXML = null;
 		boolean isSetOutsideIP = false, indexFeatures = false;
 		int wto = -1, rto = -1;
 		
@@ -88,6 +89,7 @@ public class MMServer {
 				System.out.println("-wto  : write fd time out seconds.");
 				System.out.println("-rto  : read  fd time out seconds.");
 				System.out.println("-idx  : index image features.");
+				System.out.println("-fXML : face detector XML config file path.");
 				
 				System.exit(0);
 			}
@@ -206,6 +208,13 @@ public class MMServer {
 			if (o.flag.equals("-idx")) {
 				indexFeatures = true;
 			}
+			if (o.flag.equals("-fXML")) {
+				if (o.opt == null) {
+					System.out.println("-fXML XML_FILE");
+					System.exit(0);
+				}
+				faceDetectorXML = o.opt;
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -250,9 +259,10 @@ public class MMServer {
 			else
 				conf = new ServerConf(serverName, serverPort, redisServer, redisPort, blockSize, period, httpPort);
 			conf.setStoreArray(sa);
-			conf.addToFeatures(FeatureTypeString.IMAGE_PHASH_ES);
+			conf.addToFeatures(FeatureTypeString.IMAGE_FACES);
 			conf.addToFeatures(FeatureTypeString.IMAGE_LIRE);
 			conf.setIndexFeatures(indexFeatures);
+			conf.setFaceDetectorXML(faceDetectorXML);
 			if (conf.getStoreArray().size() > 0) {
 				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);
 			} else

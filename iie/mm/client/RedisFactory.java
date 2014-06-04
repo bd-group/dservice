@@ -33,10 +33,11 @@ public class RedisFactory {
 			return new Jedis(ri.hostname, ri.port);
 		case SENTINEL:
 		{
+			Config c = new Config();
 			if (jsp != null)
 				return jsp.getResource();
 			else {
-				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
+				jsp = new JedisSentinelPool("mymaster", conf.getSentinels(), c, conf.getRedisTimeout());
 				return jsp.getResource();
 			}
 		}

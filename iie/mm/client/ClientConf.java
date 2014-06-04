@@ -26,6 +26,7 @@ public class ClientConf {
 	private boolean autoConf = false;
 	private boolean logDupInfo = true;
 	private int mgetTimeout = 60 * 1000;
+	private int redisTimeout = 30 * 1000;
 	
 	public static enum MODE {
 		DEDUP, NODEDUP,
@@ -179,5 +180,13 @@ public class ClientConf {
 
 	public void setMgetTimeout(int mgetTimeout) {
 		this.mgetTimeout = mgetTimeout;
+	}
+
+	public int getRedisTimeout() {
+		return redisTimeout;
+	}
+
+	public void setRedisTimeout(int redisTimeout) {
+		this.redisTimeout = redisTimeout;
 	}
 }

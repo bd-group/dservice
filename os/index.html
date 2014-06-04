@@ -31,11 +31,13 @@
 				<select name="feature">
 					<option value="0" selected>Simple_pHash_DCT</option>
 					<option value="1">LIRE</option>
-					<option value="-1">ALL</option>
+					<option value="2">Faces</option>
+					<option value="-1">LIRE and Faces</option>
 				</select>
 			</p>
 			
-			<p> SIMPLE Similarity : 
+			<p>
+				SIMPLE Similarity : 
 				<select name="distance">
 					<option value="1">6.25%</option>
 					<option value="2">12.5%</option>
@@ -72,23 +74,24 @@
 				LIRE Searchers :
 				<select name="searcher">
 					<option value="CEDD" selected>CEDD</option>
-					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
 					<option value="FCTH">FCTH</option>
 					<option value="JCD">JCD</option>
 					<option value="PHOG">PHOG</option>
-					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
-					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
 					<option value="COLOR_LAYOUT">COLOR_LAYOUT</option>
 					<option value="EDGE_HISTOGRAM">EDGE_HISTOGRAM</option>
-					<option value="SURF">SURF BoVW</option>
+					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
+					<option value="ZH">ZH_XX3_V1</option>
 					
 					<!--
+					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
+					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
+					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
 					<option value="COLOR_HISTOGRAM">COLOR_HISTOGRAM</option>
 					<option value="GABOR">GABOR</option>
 					<option value="JPEG_COEFF_HISTOGRAM">JPEG_COEFF_HISTOGRAM</option>
 					<option value="LUMINANCE_LAYOUT">LUMINANCE_LAYOUT</option>
-					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
 					<option value="TAMURA">TAMURA</option>
+					<option value="SURF">SURF BoVW</option>
 					-->
 				</select>
 			</p>
@@ -98,21 +101,21 @@
 				<select name="filter">
 					<option value="NONE" selected>None</option>
 					<option value="CEDD">CEDD</option>
-					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
 					<option value="FCTH">FCTH</option>
 					<option value="JCD">JCD</option>
 					<option value="PHOG">PHOG</option>
-					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
-					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
 					<option value="COLOR_LAYOUT">COLOR_LAYOUT</option>
 					<option value="EDGE_HISTOGRAM">EDGE_HISTOGRAM</option>
-
+					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
+					
 					<!--
+					<option value="JOINT_HISTOGRAM">JOINT_HISTOGRAM</option>
+					<option value="OPPONENT_HISTOGRAM">OPPONENT_HISTOGRAM</option>
+					<option value="AUTO_COLOR_CORRELOGRAM">AUTO_COLOR_CORRELOGRAM</option>
 					<option value="COLOR_HISTOGRAM">COLOR_HISTOGRAM</option>
 					<option value="GABOR">GABOR</option>
 					<option value="JPEG_COEFF_HISTOGRAM">JPEG_COEFF_HISTOGRAM</option>
 					<option value="LUMINANCE_LAYOUT">LUMINANCE_LAYOUT</option>
-					<option value="SCALABLE_COLOR">SCALABLE_COLOR</option>
 					<option value="TAMURA">TAMURA</option>
 					-->
 				</select>

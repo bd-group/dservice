@@ -50,6 +50,7 @@ public class ServerConf {
 	private long write_fd_recycle_to = DEFAULT_WRITE_FD_RECYCLE_TO;
 	private long read_fd_recycle_to = DEFAULT_READ_FD_RECYCLE_TO;
 	
+	private String faceDetectorXML = null;
 	private String featureIndexPath = null;
 	private static List<FeatureType> features = new ArrayList<FeatureType>();
 	
@@ -72,6 +73,8 @@ public class ServerConf {
 	private boolean isHTTPOnly = false;
 	
 	private boolean indexFeatures = false;
+	
+	private int redisTimeout = 30 * 1000;
 
 	public ServerConf(int httpPort) throws Exception {
 		this.nodeName = InetAddress.getLocalHost().getHostName();
@@ -330,9 +333,11 @@ public class ServerConf {
 
 	public void addToFeatures(String features) {
 		if (features.equalsIgnoreCase(FeatureTypeString.IMAGE_PHASH_ES))
-			this.features.add(FeatureType.IMAGE_PHASH_ES);
+			ServerConf.features.add(FeatureType.IMAGE_PHASH_ES);
 		if (features.equalsIgnoreCase(FeatureTypeString.IMAGE_LIRE))
-			this.features.add(FeatureType.IMAGE_LIRE);
+			ServerConf.features.add(FeatureType.IMAGE_LIRE);
+		if (features.equalsIgnoreCase(FeatureTypeString.IMAGE_FACES))
+			ServerConf.features.add(FeatureType.IMAGE_FACES);
 	}
 	
 	public static String getFeatureTypeString(FeatureType type) {
@@ -341,6 +346,10 @@ public class ServerConf {
 			return FeatureTypeString.IMAGE_PHASH_ES;
 		case IMAGE_LIRE:
 			return FeatureTypeString.IMAGE_LIRE;
+		case IMAGE_FACES:
+			return FeatureTypeString.IMAGE_FACES;
+		default:
+			break;
 		}			
 		return "none";
 	}
@@ -351,6 +360,22 @@ public class ServerConf {
 
 	public void setIndexFeatures(boolean indexFeatures) {
 		this.indexFeatures = indexFeatures;
+	}
+
+	public String getFaceDetectorXML() {
+		return faceDetectorXML;
+	}
+
+	public void setFaceDetectorXML(String faceDetectorXML) {
+		this.faceDetectorXML = faceDetectorXML;
+	}
+
+	public int getRedisTimeout() {
+		return redisTimeout;
+	}
+
+	public void setRedisTimeout(int redisTimeout) {
+		this.redisTimeout = redisTimeout;
 	}
 	
 }

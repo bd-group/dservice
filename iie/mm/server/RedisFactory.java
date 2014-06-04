@@ -1,6 +1,7 @@
 package iie.mm.server;
 
 import org.apache.commons.pool.impl.GenericObjectPool;
+import org.apache.commons.pool.impl.GenericObjectPool.Config;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPoolConfig;
@@ -22,11 +23,12 @@ public class RedisFactory {
 		case SENTINEL:
 		{
 			Jedis r;
+			Config c = new Config();
 			
 			if (jsp != null)
 				r = jsp.getResource();
 			else {
-				jsp = new JedisSentinelPool("mymaster", conf.getSentinels());
+				jsp = new JedisSentinelPool("mymaster", conf.getSentinels(), c, conf.getRedisTimeout());
 				r = jsp.getResource();
 			}
 			return r;

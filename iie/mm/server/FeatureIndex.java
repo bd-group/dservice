@@ -80,10 +80,12 @@ import org.apache.lucene.util.Version;
 import java.io.Reader;
 
 public class FeatureIndex {
+	private static FaceDetector fd = null;
 	
 	public class LIndex {
 		public static final int SIMPLE = 0;
 		public static final int LIRE = 1;
+		public static final int FACES = 2;
 		
 		public Directory dir = null;
 		public IndexWriterConfig iwc = null;
@@ -115,6 +117,9 @@ public class FeatureIndex {
 				writer = new IndexWriter(dir, iwc);*/
 				writer = LuceneUtils.createIndexWriter(dir, false, AnalyzerType.SimpleAnalyzer);
 				break;
+			case FACES:
+				writer = LuceneUtils.createIndexWriter(dir, false, AnalyzerType.SimpleAnalyzer);
+				break;
 			}
 		}
 	};
@@ -128,8 +133,12 @@ public class FeatureIndex {
 	public int gramSize = 4;
 	
 	public FeatureIndex(ServerConf conf) throws IOException {
+		if (fd == null && conf.getFaceDetectorXML() != null) {
+			fd = new FaceDetector(conf.getFaceDetectorXML());
+		}
 		indexs.add(new LIndex(conf.getFeatureIndexPath() + "/simple", LIndex.SIMPLE));
 		indexs.add(new LIndex(conf.getFeatureIndexPath() + "/lire", LIndex.LIRE));
+		indexs.add(new LIndex(conf.getFeatureIndexPath() + "/faces", LIndex.FACES));
 		Timer t = new Timer();
 		t.schedule(new CommitTask(), 1 * 1000, 5 * 1000);
 	}
@@ -203,19 +212,19 @@ public class FeatureIndex {
 		return r;
 	}
 	
-	public boolean addObjectLIRE(Document doc, String field, String value) {
+	public boolean addObjectLIRE(Document doc, int idx, String value) {
 		boolean r = false;
-		IndexWriter writer = indexs.get(LIndex.LIRE).writer;
+		IndexWriter writer = indexs.get(idx).writer;
 		
 		if (writer != null) {
 			try {
 				writer.addDocument(doc);
 				r = true;
-				indexs.get(LIndex.LIRE).isDirty = true;
+				indexs.get(idx).isDirty = true;
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
-			System.out.println("AddObj " + field + "=" + doc.getFields() + " -> " + value + " r=" + r);
+			System.out.println("AddObj " + idx + "=" + doc.getFields() + " -> " + value + " r=" + r);
 		}
 		
 		return r;
@@ -235,7 +244,7 @@ public class FeatureIndex {
 	 * @return
 	 * @throws IOException 
 	 */
-	public static ResultSet getObject(String key, String field, int maxEdits, int bitDiffInBlock) throws IOException {
+	public static synchronized ResultSet getObject(String key, String field, int maxEdits, int bitDiffInBlock) throws IOException {
 		ResultSet rs = new ResultSet(ResultSet.ScoreMode.ADD);
 		// docId -> Result
 		HashMap<Integer, Result> m = new HashMap<Integer, Result>();
@@ -300,7 +309,7 @@ public class FeatureIndex {
 		return rs;
 	}
 	
-	public static ResultSet getObjectLIRE(FeatureLIREType sType, FeatureLIREType fType, 
+	public static synchronized ResultSet getObjectLIRE(FeatureLIREType sType, FeatureLIREType fType, 
 			BufferedImage bi, int maxHits) throws IOException {
 		ResultSet rs = new ResultSet(ResultSet.ScoreMode.ADD);
 		ImageSearcher searcher;
@@ -427,6 +436,9 @@ public class FeatureIndex {
 			case SURF:
 				searcher = new VisualWordsImageSearcher(maxHits, DocumentBuilder.FIELD_NAME_SURF_VISUAL_WORDS);
 				break;
+			case ZH:
+				searcher = new ZHSearcher(maxHits, 0.8f, 0.9f, 1.0f);
+				break;
 			}
 			indexs.get(LIndex.LIRE).sType = sType;
 			indexs.get(LIndex.LIRE).sMaxHit = maxHits;
@@ -454,6 +466,178 @@ public class FeatureIndex {
 		}
 		long endTs = System.currentTimeMillis();
 		System.out.println("Search LIRE " + sType + " filter " + fType + " -> hits " + rs.getSize() + " objs in " + reader.maxDoc() + " objs in "+ (endTs - beginTs) + " ms.");
+		return rs;
+	}
+	
+	public static synchronized ResultSet getObjectFaces(FeatureLIREType sType, FeatureLIREType fType,
+			BufferedImage bi, int maxHits) throws IOException {
+		ResultSet rs = new ResultSet(ResultSet.ScoreMode.ADD);
+		ImageSearcher searcher;
+		IndexWriter writer = indexs.get(LIndex.FACES).writer;
+		DirectoryReader reader = indexs.get(LIndex.FACES).reader;
+		SearchHitsFilter filter = null;
+		
+		List<BufferedImage> faces = new ArrayList<BufferedImage>();
+		if (fd != null) {
+			faces = fd.detect(bi);
+		}
+		if (faces == null || faces.size() <= 0) {
+			return rs;
+		}
+		
+		if (fType != indexs.get(LIndex.FACES).fType) {
+			switch (fType) {
+			case JCD:
+				filter = new RerankFilter(JCD.class, DocumentBuilder.FIELD_NAME_JCD);
+				break;
+			case AUTO_COLOR_CORRELOGRAM:
+				filter = new RerankFilter(AutoColorCorrelogram.class, DocumentBuilder.FIELD_NAME_AUTOCOLORCORRELOGRAM);
+				break;
+			case CEDD:
+				filter = new RerankFilter(CEDD.class, DocumentBuilder.FIELD_NAME_CEDD);
+				break;
+			case CEDD_HASHING:
+				filter = null;
+				break;
+			case COLOR_HISTOGRAM:
+				filter = new RerankFilter(SimpleColorHistogram.class, DocumentBuilder.FIELD_NAME_COLORHISTOGRAM);
+				break;
+			case COLOR_LAYOUT:
+				filter = new LsaFilter(ColorLayout.class, DocumentBuilder.FIELD_NAME_COLORLAYOUT);
+				break;
+			case EDGE_HISTOGRAM:
+				filter = new LsaFilter(EdgeHistogram.class, DocumentBuilder.FIELD_NAME_EDGEHISTOGRAM);
+				break;
+			case FCTH:
+				filter = new LsaFilter(FCTH.class, DocumentBuilder.FIELD_NAME_FCTH);
+				break;
+			case GABOR:
+				filter = new LsaFilter(Gabor.class, DocumentBuilder.FIELD_NAME_GABOR);
+				break;
+			case JOINT_HISTOGRAM:
+				filter = new LsaFilter(JointHistogram.class, DocumentBuilder.FIELD_NAME_JOINT_HISTOGRAM);
+				break;
+			case JPEG_COEFF_HISTOGRAM:
+				filter = new LsaFilter(JpegCoefficientHistogram.class, DocumentBuilder.FIELD_NAME_JPEGCOEFFS);
+				break;
+			case LUMINANCE_LAYOUT:
+				filter = new LsaFilter(LuminanceLayout.class, DocumentBuilder.FIELD_NAME_LUMINANCE_LAYOUT);
+				break;
+			case NONE:
+				filter = null;
+				break;
+			case OPPONENT_HISTOGRAM:
+				filter = new LsaFilter(OpponentHistogram.class, DocumentBuilder.FIELD_NAME_OPPONENT_HISTOGRAM);
+				break;
+			case PHOG:
+				filter = new LsaFilter(PHOG.class, DocumentBuilder.FIELD_NAME_PHOG);
+				break;
+			case SCALABLE_COLOR:
+				filter = new LsaFilter(ScalableColor.class, DocumentBuilder.FIELD_NAME_SCALABLECOLOR);
+				break;
+			case SURF:
+			case TAMURA:
+			default:
+				filter = null;
+				break;
+			}
+			indexs.get(LIndex.FACES).filter = filter;
+			indexs.get(LIndex.FACES).fType = fType;
+		} else {
+			filter = indexs.get(LIndex.FACES).filter;
+		}
+
+		if (sType != indexs.get(LIndex.FACES).sType || 
+				maxHits >= indexs.get(LIndex.FACES).sMaxHit) {
+			switch (sType) {
+			default:
+				searcher = ImageSearcherFactory.createDefaultSearcher();
+				break;
+			case CEDD:
+				searcher = ImageSearcherFactory.createCEDDImageSearcher(maxHits);
+				break;
+			case AUTO_COLOR_CORRELOGRAM:
+				searcher = ImageSearcherFactory.createAutoColorCorrelogramImageSearcher(maxHits);
+				break;
+			case COLOR_HISTOGRAM:
+				searcher = ImageSearcherFactory.createColorHistogramImageSearcher(maxHits);
+				break;
+			case COLOR_LAYOUT:
+				searcher = ImageSearcherFactory.createColorLayoutImageSearcher(maxHits);
+				break;
+			case EDGE_HISTOGRAM:
+				searcher = ImageSearcherFactory.createEdgeHistogramImageSearcher(maxHits);
+				break;
+			case FCTH:
+				searcher = ImageSearcherFactory.createFCTHImageSearcher(maxHits);
+				break;
+			case GABOR:
+				searcher = ImageSearcherFactory.createGaborImageSearcher(maxHits);
+				break;
+			case CEDD_HASHING:
+				searcher = ImageSearcherFactory.createHashingCEDDImageSearcher(maxHits);
+				break;
+			case JCD:
+				searcher = ImageSearcherFactory.createJCDImageSearcher(maxHits);
+				break;
+			case JOINT_HISTOGRAM:
+				searcher = ImageSearcherFactory.createJointHistogramImageSearcher(maxHits);
+				break;
+			case JPEG_COEFF_HISTOGRAM:
+				searcher = ImageSearcherFactory.createJpegCoefficientHistogramImageSearcher(maxHits);
+				break;
+			case LUMINANCE_LAYOUT:
+				searcher = ImageSearcherFactory.createLuminanceLayoutImageSearcher(maxHits);
+				break;
+			case OPPONENT_HISTOGRAM:
+				searcher = ImageSearcherFactory.createOpponentHistogramSearcher(maxHits);
+				break;
+			case PHOG:
+				searcher = ImageSearcherFactory.createPHOGImageSearcher(maxHits);
+				break;
+			case SCALABLE_COLOR:
+				searcher = ImageSearcherFactory.createScalableColorImageSearcher(maxHits);
+				break;
+			case TAMURA:
+				searcher = ImageSearcherFactory.createTamuraImageSearcher(maxHits);
+				break;
+			case SURF:
+				searcher = new VisualWordsImageSearcher(maxHits, DocumentBuilder.FIELD_NAME_SURF_VISUAL_WORDS);
+				break;
+			case ZH:
+				searcher = new ZHSearcher(maxHits, 1.0f, 1.0f, 1.0f);
+				break;
+			}
+			indexs.get(LIndex.FACES).sType = sType;
+			indexs.get(LIndex.FACES).sMaxHit = maxHits;
+			indexs.get(LIndex.FACES).searcher = searcher;
+		} else {
+			searcher = (ImageSearcher)indexs.get(LIndex.FACES).searcher;
+		}
+		if (reader == null) {
+			reader = DirectoryReader.open(indexs.get(LIndex.FACES).dir);
+		} else {
+			DirectoryReader changed = DirectoryReader.openIfChanged(reader, writer, true);
+			if (changed != null)
+				reader = changed;
+		}
+		indexs.get(LIndex.FACES).reader = reader;
+
+		long beginTs = System.currentTimeMillis();
+		for (BufferedImage face : faces) {
+			ImageSearchHits hits = searcher.search(face, reader);
+			if (filter != null)
+				hits = filter.filter(hits, hits.doc(0));
+			for (int i = 0; i < hits.length() && i < maxHits; i++) {
+				Result r = new Result(hits.doc(i).get("descriptorImageIdentifier"), 
+						hits.score(i));
+				rs.addToResults(r);
+			}
+		}
+		long endTs = System.currentTimeMillis();
+		rs.shrink(maxHits);
+		System.out.println("Search FACES " + sType + " filter " + fType + " -> hits " + rs.getSize() + " objs in " + reader.maxDoc() + " objs in "+ (endTs - beginTs) + " ms.");
+		
 		return rs;
 	}
 	
