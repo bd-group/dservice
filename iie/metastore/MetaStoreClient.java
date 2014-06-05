@@ -23,8 +23,10 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -384,6 +386,7 @@ public class MetaStoreClient {
 		public int serverPort;
 		public long begin, end, sum;
 		public boolean getlen = true;
+		public boolean failed = false;
 		public TreeMap<Long, Map<String, FileStat>> fmap;
 		
 		public FgetThread(MetaStoreClient cli, String serverName, int serverPort, 
@@ -398,35 +401,44 @@ public class MetaStoreClient {
 		}
 		
 		public void run() {
-			for (long i = begin; i < end; i += 1000) {
-				List<Long> fids = new ArrayList<Long>();
-				for (long j = i; j < i + 1000; j++) {
-					fids.add(new Long(j));
-				}
-				try {
-					List<SFile> files = cli.client.get_files_by_ids(fids);
-					synchronized (fmap) {
-						try {
-							statfs2_update_map(cli, fmap, files, getlen);
-						} catch (IOException e) {
-							e.printStackTrace();
-						}
-					}
-				} catch (FileOperationException e) {
-					e.printStackTrace();
-				} catch (MetaException e) {
-					e.printStackTrace();
-				} catch (TException e) {
-					e.printStackTrace();
-					cli = null;
+			try {
+				for (long i = begin; i < end; i += 1000) {
 					while (cli == null) {
 						cli = __reconnect(serverName, serverPort);
 					}
+
+					List<Long> fids = new ArrayList<Long>();
+					for (long j = i; j < i + 1000; j++) {
+						fids.add(new Long(j));
+					}
+					try {
+						List<SFile> files = cli.client.get_files_by_ids(fids);
+						synchronized (fmap) {
+							try {
+								statfs2_update_map(cli, fmap, files, getlen);
+							} catch (IOException e) {
+								e.printStackTrace();
+							}
+						}
+					} catch (FileOperationException e) {
+						e.printStackTrace();
+					} catch (MetaException e) {
+						e.printStackTrace();
+						cli = null;
+						continue;
+					} catch (TException e) {
+						e.printStackTrace();
+						cli = null;
+						continue;
+					}
+					sum = i + 1000;
 				}
-				sum = i + 1000;
+				cli.stop();
+				System.out.println("\rDone.");
+			} catch (Exception e) {
+				e.printStackTrace();
+				failed = true;
 			}
-			cli.stop();
-			System.out.println("\rDone.");
 		}
 	}
 	
@@ -689,16 +701,18 @@ public class MetaStoreClient {
 					fs.fids.add(f.getFid());
 					// calculate space now
 					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
-						SFileLocation sfl = f.getLocations().get(0);
-						String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-						String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
-						String result = runRemoteCmdWithResult(cmd);
-						if (!result.equals("")) {
-							String[] res = result.split("\t");
-							try {
-								fs.addSpace(Long.parseLong(res[0]));
-							} catch (NumberFormatException nfe) {
-								nfe.printStackTrace();
+						if (getlen) {
+							SFileLocation sfl = f.getLocations().get(0);
+							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+							String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+							String result = runRemoteCmdWithResult(cmd);
+							if (!result.equals("")) {
+								String[] res = result.split("\t");
+								try {
+									fs.addSpace(Long.parseLong(res[0]));
+								} catch (NumberFormatException nfe) {
+									nfe.printStackTrace();
+								}
 							}
 						}
 					} else if (f.getLength() > 0) {
@@ -734,9 +748,11 @@ public class MetaStoreClient {
 		return tcli;
 	}
 	
-	public static void update_fmap(MetaStoreClient cli, int lfdc_thread, String serverName, int serverPort,
+	public static boolean update_fmap(MetaStoreClient cli, int lfdc_thread, String serverName, int serverPort,
 			TreeMap<Long, Map<String, FileStat>> fmap, long from, long to, 
 			boolean getlen) {
+		boolean isFailed = false;
+		
 		List<FgetThread> fgts = new ArrayList<FgetThread>();
 		for (int i = 0; i < lfdc_thread; i++) {
 			MetaStoreClient tcli = null;
@@ -766,11 +782,17 @@ public class MetaStoreClient {
 
 		do {
 			long total = 0, cur = 0;
+			
 			for (FgetThread t : fgts) {
 				total += t.end - t.begin;
 				cur += t.sum - t.begin;
+				isFailed |= t.failed;
 			}
 			System.out.format("\rGet files %.2f %%", (double) cur / total * 100);
+			if (isFailed) {
+				System.out.println("\rSome Thread Failed, retry next time.");
+				break;
+			}
 			try {
 				Thread.sleep(1000);
 			} catch (InterruptedException e1) {
@@ -787,6 +809,8 @@ public class MetaStoreClient {
 				e.printStackTrace();
 			}
 		}
+		
+		return isFailed;
 	}
 	
 	public static class FileStat {
@@ -2460,12 +2484,16 @@ public class MetaStoreClient {
 							} catch (Exception e) {
 								scrub_max = last_got;
 							}
-							if (scrub_max > last_got) {
-								update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen);
-								last_got = scrub_max;
-								System.out.println("Get File Info upto FID " + last_got);
-							}
 							last_fetch = System.currentTimeMillis();
+							if (scrub_max > last_got) {
+								if (!update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen)) {
+									last_got = scrub_max;
+									System.out.println("Get File Info upto FID " + last_got);
+								} else {
+									System.out.println("Retry ten minites later ...");
+									last_fetch = System.currentTimeMillis() - 3000 * 1000;
+								}
+							}
 						}
 						try {
 							String dms = cli.client.getDMStatus();
@@ -3320,6 +3348,7 @@ public class MetaStoreClient {
 						long totalRecord = 0;
 						long totalSize = 0;
 						long fnrs = 0, freps = 0, ignore = 0;
+						List<Long> dsizelist = new LinkedList<Long>();
 						
 						fs.clear();
 						for (Long fid : e.getValue()) {
@@ -3355,11 +3384,13 @@ public class MetaStoreClient {
 											totalSize += dsize;
 										}
 										//System.out.printf("Name:%d Records:%d Size:%.2f MB\n",fid,drecord,dsize);
+										dsizelist.add(dsize);
 										tr.add(drecord);
 										ts.add(dsize);
 									} else {
+										dsizelist.add(0L);
 										tr.add(0L);
-										tr.add(0L);
+										ts.add(0L);
 									}
 								}
 							}
@@ -3372,8 +3403,11 @@ public class MetaStoreClient {
 							}
 							System.out.format("\r%.2f %%", ((double)fnrs / e.getValue().size() * 100));
 						}
+						Collections.sort(dsizelist);
 						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
-								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " KB");
+								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " FMAX: " + 
+								(dsizelist.get(dsizelist.size() - 1 < 0 ? 0 : (dsizelist.size() - 1)) / 1024) + 
+								" FMIN: " + (dsizelist.get(0) / 1024) + " KB");
 						System.out.println(fs);
 					}
 				} catch (MetaException e) {
