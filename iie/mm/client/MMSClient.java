@@ -496,6 +496,50 @@ public class MMSClient {
 		}
 		
 		for (Option o : optsList) {
+			if (o.flag.equals("-lput")) {
+				// loop put test
+				if (o.opt == null) {
+					System.out.println("Please provide the put target.");
+					System.exit(0);
+				}
+				while (true) {
+					byte[] content = null;
+					File f = new File(o.opt);
+					if (f.exists()) {
+						try {
+							FileInputStream in = new FileInputStream(f);
+							content = new byte[(int) f.length()];
+							in.read(content);
+							in.close();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					}
+					try {
+						MessageDigest md;
+						md = MessageDigest.getInstance("md5");
+						md.update(content);
+						byte[] mdbytes = md.digest();
+
+						StringBuffer sb = new StringBuffer();
+						for (int j = 0; j < mdbytes.length; j++) {
+							sb.append(Integer.toString((mdbytes[j] & 0xff) + 0x100, 16).substring(1));
+						}
+						System.out.println("MD5: " + sb.toString() + " -> INFO: " + pcInfo.put(set + "@" + sb.toString(), content));
+					} catch (IOException e) {
+						e.printStackTrace();
+					} catch (NoSuchAlgorithmException e) {
+						e.printStackTrace();
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			}
 			if (o.flag.equals("-put")) {
 				if (o.opt == null) {
 					System.out.println("Please provide the put target.");

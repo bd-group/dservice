@@ -1,15 +1,13 @@
 package iie.mm.server;
 
-import org.apache.commons.pool.impl.GenericObjectPool;
-import org.apache.commons.pool.impl.GenericObjectPool.Config;
-
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
-import redis.clients.jedis.exceptions.JedisConnectionException;
+
 public class RedisFactory {
 	private static ServerConf conf;
 	private static JedisSentinelPool jsp = null;
+	private static JedisPoolConfig c = new JedisPoolConfig();
 
 	public RedisFactory(ServerConf conf) {
 		RedisFactory.conf = conf;
@@ -23,7 +21,6 @@ public class RedisFactory {
 		case SENTINEL:
 		{
 			Jedis r;
-			Config c = new Config();
 			
 			if (jsp != null)
 				r = jsp.getResource();

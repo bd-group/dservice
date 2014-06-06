@@ -2,11 +2,9 @@ package iie.mm.client;
 
 import iie.mm.client.ClientConf.RedisInstance;
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
-import redis.clients.jedis.exceptions.JedisConnectionException;
-
-import org.apache.commons.pool.impl.GenericObjectPool;
-import org.apache.commons.pool.impl.GenericObjectPool.Config;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class RedisFactory {
 	// for each ClientAPI, there should be one redisfactory
@@ -27,13 +25,14 @@ public class RedisFactory {
 		return jedis;
 	}
 	
-	public Jedis getNewInstance(RedisInstance ri) throws JedisConnectionException {
+	public Jedis getNewInstance(RedisInstance ri) throws JedisException {
 		switch (conf.getRedisMode()) {
 		case STANDALONE:
 			return new Jedis(ri.hostname, ri.port);
 		case SENTINEL:
 		{
-			Config c = new Config();
+			JedisPoolConfig c = new JedisPoolConfig();
+
 			if (jsp != null)
 				return jsp.getResource();
 			else {

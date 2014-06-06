@@ -206,7 +206,7 @@ public class FeatureIndex {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
-			System.out.println("AddObj " + field + "=" + key + " -> " + value + " r=" + r);
+			//System.out.println("AddObj " + field + "=" + key + " -> " + value + " r=" + r);
 		}
 		
 		return r;
@@ -224,7 +224,7 @@ public class FeatureIndex {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
-			System.out.println("AddObj " + idx + "=" + doc.getFields() + " -> " + value + " r=" + r);
+			//System.out.println("AddObj " + idx + "=" + doc.getFields() + " -> " + value + " r=" + r);
 		}
 		
 		return r;

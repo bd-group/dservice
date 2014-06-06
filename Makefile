@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2014-04-20 17:38:02 macan>
+# Time-stamp: <2014-06-06 11:41:15 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -43,9 +43,10 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
-MM_CP = $(shell pwd)/lib/jedis-2.2.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool-1.6.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar
+MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.0.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/:lib/fastjson-1.1.39.jar
+REDIS = redis-2.8.10
 
 MMCC = build/libmmcc.so
 MMHC = build/libmmhc.so
@@ -66,13 +67,13 @@ mmhc : DEPEND $(MMHC)
 
 DEPEND : 
 	@$(ECHO) -e " " MK Depends
-	@if [ ! -d redis-2.8.2 ]; then tar zxvf redis-2.8.2.tar.gz; fi
-	@$(MAKE) --no-print-directory -C redis-2.8.2
+	@if [ ! -d $(REDIS) ]; then tar zxvf $(REDIS).tar.gz; fi
+	@$(MAKE) --no-print-directory -C $(REDIS)
 	@rm -rf bin/*
 	@mkdir -p bin
-	@cp -rf redis-2.8.2/src/redis-server bin/
-	@cp -rf redis-2.8.2/src/redis-cli bin/
-	@cp -rf redis-2.8.2/src/redis-sentinel bin/
+	@cp -rf $(REDIS)/src/redis-server bin/
+	@cp -rf $(REDIS)/src/redis-cli bin/
+	@cp -rf $(REDIS)/src/redis-sentinel bin/
 	@$(MAKE) --no-print-directory -C hiredis
 	@rm -rf lib/libhiredis*
 	@cp -rf hiredis/libhiredis.so lib/
@@ -153,7 +154,7 @@ runcli : $(MSCLI)
 	@cd build; for f in $(MSHOME)/*.jar; do LIBS=$$LIBS:$$f; done; for f in $(HADOOP_HOME)/*.jar; do LIBS=$$LIBS:$$f; done; LD_LIBRARY_PATH=. CLASSPATH=$(METASTORE_RUNTIME):$(CLASSPATH):$(MSCLI_RUNTIME)$$LIBS java iie/metastore/MetaStoreClient
 
 depend_clean:
-	@$(MAKE) --no-print-directory -C redis-2.8.2 clean
+	@$(MAKE) --no-print-directory -C $(REDIS) clean
 	@$(MAKE) --no-print-directory -C hiredis clean
 	@$(MAKE) --no-print-directory -C inotify-tools-3.14 clean
 
