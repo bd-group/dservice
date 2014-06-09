@@ -77,7 +77,7 @@ DEPEND :
 	@$(MAKE) --no-print-directory -C hiredis
 	@rm -rf lib/libhiredis*
 	@cp -rf hiredis/libhiredis.so lib/
-	@cd lib; ln -s libhiredis.so libhiredis.so.0.10
+	@cd lib; ln -s libhiredis.so libhiredis.so.0.11
 
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
 	@$(ECHO) -e " " CC"\t" $@

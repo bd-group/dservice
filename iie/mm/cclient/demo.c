@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <semaphore.h>
+#include <pthread.h>
 
 static int g_tget_stop = 0;
 static sem_t tget_sem;
