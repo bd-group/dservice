@@ -502,6 +502,7 @@ public class MMSClient {
 					System.out.println("Please provide the put target.");
 					System.exit(0);
 				}
+				pcInfo.getPc().getConf().setPrintServerRefresh(true);
 				while (true) {
 					byte[] content = null;
 					File f = new File(o.opt);

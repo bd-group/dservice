@@ -27,6 +27,8 @@ public class ClientConf {
 	private boolean logDupInfo = true;
 	private int mgetTimeout = 60 * 1000;
 	private int redisTimeout = 30 * 1000;
+	private int serverRefreshInterval = 5 * 1000;
+	private boolean printServerRefresh = false;
 	
 	public static enum MODE {
 		DEDUP, NODEDUP,
@@ -188,5 +190,21 @@ public class ClientConf {
 
 	public void setRedisTimeout(int redisTimeout) {
 		this.redisTimeout = redisTimeout;
+	}
+
+	public boolean isPrintServerRefresh() {
+		return printServerRefresh;
+	}
+
+	public void setPrintServerRefresh(boolean printServerRefresh) {
+		this.printServerRefresh = printServerRefresh;
+	}
+
+	public int getServerRefreshInterval() {
+		return serverRefreshInterval;
+	}
+
+	public void setServerRefreshInterval(int serverRefreshInterval) {
+		this.serverRefreshInterval = serverRefreshInterval;
 	}
 }

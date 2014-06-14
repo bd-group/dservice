@@ -222,7 +222,9 @@ public class ClientAPI {
 				} else {
 					keyList.clear();
 				}
-				System.out.println("Refresh active servers: " + keyList);
+				if (pc.getConf().isPrintServerRefresh())
+					System.out.println("Refresh active servers: " + keyList);
+
 			} catch (IOException e) {
 			}
 		}
@@ -330,7 +332,7 @@ public class ClientAPI {
 		System.out.println("Got active server size=" + keyList.size());
 		pc.setSocketHash(socketHash);
 		
-		timer.schedule(new MMCTimerTask(), 500, 5000);
+		timer.schedule(new MMCTimerTask(), 500, pc.getConf().getServerRefreshInterval());
 		
 		return 0;
 	}
