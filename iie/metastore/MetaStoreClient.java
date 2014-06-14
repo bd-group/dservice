@@ -3407,7 +3407,8 @@ public class MetaStoreClient {
 						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
 								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " FMAX: " + 
 								(dsizelist.get(dsizelist.size() - 1 < 0 ? 0 : (dsizelist.size() - 1)) / 1024) + 
-								" FMIN: " + (dsizelist.get(0) / 1024) + " KB");
+								" FMIN: " + (dsizelist.get(0) / 1024) + 
+								" FAVG: " + (totalSize / 1024 / fnrs) + " KB");
 						System.out.println(fs);
 					}
 				} catch (MetaException e) {
