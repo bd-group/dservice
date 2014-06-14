@@ -2606,7 +2606,6 @@ public class MetaStoreClient {
 								cli = null;
 								continue;
 							}
-							break;
 						} catch (TException e1) {
 							e1.printStackTrace();
 							cli = null;
