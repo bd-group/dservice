@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-04-22 13:36:27 macan>
+ * Time-stamp: <2014-06-16 16:01:10 macan>
  *
  */
 
@@ -134,6 +134,12 @@ static LIST_HEAD(g_verify);
 
 static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
+
+/* dpi for heartbeat using
+ */
+static xlock_t g_dpi_lock;
+static struct disk_part_info *g_dpi = NULL;
+static int g_nr = 0;
 
 static int __get_sysinfo()
 {
@@ -818,7 +824,7 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
         }
         /* find and update */
         for (i = 0; i < nr; i++) {
-            if(strcmp(dpi[i].dev_sn, this.dev_sn) == 0) {
+            if (strcmp(dpi[i].dev_sn, this.dev_sn) == 0) {
                 dpi[i].read_nr = this.read_nr;
                 dpi[i].write_nr = this.write_nr;
                 dpi[i].err_nr = this.err_nr;
@@ -1009,7 +1015,7 @@ void refresh_map(time_t cur)
 {
     static time_t last = 0;
     struct disk_part_info *dpi = NULL;
-    int nr = 0, fd, err;
+    int nr = 0, fd, err, update = 0;
 
     /* map refresh interval */
     if (cur - last > g_ds_conf.mr_interval) {
@@ -1029,9 +1035,17 @@ void refresh_map(time_t cur)
         write_shm(fd, dpi, nr);
         lock_shm(fd, SHMLOCK_UN);
         close(fd);
-        dpi_free(dpi, nr);
 
-        hvfs_info(lib, "Map refreshed!\n");
+        xlock_lock(&g_dpi_lock);
+        if (g_dpi) {
+            dpi_free(g_dpi, g_nr);
+            update = 1;
+        }
+        g_dpi = dpi;
+        g_nr = nr;
+        xlock_unlock(&g_dpi_lock);
+
+        hvfs_info(lib, "Map refreshed and g_dpi updated=%d\n", update);
     update_last:
         last = cur;
     }
@@ -1310,31 +1324,21 @@ int __do_heartbeat()
     struct verify_args *pos3, *n3;
     int err = 0, nr2 = 0, nr_max = 10;
 
-    struct disk_part_info *dpi = NULL;
-    int nr = 0, i, len = 0, mode = NORMAL_HB_MODE;
+    int i, len = 0, mode = NORMAL_HB_MODE;
     
     memset(query, 0, sizeof(query));
     len += sprintf(query, "+node:%s\n", g_hostname);
     
     if (!g_specify_dev) {
-        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
-        if (err) {
-            hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
-            goto out;
-        }
-        
-        err = fix_disk_parts(dpi, nr);
-        if (err) {
-            hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
-                         "any NRs\n", strerror(-err), err);
-        }
-        
-        for (i = 0; i < nr; i++) {
+        /* Using global dpi */
+        xlock_lock(&g_dpi_lock);
+        for (i = 0; i < g_nr; i++) {
             len += sprintf(query + len, "%s:%s,%ld,%ld,%ld,%ld,%ld\n",
-                           dpi[i].dev_sn, dpi[i].mount_path,
-                           dpi[i].read_nr, dpi[i].write_nr, dpi[i].err_nr,
-                           dpi[i].used, dpi[i].free);
+                           g_dpi[i].dev_sn, g_dpi[i].mount_path,
+                           g_dpi[i].read_nr, g_dpi[i].write_nr, g_dpi[i].err_nr,
+                           g_dpi[i].used, g_dpi[i].free);
         }
+        xlock_unlock(&g_dpi_lock);
     } else {
         char str[512];
         
@@ -1457,7 +1461,6 @@ int __do_heartbeat()
 #else
     hvfs_plain(lib, "%s", query);
 #endif
-    dpi_free(dpi, nr);
 
 out:;
     return mode;
@@ -1469,12 +1472,16 @@ void do_heartbeat(time_t cur)
     static int hb_interval = 0;
 
     if (cur - last >= hb_interval) {
-        if (__do_heartbeat() == QUICK_HB_MODE)
+        switch (__do_heartbeat()) {
+        case QUICK_HB_MODE:
             hb_interval = QUICK_HB_MODE; /* reset to 1 second */
-        else if (__do_heartbeat() == QUICK_HB_MODE2)
+            break;
+        case QUICK_HB_MODE2:
             hb_interval = QUICK_HB_MODE2; /* reset to 10 seconds */
-        else
+            break;
+        default:
             hb_interval = g_ds_conf.hb_interval;
+        }
         last = cur;
     }
 }
@@ -2399,6 +2406,7 @@ int main(int argc, char *argv[])
 
     xlock_init(&g_rep_lock);
     xlock_init(&g_del_lock);
+    xlock_init(&g_dpi_lock);
 
     /* setup signals */
     err = __init_signal();
