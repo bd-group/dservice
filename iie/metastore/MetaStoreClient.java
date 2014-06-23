@@ -2603,15 +2603,26 @@ public class MetaStoreClient {
 						} catch (MetaException e1) {
 							e1.printStackTrace();
 							if (e1.getCause() instanceof ConnectException) {
+								try {
+									cli.stop();
+								} catch (Exception se) {
+								}
 								cli = null;
-								continue;
 							}
 						} catch (TException e1) {
 							e1.printStackTrace();
+							try {
+								cli.stop();
+							} catch (Exception se) {
+							}
 							cli = null;
 						}
 					} catch (Exception e) {
 						e.printStackTrace();
+						try {
+							cli.stop();
+						} catch (Exception se) {
+						}
 						cli = null;
 					}
 				}
