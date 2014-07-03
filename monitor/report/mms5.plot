@@ -23,5 +23,5 @@ set grid
 
 NODES = "FIXME_NODE"
 plot for [node in NODES] \
-     node using ($2+8*3600):($8/$13) t "Average Write Length Y1 @ ".node with lines axes x1y1, \
-     node using ($2+8*3600):($9/$11) t "Average Read  Length Y1 @ ".node with lines axes x1y1
+     node using ($2+8*3600):($8/$13) t "Average Write Length Y1 @ ".node with points pt 2 axes x1y1, \
+     node using ($2+8*3600):($9/$11) t "Average Read  Length Y1 @ ".node with points pt 1 axes x1y1

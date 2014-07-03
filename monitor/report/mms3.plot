@@ -22,6 +22,6 @@ set key out
 set grid
 
 NODES = "FIXME_NODE"
-plot for [node in NODES] node \
-        using ($2+8*3600):($7) t "Latency Y1 @ ".node with lines axes x1y1, \
-        node using ($2+8*3600):($11/$4) t "Read Rate Y2 @ ".node with lines axes x1y2
+plot for [node in NODES] \
+        node using ($2+8*3600):($11/$4) t "Read Rate Y2 @ ".node with lines axes x1y2, \
+        node using ($2+8*3600):($7) t "Latency Y1 @ ".node with lines axes x1y1

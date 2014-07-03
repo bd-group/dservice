@@ -17,7 +17,7 @@ set timefmt "%s"
 set format x "%H:%S"
 set ytics nomirror
 set y2tics nomirror
-#set logscale y 2
+#set logscale y2 10
 set key out
 set grid
 

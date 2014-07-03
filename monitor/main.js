@@ -62,8 +62,8 @@ function init1(){
 			
 
 		}
-	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png","node.png","fops.png","fail.png","diskfrees.png","ds.png","loads.png","free.png"];
-	for(var i = 0;i<14;i++)
+	var links = ["query.png","Queue.png","report.png","space.png","frps.png","sfl.png","job.png","node.png","fops.png","fail.png","diskfrees.png","ds.png","loads.png","free.png", "mms_rate.png", "mms_bw.png", "mms_lat.png", "mms_misc.png", "mms_err.png"];
+	for(var i = 0;i<19;i++)
 	{
 		var url = document.getElementById("url"+i).href;
 		document.getElementById("url"+i).href =url + window.location.search;
