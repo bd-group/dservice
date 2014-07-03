@@ -80,7 +80,10 @@ public class MonitorHandler extends AbstractHandler {
 		String date = request.getParameter("date");
 		String id = request.getParameter("id");
 		if (target.equals("/monitor/main.html")) {
-			if(city != null && date != null && id != null) {
+			if (city != null && date != null && id != null &&
+					!city.equalsIgnoreCase("") &&
+					!date.equalsIgnoreCase("") && 
+					!id.equalsIgnoreCase("")) {
 				uidtime.put(id, System.currentTimeMillis());
 				String name = "report-" + date;
 				String cmd = "cd monitor;"
