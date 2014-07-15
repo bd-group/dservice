@@ -287,6 +287,7 @@ public class ClientAPI {
 			try {
 				refreshActiveMMS(false);
 			} catch (Exception e) {
+				System.out.println("[ERROR] refresh active MMS failed: " + e.getMessage() + ".\n" + e.getCause());
 			}
 		}
 	}

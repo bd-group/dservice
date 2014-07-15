@@ -1020,15 +1020,34 @@ public class MMSClient {
 				String sname = o.opt;
 				System.out.println("Provide the set name to be deleted.");
 				System.out.println("get args: set name  " + sname);
-				DeleteSet ds = new DeleteSet(redisHost, redisPort);
-				ds.delSet(sname);
-				ds.closeJedis();
+				DeleteSet ds = new DeleteSet(pcInfo);
+				try {
+					ds.delSet(sname);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-recycle")) {
+				String daystr = o.opt;
+				System.out.println("Provide the last day to be deleted.");
+				System.out.println("get args: day str= " + daystr);
+				DeleteSet ds = new DeleteSet(pcInfo);
+				try {
+					ds.recycleSet(daystr);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
 			}
 			if (o.flag.equals("-getserverinfo")) {
 				System.out.println("get server info.");
-				DeleteSet ds = new DeleteSet(redisHost, redisPort);
-				List<String> ls = ds.getAllServerInfo();
-				if(ls == null) {
+				DeleteSet ds = new DeleteSet(pcInfo);
+				List<String> ls = null;
+				try {
+					ls = ds.getAllServerInfo();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+				if (ls == null) {
 					System.out.println("出现错误");
 					return;
 				}

@@ -45,25 +45,33 @@ public class RedisFactory {
 	}
 	
 	public Jedis putInstance(Jedis j) {
-		if (j == null)
-			return null;
-		switch (conf.getRedisMode()) {
-		case STANDALONE:
-			break;
-		case SENTINEL:
-			jsp.returnResource(j);
+		try {
+			if (j == null)
+				return null;
+			switch (conf.getRedisMode()) {
+			case STANDALONE:
+				break;
+			case SENTINEL:
+				jsp.returnResource(j);
+			}
+		} catch (Exception e) {
+			jsp.destroy();
 		}
 		return null;
 	}
 
 	public Jedis putBrokenInstance(Jedis j) {
-		if (j == null)
-			return null;
-		switch (conf.getRedisMode()) {
-		case STANDALONE:
-			break;
-		case SENTINEL:
-			jsp.returnBrokenResource(j);
+		try {
+			if (j == null)
+				return null;
+			switch (conf.getRedisMode()) {
+			case STANDALONE:
+				break;
+			case SENTINEL:
+				jsp.returnBrokenResource(j);
+			}
+		} catch (Exception e) {
+			jsp.destroy();
 		}
 		return null;
 	}
