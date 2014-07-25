@@ -6,12 +6,16 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.ScanParams;
+import redis.clients.jedis.ScanResult;
 
 public class MMMoveDedupInfo {
 	
@@ -117,7 +121,23 @@ public class MMMoveDedupInfo {
 		fromR = new Jedis(frp[0], Integer.parseInt(frp[1]), 120 * 1000);
 		toR = new Jedis(trp[0], Integer.parseInt(trp[1]), 60 * 1000);
 		
-		Map<String, String> infos = fromR.hgetAll("mm.dedup.info");
+		Map<String, String> infos = new HashMap<String, String>(); 
+		ScanParams sp = new ScanParams();
+		sp.match("*");
+		boolean isDone = false;
+		String cursor = ScanParams.SCAN_POINTER_START;
+		
+		while (!isDone) {
+			ScanResult<Entry<String, String>> r = fromR.hscan("mm.dedup.info", cursor, sp);
+			for (Entry<String, String> entry : r.getResult()) {
+				infos.put(entry.getKey(), entry.getValue());
+			}
+			cursor = r.getStringCursor();
+			if (cursor.equalsIgnoreCase("0")) {
+				isDone = true;
+			}
+		}
+		
 		if (infos != null && infos.size() > 0) {
 			for (Map.Entry<String, String> entry : infos.entrySet()) {
 				String[] k = entry.getKey().split("@");

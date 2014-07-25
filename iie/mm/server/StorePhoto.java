@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
@@ -27,6 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Response;
+import redis.clients.jedis.ScanParams;
+import redis.clients.jedis.ScanResult;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
@@ -832,7 +835,22 @@ public class StorePhoto {
 			return null;
 		}
 		try {
-			Map<String, String> di = jedis.get().hgetAll("mm.dedup.info");
+			Map<String, String> di = new HashMap<String, String>();
+			ScanParams sp = new ScanParams();
+			sp.match("*");
+			boolean isDone = false;
+			String cursor = ScanParams.SCAN_POINTER_START;
+			
+			while (!isDone) {
+				ScanResult<Entry<String, String>> r = jedis.get().hscan("mm.dedup.info", cursor, sp);
+				for (Entry<String, String> entry : r.getResult()) {
+					di.put(entry.getKey(), entry.getValue());
+				}
+				cursor = r.getStringCursor();
+				if (cursor.equalsIgnoreCase("0")) {
+					isDone = true;
+				}
+			}
 			return di;
 		} catch (JedisConnectionException e) {
 			e.printStackTrace();
