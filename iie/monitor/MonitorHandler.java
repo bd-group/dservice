@@ -25,13 +25,14 @@ public class MonitorHandler extends AbstractHandler {
 	private HashMap<String, String> cityip = new HashMap<String, String>();
 	private HashMap<String, String> mmcityip = new HashMap<String, String>();
 	private ConcurrentHashMap<String, Long> uidtime = new ConcurrentHashMap<String, Long>();
-	private String targetPath, mmPath;
+	private String targetPath, mmPath, redisPath;
 	
-	public MonitorHandler(Map<String, String> addrMap, Map<String, String> mmAddrMap, String targetPath, String mmPath) {
+	public MonitorHandler(Map<String, String> addrMap, Map<String, String> mmAddrMap, String targetPath, String mmPath, String redisPath) {
 		cityip.putAll(addrMap);
 		mmcityip.putAll(mmAddrMap);
 		this.targetPath = targetPath;
 		this.mmPath = mmPath;
+		this.redisPath = redisPath;
 		Timer t = new Timer();
 		t.schedule(new EvictThread(10 * 1000), 10 * 1000, 10 * 1000);
 	}
@@ -110,6 +111,21 @@ public class MonitorHandler extends AbstractHandler {
 							+ "rm -rf " + id + "/mms_*.png";
 					System.out.println(cmd);
 					runCmd(cmd);
+				}
+				{
+					cmd = "cd monitor;" 
+							+ "expect data.exp " + cityip.get(city) + " " + redisPath + "/redisinfo-" + date + " " + id + "/" + city + ".redisinfo-" + date + ";"
+							+ " ./doplot3.sh " + id + "/ " + id + "/" + city + ".redisinfo-" + date;
+					System.out.println(cmd);
+					error = runCmd(cmd);
+					if (error != null) {
+						// ignore any error here
+						System.out.println("redis info plot failed， ignore it!");
+						cmd = "cd monitor;"
+								+ "rm -rf " + id + "/redis_*.png";
+						System.out.println(cmd);
+						runCmd(cmd);
+					}
 				}
 			}
 		}

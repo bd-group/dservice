@@ -15,6 +15,7 @@ public class MonitorServer {
 		HashMap<String, String> mmAddrMap = new HashMap<String, String>();
 		String targetPath = "sotstore/sotstore/reports";
 		String mmPath = "sotstore/dservice/log";
+		String redisPath = "sotstore/dservice/log";
 		File f;
 		int port = 33333;
 		
@@ -71,7 +72,7 @@ public class MonitorServer {
 		}
 		
 		Server s = new Server(port);
-		s.setHandler(new MonitorHandler(addrMap, mmAddrMap, targetPath, mmPath));
+		s.setHandler(new MonitorHandler(addrMap, mmAddrMap, targetPath, mmPath, redisPath));
 		try {
 			s.start();
 		} catch (Exception e) {

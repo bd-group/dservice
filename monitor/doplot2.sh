@@ -93,6 +93,8 @@ NODES=`echo $NODES`
 for n in $NODES; do
     cat $SYSINFOP | awk '{if ($1 == "RPT_MMA") print $3}' | awk -F, "{if (\$1 == \"$n\") print}" | sed -e 's/,/ /g' > $n
 done
+cat $SYSINFOP | awk '{if ($1 == "RPT_MMA") print $3}' | sed -e 's/,/ /g' > mma
+
 sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/mms1.plot > .tmp_plot_file2
 gnuplot .tmp_plot_file2
 sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/mms2.plot > .tmp_plot_file2
@@ -103,8 +105,11 @@ sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|
 gnuplot .tmp_plot_file2
 sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/mms5.plot > .tmp_plot_file2
 gnuplot .tmp_plot_file2
+sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/mms6.plot > .tmp_plot_file2
+gnuplot .tmp_plot_file2
+
 for n in $NODES; do
     rm -rf $n
 done
-
+rm -rf mma
 rm -rf .tmp_plot_file2;

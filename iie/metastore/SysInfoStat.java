@@ -53,6 +53,7 @@ public class SysInfoStat {
 		Long[] readErr = new Long[2];
 		Long[] writeN = new Long[2];
 		Long[] writeErr = new Long[2];
+		int nr = 0;
 		
 		public MMStat() {
 			ts[0] = new Long(0);
@@ -107,7 +108,8 @@ public class SysInfoStat {
 					(readN[1] - readN[0]) + "," +
 					(readErr[1] - readErr[0]) + "," +
 					(writeN[1] - writeN[0]) + "," +
-					(writeErr[1] - writeErr[0]);
+					(writeErr[1] - writeErr[0]) + "," +
+					nr;
 			return r;
 		}
 		
@@ -144,6 +146,7 @@ public class SysInfoStat {
 				writeN[1] += other.writeN[1];
 				writeErr[0] += other.writeErr[0];
 				writeErr[1] += other.writeErr[1];
+				nr += 1;
 			}
 		}
 		
