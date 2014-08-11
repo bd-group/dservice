@@ -188,6 +188,7 @@ public class RedisInfoMonitor {
 	    	filterKeys.add("connected_slaves");
 	    	filterKeys.add("master_repl_offset");
 	    	filterKeys.add("latest_fork_usec");
+	    	filterKeys.add("master_link_status");
 	    	
 	    	System.out.println("Redis Instances: ");
 	    	for (Map.Entry<String, String> redis : servers.entrySet()) {
@@ -215,9 +216,9 @@ public class RedisInfoMonitor {
 	    						line += dup.get(i) + " -> " + x.substring(dup.get(i).length() + 1) + "\n";
 	    						//logline += x.substring(y.length() + 1) + ",";
 	    						String r = x.substring(dup.get(i).length() + 1);
-	    						if (r.equals("ok")) {
+	    						if (r.equals("ok") || r.equals("up")) {
 	    							r = "1";
-	    						} else if (r.equals("err")) {
+	    						} else if (r.equals("err") || r.equals("down")) {
 	    							r = "0";
 	    						}
 	    						dup.set(i, "" + r);
@@ -229,7 +230,10 @@ public class RedisInfoMonitor {
 	    			} else 
 	    				logline += "1,";
 	    			for (int i = 0; i < dup.size(); i++) {
-	    				logline += dup.get(i) + ",";
+	    				if (!dup.get(i).equals(filterKeys.get(i)))
+	    					logline += dup.get(i) + ",";
+	    				else
+	    					logline += "-1,";
 	    			}
 	    			j.close();
 	    		} catch (Exception e) {

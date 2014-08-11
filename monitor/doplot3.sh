@@ -51,6 +51,8 @@ if [ "x$MODE" == "xALL" ]; then
     gnuplot .tmp_plot_file2
     sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/redis7.plot > .tmp_plot_file2
     gnuplot .tmp_plot_file2
+    sed -e "s|FIXME_LOCATION|$TLOC|g;s|FIXME_REPORT_DAY|$2|g;s|FIXME_REPORT_FILE|$2|g;s|FIXME_NODE|$NODES|g" ../report/redis8.plot > .tmp_plot_file2
+    gnuplot .tmp_plot_file2
 fi
 for n in $NODES; do
 	rm -rf $n

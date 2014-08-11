@@ -46,7 +46,6 @@ MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.0.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/:lib/fastjson-1.1.39.jar
-REDIS = redis-2.8.10
 
 MMCC = build/libmmcc.so
 MMHC = build/libmmhc.so
