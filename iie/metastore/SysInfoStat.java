@@ -54,6 +54,7 @@ public class SysInfoStat {
 		Long[] writeN = new Long[2];
 		Long[] writeErr = new Long[2];
 		int nr = 0;
+		boolean isUpdated = false;
 		
 		public MMStat() {
 			ts[0] = new Long(0);
@@ -80,8 +81,13 @@ public class SysInfoStat {
 			writeErr[1] = new Long(0);
 		}
 		
+		public MMStat(boolean isUpdated) {
+			this();
+			this.isUpdated = isUpdated;
+		}
+		
 		public boolean isValid() {
-			return (ts[1] - ts[0] >=0) &&
+			return isUpdated && (ts[1] - ts[0] >=0) &&
 					(wbw[1] >= 0) &&
 					(rbw[1] >= 0) &&
 					(rlat[1] >= 0) &&
@@ -110,10 +116,12 @@ public class SysInfoStat {
 					(writeN[1] - writeN[0]) + "," +
 					(writeErr[1] - writeErr[0]) + "," +
 					nr;
+			isUpdated = false;
 			return r;
 		}
 		
 		public void Add(MMStat other) {
+			isUpdated = true;
 			synchronized (this) {
 				if (tlen == 0.0) {
 					tlen = (double)(other.ts[1] - other.ts[0]);
@@ -152,6 +160,7 @@ public class SysInfoStat {
 		
 		public void Update(Long ts, Double wbw, Double rbw, Double rlat, Long wbytes, 
 				Long rbytes, Long rdelay, Long readN, Long readErr, Long writeN, Long writeErr) {
+			isUpdated = true;
 			synchronized (this) {
 				this.ts[0] = this.ts[1];
 				this.wbw[0] = this.wbw[1];
@@ -589,7 +598,7 @@ public class SysInfoStat {
 				listenPort = port;
 			this.interval = interval;
 			server = new DatagramSocket(listenPort);
-			timer.schedule(spt, 3000, 5000);
+			timer.schedule(spt, 3000, interval * 1000);
 		}
 		
 		public class ServerReportTask extends TimerTask {
@@ -697,14 +706,15 @@ public class SysInfoStat {
 							mMap.put(e.getKey().hostname, mms);
 						}
 						synchronized (e.getValue()) {
-							mms.Add(e.getValue());
+							if (e.getValue().isValid())
+								mms.Add(e.getValue());
 						}
 						if (e.getValue().isValid() && e.getValue().ts[1] - e.getValue().ts[0] < 1024)
 							sb.append("RPT_MMX -> " + e.getKey().hostname + "," + e.getKey().dev + "," +
 									(System.currentTimeMillis() / 1000) + "," +
 									e.getValue() + "\n");
 					}
-					MMStat allmms = new MMStat();
+					MMStat allmms = new MMStat(true);
 					isAll = false;
 					for (Map.Entry<String, MMStat> e : mMap.entrySet()) {
 						if (e.getValue().tlen > 0 && e.getValue().tlen < 1024) {
@@ -1120,7 +1130,7 @@ public class SysInfoStat {
 				cli.run();
 		    } else {
 		    	// server mode
-		    	Server srv = new Server(port, 5, prefix);
+		    	Server srv = new Server(port, interval, prefix);
 		    	srv.run();
 		    }
 	    } catch (SocketException e) {
