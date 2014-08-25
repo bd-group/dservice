@@ -36,6 +36,7 @@ import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.eclipse.jetty.server.handler.ResourceHandler;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class HTTPHandler extends AbstractHandler {
 	private ServerConf conf;
@@ -211,6 +212,9 @@ public class HTTPHandler extends AbstractHandler {
 							"</BODY>" +
 							"</HTML>";
 			response.getWriter().print(page);
+			response.getWriter().flush();
+		} catch (JedisException je) {
+			response.getWriter().print("Redis ERROR: " + je.getMessage());
 			response.getWriter().flush();
 		} finally {
 			RedisFactory.putInstance(jedis);
