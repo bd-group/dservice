@@ -148,17 +148,13 @@ public class DeleteSet {
 
 			// 删除集合所在节点,集合对应块号,都在数据库0
 			Iterator<String> ikeys1 = jedis.keys(set + ".*").iterator();
-			if (!ikeys1.hasNext()) {
-				System.out.println("没有这个集合: " + set);
-				return;
-			}
 			Pipeline pipeline1 = jedis.pipelined();
 			while (ikeys1.hasNext()) {
 				String key1 = ikeys1.next();
 				pipeline1.del(key1);
 			}
 			pipeline1.sync();
-
+			
 			//删除集合
 			jedis.del(set);
 		} catch (JedisException je) {
