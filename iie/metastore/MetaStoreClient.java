@@ -37,6 +37,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
+import org.apache.hadoop.hive.metastore.HiveMetaStore.HMSHandler;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
@@ -907,7 +908,9 @@ public class MetaStoreClient {
 	    String dfl_dev = null, dfl_location = null;
 	    String dfl_file = null;
 	    int fls_op = -1;
+	    String fls_args = "l2";
 	    int old_port = 8111, new_port = 10101;
+	    int devtype = 0, devquota = 100;
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -1043,6 +1046,14 @@ public class MetaStoreClient {
 	    	if (o.flag.equals("-prop")) {
 	    		// device prop
 	    		prop = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-devtype")) {
+	    		// set device type
+	    		devtype = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-devquota")) {
+	    		// set device quota
+	    		devquota = Integer.parseInt(o.opt);
 	    	}
 	    	if (o.flag.equals("-devid")) {
 	    		// device ID
@@ -1412,6 +1423,14 @@ public class MetaStoreClient {
 	    		}
 	    		fls_op = Integer.parseInt(o.opt);
 	    	}
+	    	if (o.flag.equals("-fls_args")) {
+	    		// set fls_order
+	    		if (o.opt == null) {
+	    			System.out.println("-fls_args l1;l2;l3;l4");
+	    			System.exit(0);
+	    		}
+	    		fls_args = o.opt;
+	    	}
 	    }
 	    if (cli == null) {
 	    	try {
@@ -1739,8 +1758,8 @@ public class MetaStoreClient {
 					Device d = cli.client.getDevice(devid);
 					String sprop, status;
 					switch (d.getProp()) {
-					case MetaStoreConst.MDeviceProp.ALONE:
-						sprop = "ALONE";
+					case MetaStoreConst.MDeviceProp.GENERAL:
+						sprop = "GENERAL";
 						break;
 					case MetaStoreConst.MDeviceProp.SHARED:
 						sprop = "SHARED";
@@ -1750,6 +1769,12 @@ public class MetaStoreClient {
 						break;
 					case MetaStoreConst.MDeviceProp.BACKUP_ALONE:
 						sprop = "BACKUP_ALONE";
+						break;
+					case MetaStoreConst.MDeviceProp.CACHE:
+						sprop = "CACHE";
+						break;
+					case MetaStoreConst.MDeviceProp.MASS:
+						sprop = "MASS";
 						break;
 					default:
 						sprop = "Unknown";
@@ -1778,9 +1803,17 @@ public class MetaStoreClient {
 	    	}
 	    	if (o.flag.equals("-md")) {
 	    		// modify Device
+	    		// FIXME:
 	    		if (node_name == null || devid == null) {
-	    			System.out.println("Please set -node -prop -devid.");
+	    			System.out.println("Please set -node -devid (-prop or -devtype -devquota [0:100]).");
 	    			System.exit(0);
+	    		}
+	    		if (devtype != 0 || devquota != 100) {
+	    			if (devquota > 100)
+	    				devquota = 100;
+	    			System.out.println("Set device prop type=" + devtype + ", quota=" + devquota);
+	    			devquota = 100 - devquota;
+	    			prop = devtype | (devquota << MetaStoreConst.MDeviceProp.__QUOTA_SHIFT__);
 	    		}
 	    		try {
 	    			Node n = cli.client.get_node(node_name);
@@ -1863,11 +1896,67 @@ public class MetaStoreClient {
 	    			System.out.println("Please set -db and -table");
 	    			System.exit(0);
 	    		}
+	    		
 	    		try {
+	    			switch (fls_op & 0xff) {
+	    			case 0:
+	    				// parse policy to value
+	    				if (fls_args.equals("none")) {
+	    					fls_op = (fls_op & 0xff);
+	    				} else if (fls_args.equals("fair_nodes")) {
+	    					fls_op = (fls_op & 0xff) | (1 << 8);
+	    				} else if (fls_args.equals("ordered_alloc")) {
+	    					fls_op = (fls_op & 0xff) | (2 << 8);
+	    				}
+	    				break;
+	    			case 1:
+	    			case 2:
+	    				break;
+	    			case 3:
+	    				// parse repnr to value
+	    				int rnr = 1;
+	    				try {
+	    					rnr = Integer.parseInt(fls_args);
+	    				} catch (Exception e) {
+	    				}
+	    				fls_op = (fls_op & 0xff) | (rnr << 8);
+	    				break;
+	    			case 4:
+	    				List<Integer> orders = new ArrayList<Integer>();
+	    				String[] os = fls_args.split(";");
+	    				for (String to : os) {
+	    					if (to.equalsIgnoreCase("l1")) {
+	    						orders.add(4);
+	    					} else if (to.equalsIgnoreCase("l2")) {
+	    						orders.add(0);
+	    					} else if (to.equalsIgnoreCase("l3")) {
+	    						orders.add(5);
+	    					} else if (to.equalsIgnoreCase("l4")) {
+	    						orders.add(1);
+	    					}
+	    				}
+	    				while (orders.size() < 6) {
+	    					orders.add(0);
+	    				}
+	    				fls_op = 0;
+	    				for (int i = 0; i < 6; i++) {
+	    					fls_op >>= 4;
+	    					fls_op |= (orders.get(i) << 28);
+	    				}
+	    				fls_op |= 4;
+	    				System.out.println("Order=" + HMSHandler.parseOrderList(fls_op >> 8));
+	    				break;
+	    			default:
+	    				System.out.println("BAD operation code: " + (fls_op & 0xff));
+	    				System.exit(0);
+	    			}
 					boolean res = cli.client.flSelectorWatch(dbName + "." + tableName, fls_op);
 					System.out.println("Control FLSelector OP=" + (fls_op == 0 ? "ADD" :
 						(fls_op == 1 ? "DEL" : 
-							(fls_op == 2 ? "FLUSH" : "REPR " + (fls_op >> 8)))) + " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
+							(fls_op == 2 ? "FLUSH" : 
+								(fls_op == 3 ? "REPR " + (fls_op >> 8) :
+									"ORDER " + fls_args))))
+									+ " TABLE=" + (dbName + "." + tableName) + ", r=" + res);
 				} catch (MetaException e) {
 					e.printStackTrace();
 					break;
@@ -4110,6 +4199,7 @@ public class MetaStoreClient {
 					}
 					file.setDigest("DIGESTED!");
 					file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
+					cli.client.online_filelocation(file);
 					cli.client.close_file(file);
 					System.out.println("Closed file: " + toStringSFile(file));
 					r = cli.client.get_file_by_id(file.getFid());
