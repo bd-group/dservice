@@ -68,6 +68,8 @@ public class MMServer {
 		String faceDetectorXML = null;
 		boolean isSetOutsideIP = false, indexFeatures = false;
 		int wto = -1, rto = -1;
+		boolean isSSMaster = false;
+		String lmdb_prefix = ".";
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -90,6 +92,8 @@ public class MMServer {
 				System.out.println("-rto  : read  fd time out seconds.");
 				System.out.println("-idx  : index image features.");
 				System.out.println("-fXML : face detector XML config file path.");
+				System.out.println("-ssm  : enable secondary server master.");
+				System.out.println("-lmdb : set lmdb prefix path.");
 				
 				System.exit(0);
 			}
@@ -215,6 +219,16 @@ public class MMServer {
 				}
 				faceDetectorXML = o.opt;
 			}
+			if (o.flag.equals("-ssm")) {
+				isSSMaster = true;
+			}
+			if (o.flag.equals("-lmdb")) {
+				if (o.opt == null) {
+					System.out.println("-lmdb LMDB_prefix_path");
+					System.exit(0);
+				}
+				lmdb_prefix = o.opt;
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -263,6 +277,9 @@ public class MMServer {
 			conf.addToFeatures(FeatureTypeString.IMAGE_LIRE);
 			conf.setIndexFeatures(indexFeatures);
 			conf.setFaceDetectorXML(faceDetectorXML);
+			conf.setSSMaster(isSSMaster);
+			conf.setLmdb_prefix(lmdb_prefix);
+			System.out.println((isSSMaster ? "Enable" : "Disable") + " Secondary Server on current MMServer.");
 			if (conf.getStoreArray().size() > 0) {
 				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);
 			} else

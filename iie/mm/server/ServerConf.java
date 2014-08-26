@@ -75,6 +75,14 @@ public class ServerConf {
 	private boolean indexFeatures = false;
 	
 	private int redisTimeout = 30 * 1000;
+	
+	private boolean isSSMaster = false;
+	
+	private static long ss_id = -1L;
+	
+	private static long ckpt_ts = -1L;
+	
+	private String lmdb_prefix = ".";
 
 	public ServerConf(int httpPort) throws Exception {
 		this.nodeName = InetAddress.getLocalHost().getHostName();
@@ -377,5 +385,36 @@ public class ServerConf {
 	public void setRedisTimeout(int redisTimeout) {
 		this.redisTimeout = redisTimeout;
 	}
+
+	public boolean isSSMaster() {
+		return isSSMaster;
+	}
+
+	public void setSSMaster(boolean isSSMaster) {
+		this.isSSMaster = isSSMaster;
+	}
+
+	public static long getSs_id() {
+		return ss_id;
+	}
+
+	public static void setSs_id(long ss_id) {
+		ServerConf.ss_id = ss_id;
+	}
+
+	public static long getCkpt_ts() {
+		return ckpt_ts;
+	}
+
+	public static void setCkpt_ts(long ckpt_ts) {
+		ServerConf.ckpt_ts = ckpt_ts;
+	}
 	
+	public String getLmdb_prefix() {
+		return lmdb_prefix;
+	}
+	
+	public void setLmdb_prefix(String lmdb_prefix) {
+		this.lmdb_prefix = lmdb_prefix;
+	}
 }

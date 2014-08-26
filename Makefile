@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2014-06-06 11:41:15 macan>
+# Time-stamp: <2014-08-22 11:10:58 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -43,7 +43,9 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
-MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.0.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar
+LMDB=$(shell pwd)/lib/lmdbjni-all-99-master-20130507.185246-2.jar
+
+MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.0.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar:$(LMDB)
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/:lib/fastjson-1.1.39.jar
 
@@ -70,13 +72,16 @@ DEPEND :
 	@$(MAKE) --no-print-directory -C $(REDIS)
 	@rm -rf bin/*
 	@mkdir -p bin
-	@cp -rf $(REDIS)/src/redis-server bin/
-	@cp -rf $(REDIS)/src/redis-cli bin/
-	@cp -rf $(REDIS)/src/redis-sentinel bin/
+	@cp -rpf $(REDIS)/src/redis-server bin/
+	@cp -rpf $(REDIS)/src/redis-cli bin/
+	@cp -rpf $(REDIS)/src/redis-sentinel bin/
 	@$(MAKE) --no-print-directory -C hiredis
 	@rm -rf lib/libhiredis*
-	@cp -rf hiredis/libhiredis.so lib/
+	@cp -rpf hiredis/libhiredis.so lib/
 	@cd lib; ln -s libhiredis.so libhiredis.so.0.11
+	@if [ ! -d $(LOCAL_DB) ]; then echo "No Local DB exists!"; fi
+	@$(MAKE) --no-print-directory -C $(LOCAL_DB)
+	@cp -rpf $(LOCAL_DB)/liblmdb.so lib/
 
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
 	@$(ECHO) -e " " CC"\t" $@

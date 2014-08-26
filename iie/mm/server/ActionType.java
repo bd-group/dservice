@@ -15,4 +15,6 @@ public class ActionType {
 	public static final byte MPUT = 7;
 	// feature based search
 	public static final byte FEATURESEARCH = 8;
+	// secondary level search
+	public static final byte XSEARCH = 9;
 }

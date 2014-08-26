@@ -90,6 +90,13 @@ public class ProfileTimerTask extends TimerTask {
 				System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
 			}
 		}
+		
+		// set SS_ID
+		if (conf.isSSMaster()) {
+			jedis.set("mm.ss.id", "" + ServerConf.serverId);
+			System.out.println("Register SS ID to " + ServerConf.serverId);
+		}
+		
 		jedis = RedisFactory.putInstance(jedis);
 		this.period = period;
 		if (conf.getSysInfoServerName() != null && conf.getSysInfoServerPort() != -1) {
@@ -167,6 +174,19 @@ public class ProfileTimerTask extends TimerTask {
 					for (Tuple t : active) {
 						ServerConf.servers.put((long)t.getScore(), t.getElement());
 					}
+				}
+				// update ss master
+				String ss = jedis.get("mm.ss.id");
+				try {
+					if (ss != null)
+						ServerConf.setSs_id(Long.parseLong(ss));
+				} catch (Exception e) {
+				}
+				String ckpt = jedis.get("mm.ckpt.ts");
+				try {
+					if (ckpt != null)
+						ServerConf.setCkpt_ts(Long.parseLong(ckpt));
+				} catch (Exception e) {
 				}
 			}
 		} catch (Exception e) {

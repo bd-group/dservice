@@ -26,6 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.fusesource.lmdbjni.*;
+import static org.fusesource.lmdbjni.Constants.*;
+
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Response;
 import redis.clients.jedis.ScanParams;
@@ -591,6 +594,50 @@ public class StorePhoto {
 		return returnVal;
 	}
 	
+	private boolean isInRedis(String this_set) {
+		long this_ts = Long.MAX_VALUE;
+		
+		try {
+			if (!Character.isDigit(this_set.charAt(0))) {
+				this_set = this_set.substring(1);
+			}
+			this_ts = Long.parseLong(this_set);
+		} catch (Exception e) {
+		}
+		if (this_ts > ServerConf.getCkpt_ts())
+			return true;
+		else 
+			return false;
+	}
+	
+	// if ss_id is ourself, do search; otherwise redirect the request to correct 
+	// master server.
+	private byte[] getPhotoFromSS(String set, String md5) throws RedirectException {
+		if (ServerConf.getSs_id() == ServerConf.serverId) {
+			// ok, do search
+			String info = LMDBInterface.getLmdb().read("H#" + set + "." + md5);
+			if (info != null) {
+				// split if it is complex uri
+				String savedInfo = null;
+				Long savedId = -1L;
+				for (String i : info.split("#")) {
+					String[] is = i.split("@");
+
+					if (Long.parseLong(is[2]) == ServerConf.serverId)
+						return searchPhoto(i, is);
+					else {
+						savedInfo = i;
+						savedId = Long.parseLong(is[2]);
+					}
+				}
+				throw new RedirectException(savedId, savedInfo);
+			}
+		} else {
+			throw new RedirectException(ServerConf.getSs_id(), set + "@" + md5);
+		}
+		return null;
+	}
+	
 	/**
 	 *获得md5值所代表的图片的内容
 	 * @param md5		与storePhoto中的参数md5相对应
@@ -604,12 +651,15 @@ public class StorePhoto {
 		}
 		String info = null;
 		int err = 0;
-		
+
 		// Step 1: check the local lookup cache
 		info = (String) lookupCache.get(set + "." + md5);
 		if (info == null) {
 			try {
-				info = jedis.get().hget(set, md5);
+				if (isInRedis(set))
+					info = jedis.get().hget(set, md5);
+				else
+					return getPhotoFromSS(set, md5);
 			} catch (JedisConnectionException e) {
 				try {
 					Thread.sleep(1000);

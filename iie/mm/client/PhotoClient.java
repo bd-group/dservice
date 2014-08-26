@@ -42,6 +42,8 @@ public class PhotoClient {
 	private static AtomicInteger curgrpno = new AtomicInteger(0);
 	private static AtomicInteger curseqno = new AtomicInteger(0);
 	private Map<Integer, XRefGroup> wmap = new ConcurrentHashMap<Integer, XRefGroup>();
+	private long ckpt_ts = 0;
+	private long ss_id = -1; 
 	
 	public RedisFactory getRf() {
 		return rf;
@@ -307,6 +309,14 @@ public class PhotoClient {
 		}
 	};
 	
+	public class XSearchResult {
+		public String redirect_info = null;
+		public byte[] result = null;
+		
+		public XSearchResult() {
+		}
+	}
+	
 	private ConcurrentHashMap<String, SocketHashEntry> socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
 	private ConcurrentHashMap<String, SocketHashEntry> igetSH = new ConcurrentHashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
@@ -415,6 +425,27 @@ public class PhotoClient {
 				return null;
 			default:
 				return readBytes(count, dis);
+			}
+		}
+	}
+	
+	private XSearchResult __handleInput4XSearch(DataInputStream dis) throws IOException {
+		int count;
+		
+		synchronized (dis) {
+			count = dis.readInt();
+			switch (count) {
+			case -1:
+				return null;
+			default: {
+				XSearchResult xsr = new XSearchResult();
+				
+				if (count > 0)
+					xsr.result = readBytes(count, dis);
+				else
+					xsr.redirect_info = new String(readBytes(-count, dis));
+				return xsr;
+			}
 			}
 		}
 	}
@@ -669,6 +700,87 @@ public class PhotoClient {
 		return r;
 	}
 	
+	private boolean isInRedis(String this_set) {
+		long this_ts = Long.MAX_VALUE;
+		
+		try {
+			if (!Character.isDigit(this_set.charAt(0))) {
+				this_set = this_set.substring(1);
+			}
+			this_ts = Long.parseLong(this_set);
+		} catch (Exception e) {
+		}
+		if (this_ts > ckpt_ts)
+			return true;
+		else 
+			return false;
+	}
+	
+	private byte[] getPhotoFromSS(String set, String md5) throws IOException {
+		SocketHashEntry searchSocket = null;
+		String server = servers.get(ss_id);
+		
+		if (server == null) {
+			throw new IOException("Secondary Server idx " + ss_id + " can't be resolved.");
+		}
+		searchSocket = socketHash.get(server);
+		if (searchSocket == null) {
+			String[] s = server.split(":");
+			if (s.length == 2) {
+				Socket socket = new Socket(); 
+				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
+				socket.setTcpNoDelay(true);
+				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				searchSocket.addToSocketsAsUsed(socket,
+						new DataInputStream(socket.getInputStream()),
+						new DataOutputStream(socket.getOutputStream()));
+						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
+						//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
+						
+				SocketHashEntry old = socketHash.putIfAbsent(server, searchSocket);
+				if (old != null) {
+					searchSocket.clear();
+					searchSocket = old;
+				}
+			} else 
+				throw new IOException("Invalid server name or port.");
+		}
+		
+		// action, set, md5
+		byte[] header = new byte[4];
+		header[0] = ActionType.XSEARCH;
+		header[1] = (byte)set.getBytes().length;
+		header[2] = (byte)md5.getBytes().length;
+		long id = searchSocket.getFreeSocket();
+		if (id == -1)
+			throw new IOException("Could not get free socket for server " + server);
+
+		XSearchResult xsr = null;
+		try {
+			searchSocket.map.get(id).dos.write(header);
+			
+			searchSocket.map.get(id).dos.writeBytes(set);
+			searchSocket.map.get(id).dos.writeBytes(md5);
+			searchSocket.map.get(id).dos.flush();
+	
+			xsr = __handleInput4XSearch(searchSocket.map.get(id).dis);
+			searchSocket.setFreeSocket(id);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// remove this socket do reconnect?
+			searchSocket.delFromSockets(id);
+		}
+
+		if (xsr.result != null) {
+			return xsr.result;
+		} else if (xsr.redirect_info != null) {
+			// we should redirect the request now
+			return searchPhoto(xsr.redirect_info);
+		} else {
+			throw new IOException("Internal error in mm server:" + server);
+		}
+	}
+	
 	/**
 	 * 同步取
 	 * @param set	redis中的键以set开头,因此读取图片要加上它的集合名
@@ -681,7 +793,10 @@ public class PhotoClient {
 		
 		refreshJedis();
 		try {
-			info = jedis.get().hget(set, md5);
+			if (isInRedis(set))
+				info = jedis.get().hget(set, md5);
+			else
+				return getPhotoFromSS(set, md5);
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken, wait in getObject ...");
 			try {
@@ -1432,5 +1547,21 @@ public class PhotoClient {
 		}
 		
 		return rs;
+	}
+
+	public long getCkpt_ts() {
+		return ckpt_ts;
+	}
+
+	public void setCkpt_ts(long ckpt_ts) {
+		this.ckpt_ts = ckpt_ts;
+	}
+
+	public long getSs_id() {
+		return ss_id;
+	}
+
+	public void setSs_id(long ss_id) {
+		this.ss_id = ss_id;
 	}
 }

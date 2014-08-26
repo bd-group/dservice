@@ -173,6 +173,14 @@ public class HTTPHandler extends AbstractHandler {
 			HttpServletResponse response) throws IOException, ServletException {
 		badResponse(baseRequest, response, "#FAIL: not implemented yet.");
 	}
+	
+	private String convertToDate(long ts) {
+		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		if (ts < 0) {
+			return "Invalid Time Stamp";
+		} else
+			return df.format(new Date(ts * 1000));
+	}
 
 	private void doInfo(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
@@ -196,9 +204,13 @@ public class HTTPHandler extends AbstractHandler {
 							"Indexs (#): queued " + ServerProfile.queuedIndex.longValue() + ", handled " + ServerProfile.handledIndex.longValue() + ", ignored " + ServerProfile.ignoredIndex.longValue() + ", completed " + ServerProfile.completedIndex.longValue() + "</font><p>" +
 							"Total Written Bytes (B): " + ServerProfile.writtenBytes.longValue() + "<p>" +
 							"Total Read    Bytes (B): " + ServerProfile.readBytes.longValue() + "<p>" +
-							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p></tt>" +
+							"Avg Read Latency   (ms): " + (double)ServerProfile.readDelay.longValue() / ServerProfile.readN.longValue() + "<p>" +
+							(conf.isSSMaster() ? ("<p>" + 
+							"Secondary First TimeStamp(s): " + LMDBInterface.getLmdb().firstTS() + "\t" + convertToDate(LMDBInterface.getLmdb().firstTS()) + "<p>" + 
+							"Secondary Server Keep KV pairs(#): " + LMDBInterface.getLmdb().count() + "<p>" +
+							"Checkpoint TimeStamp(s): " + ServerConf.getCkpt_ts() + "\t" + convertToDate(ServerConf.getCkpt_ts())) : "") + "</tt>" +
 							PhotoServer.getServerInfoHtml(conf) + "<p>" +
-							PhotoServer.getSpaceInfoHtml(conf) + "<p>" + 
+							PhotoServer.getSpaceInfoHtml(conf) + "<p>" +
 							"<H1> #Client Auto Config: </H1><tt>" +
 							"dupmode = " + jedis.hget("mm.client.conf", "dupmode") + "<p>" +
 							"dupnum  = " + jedis.hget("mm.client.conf", "dupnum") + "<p>" +
@@ -207,7 +219,7 @@ public class HTTPHandler extends AbstractHandler {
 							"<H2> MMServer DNS: </H2><tt>" +
 							PhotoServer.getDNSHtml(conf) + "</tt><p>" +
 							"<H1> #Useful Links:</H1><tt>" +
-							"<H2><tt><a href=/data>Active Data Sets</a></tt></H2>" +
+							"<H2><tt><a href=/data>Active Redis Data Sets</a></tt></H2>" +
 							"</tt>" +
 							"</BODY>" +
 							"</HTML>";

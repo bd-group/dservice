@@ -168,6 +168,9 @@ public class ClientAPI {
 	}
 	
 	private boolean refreshActiveMMS(boolean isInit) {
+		// refresh active secondary server and ckpt.ts now
+		getActiveSecondaryServer();
+		
 		if (isInit) {
 			return getActiveMMS();
 		} else {
@@ -229,6 +232,24 @@ public class ClientAPI {
 			}
 		}
 		return true;
+	}
+	
+	private void getActiveSecondaryServer() {
+		String ss = jedis.get("mm.ss.id");
+		String ckpt = jedis.get("mm.ckpt.ts");
+		
+		try {
+			if (ss != null)
+				pc.setSs_id(Long.parseLong(ss));
+		} catch (Exception e) {
+			System.out.println("Convert secondary server id '" + ss + "' to LONG failed.");
+		}
+		try {
+			if (ckpt != null)
+				pc.setCkpt_ts(Long.parseLong(ckpt));
+		} catch (Exception e) {
+			System.out.println("Convert checkpoint ts '" + ckpt + "' to LONG failed.");
+		}
 	}
 	
 	private boolean getActiveMMS() {

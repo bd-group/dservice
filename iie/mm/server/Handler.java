@@ -254,6 +254,37 @@ public class Handler implements Runnable{
 					}
 					break;	
 				}
+				case ActionType.XSEARCH: {
+					int setlen = header[1] & 0xff;
+					int md5len = header[2] & 0xff;
+					String redirect = null;
+
+					if (setlen > 0 && md5len > 0) {
+						String set = new String(readBytes(setlen, dis));
+						String md5 = new String(readBytes(md5len, dis));
+						byte[] content = null;
+						try {
+							content = sp.getPhoto(set, md5);
+						} catch (RedirectException e) {
+							// ok, this means we should notify the client to retry another server
+							redirect = e.info;
+						}
+						if (content != null) {
+							dos.writeInt(content.length);
+							dos.write(content);
+						} else {
+							if (redirect != null) {
+								dos.writeInt(-1 * redirect.length());
+								dos.write(redirect.getBytes());
+							} else {
+								dos.writeInt(-1);
+							}
+						}
+					} else {
+						dos.writeInt(-1);
+					}
+					break;
+				}
 				}
 				dos.flush();
 			}

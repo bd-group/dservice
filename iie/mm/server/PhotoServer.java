@@ -31,7 +31,9 @@ public class PhotoServer {
 	private int period ;					//每隔period秒统计一次读写信息
 	private ExecutorService pool;
 	//集合跟到这个集合上的写操作队列的映射
-	private ConcurrentHashMap<String, BlockingQueue<WriteTask>> sq = new ConcurrentHashMap<String, BlockingQueue<WriteTask>>();		
+	private ConcurrentHashMap<String, BlockingQueue<WriteTask>> sq = new ConcurrentHashMap<String, BlockingQueue<WriteTask>>();
+	
+	private LMDBInterface li = null;
 	
 	public PhotoServer(ServerConf conf) throws Exception {
 		this.conf = conf;
@@ -82,12 +84,15 @@ public class PhotoServer {
 			public void run() {
 				System.out.println("Shutdown search server, release resources.");
 				FeatureSearch.fi.close();
+				li.LMDBClose();
 			}
 		});
 
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();
+		
+		li = new LMDBInterface(conf);
 		
 		while(true) {
 			try {
