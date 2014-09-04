@@ -5,3 +5,4 @@ lib/*.[ao]
 .classpath
 .project
 .settings
+*.o

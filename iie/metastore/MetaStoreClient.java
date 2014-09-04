@@ -3503,11 +3503,19 @@ public class MetaStoreClient {
 							System.out.format("\r%.2f %%", ((double)fnrs / e.getValue().size() * 100));
 						}
 						Collections.sort(dsizelist);
+						double stdev = 0.0;
+						double avg = totalSize / fnrs;
+						for (Long l : dsizelist) {
+							stdev += (l - avg) * (l - avg);
+						}
+						stdev /= (fnrs * dsizelist.size());
+						stdev = Math.sqrt(stdev);
 						System.out.println("Table " + e.getKey() + " -> FNR: " + fnrs + " FRep: " + freps + " Ignore: " + ignore +
-								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + " FMAX: " + 
-								(dsizelist.get(dsizelist.size() - 1 < 0 ? 0 : (dsizelist.size() - 1)) / 1024) + 
-								" FMIN: " + (dsizelist.get(0) / 1024) + 
-								" FAVG: " + (totalSize / 1024 / fnrs) + " KB");
+								" TotalRecords: " + totalRecord + " TotalSize: " + (totalSize / 1024) + 
+								" FMAX: " + (dsizelist.size() <= 0 ? 0 : (dsizelist.get(dsizelist.size() - 1) / 1024)) + 
+								" FMIN: " + (dsizelist.size() <= 0 ? 0 : dsizelist.get(0) / 1024) + 
+								" FAVG: " + (totalSize / 1024 / fnrs) +
+								" STDEV: " + stdev + " KB.");
 						System.out.println(fs);
 					}
 				} catch (MetaException e) {
