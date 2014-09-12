@@ -35,6 +35,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 
+import org.apache.hadoop.hive.metastore.DiskManager.DeviceInfo;
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
 import org.apache.hadoop.hive.metastore.HiveMetaStore.HMSHandler;
@@ -67,6 +68,7 @@ import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocolException;
 import org.apache.thrift.transport.TTransportException;
+import org.eclipse.jetty.util.log.Log;
 
 import com.alibaba.fastjson.JSON;
 
@@ -969,6 +971,7 @@ public class MetaStoreClient {
 	    		System.out.println("-dfl : delete a file location and remove the physical data.");
 	    		System.out.println("-dflf: delete a file location (read from a file).");
 	    		System.out.println("-lfbd: list FID by devices.");
+	    		System.out.println("-rep : replicate FID to specified type device.");
 	    		
 	    		System.out.println("\n[Device]");
 	    		System.out.println("-sd  : show device.");
@@ -1049,6 +1052,7 @@ public class MetaStoreClient {
 	    	}
 	    	if (o.flag.equals("-devtype")) {
 	    		// set device type
+	    		System.out.println("TYPE LIST: \n L1(CACHE)=4;\n L2(GENERAL)=0;\n L3(MASS)=5;\n L4(SHARED)=1;\n");
 	    		devtype = Integer.parseInt(o.opt);
 	    	}
 	    	if (o.flag.equals("-devquota")) {
@@ -1935,16 +1939,20 @@ public class MetaStoreClient {
 	    						orders.add(1);
 	    					}
 	    				}
-	    				while (orders.size() < 6) {
-	    					orders.add(0);
-	    				}
-	    				fls_op = 0;
-	    				for (int i = 0; i < 6; i++) {
-	    					fls_op >>= 4;
+	    				if (orders.size() > 0) {
+	    					while (orders.size() < 6) {
+	    						orders.add(0);
+	    					}
+	    					fls_op = 0;
+	    					for (int i = 0; i < 6; i++) {
+	    						fls_op >>>= 4;
 	    					fls_op |= (orders.get(i) << 28);
+	    					}
+	    					fls_op |= 4;
+	    				} else {
+	    					fls_op = (0xffffff << 8) | 4;
 	    				}
-	    				fls_op |= 4;
-	    				System.out.println("Order=" + HMSHandler.parseOrderList(fls_op >> 8));
+	    				System.out.println("Order=" + HMSHandler.parseOrderList(fls_op >>> 8));
 	    				break;
 	    			default:
 	    				System.out.println("BAD operation code: " + (fls_op & 0xff));
@@ -2312,6 +2320,25 @@ public class MetaStoreClient {
 					e.printStackTrace();
 					break;
 				}
+	    	}
+	    	if (o.flag.equals("-rep")) {
+	    		// replicate to specified typed device
+	    		if (o.opt == null) {
+	    			System.out.println("Please set replicate file id and -devtype.");
+	    			System.exit(0);
+	    		}
+	    		long fid = 0;
+	    		
+	    		try {
+	    			fid = Long.parseLong(o.opt);
+	    			System.out.println("Try to replicate file " + fid + " to " + 
+	    					DeviceInfo.getTypeStr(devtype) + " device.");
+	    			cli.client.replicate(fid, devtype);
+	    			System.out.println("You can use -frr " + fid + " to check new replica now.");
+	    		} catch (Exception e) {
+	    			e.printStackTrace();
+	    			break;
+	    		}
 	    	}
 	    	if (o.flag.equals("-ond")) {
 	    		// online Device
