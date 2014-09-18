@@ -597,13 +597,17 @@ public class MetaStoreClient {
 			return 0;
 		SFileLocation sfl = f.getLocations().get(0);
 		String mp;
+		String n = sfl.getNode_name();
 		try {
-			mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+			if (n.contains(";")) {
+				n = sfl.getNode_name().split(";")[0];
+			}
+			mp = cli.client.getMP(n, sfl.getDevid());
 		} catch (TException e) {
 			e.printStackTrace();
 			return 0;
 		}
-		String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+		String cmd = "ssh " + n + " du -s " + mp + "/" + sfl.getLocation();
 		String result = runRemoteCmdWithResult(cmd);
 		long r = 0;
 		
@@ -663,8 +667,11 @@ public class MetaStoreClient {
 							for (int i = 0; i < f.getLocationsSize(); i++) {
 								SFileLocation sfl = f.getLocations().get(i);
 								try {
-									String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-									String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+									String n = sfl.getNode_name();
+									if (n.contains(";"))
+										n = sfl.getNode_name().split(";")[0];
+									String mp = cli.client.getMP(n, sfl.getDevid());
+									String cmd = "ssh " + n + " du -s " + mp + "/" + sfl.getLocation();
 									String result = runRemoteCmdWithResult(cmd);
 									if (!result.equals("")) {
 										String[] res = result.split("\t");
@@ -706,8 +713,11 @@ public class MetaStoreClient {
 					if (f.getLength() == 0 && f.getLocationsSize() > 0) {
 						if (getlen) {
 							SFileLocation sfl = f.getLocations().get(0);
-							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-							String cmd = "ssh " + sfl.getNode_name() + " du -s " + mp + "/" + sfl.getLocation();
+							String n = sfl.getNode_name();
+							if (n.contains(";"))
+								n = sfl.getNode_name().split(";")[0];
+							String mp = cli.client.getMP(n, sfl.getDevid());
+							String cmd = "ssh " + n + " du -s " + mp + "/" + sfl.getLocation();
 							String result = runRemoteCmdWithResult(cmd);
 							if (!result.equals("")) {
 								String[] res = result.split("\t");
@@ -1575,9 +1585,12 @@ public class MetaStoreClient {
 	    						System.out.println(cmd);
 	    					} else {
 	    						// reset sourceFile
-	    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+	    						String n = sfl.getNode_name();
+	    						if (n.contains(";"))
+	    							n = sfl.getNode_name().split(";")[0];
+	    						sourceFile = cli.client.getMP(n, sfl.getDevid()) + "/" + sfl.getLocation();
 	    						System.out.println("#Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
-	    						cmd = "scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
+	    						cmd = "scp -r metastore@" + n + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";";
 	    						System.out.println(cmd);
 	    						cmd = "find " + targetFile + " -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';";
 	    						System.out.println(cmd);
@@ -1678,9 +1691,12 @@ public class MetaStoreClient {
 	    						}
 	    					} else {
 	    						// reset sourceFile
-	    						sourceFile = cli.client.getMP(sfl.getNode_name(), sfl.getDevid()) + "/" + sfl.getLocation();
+	    						String n = sfl.getNode_name();
+	    						if (n.contains(";"))
+	    							n = sfl.getNode_name().split(";")[0];
+	    						sourceFile = cli.client.getMP(n, sfl.getDevid()) + "/" + sfl.getLocation();
 	    						System.out.println("Copy non-NAS SFL by TUNNEL: " + sourceFile + " -> " + tf.getParent());
-	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'scp -r metastore@" + sfl.getNode_name() + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
+	    						cmd = "ssh " + (tunnel_user == null ? "" : tunnel_user + "@") + tunnel_node + " 'scp -r metastore@" + n + ":" + sourceFile + " " + tf.getParent() + "; " + "chmod -R ugo+rw " + targetFile + ";'";
 	    						System.out.println(cmd);
 	    						if (!runRemoteCmd(cmd)) {
 	    							System.exit(1);
@@ -3258,8 +3274,12 @@ public class MetaStoreClient {
 						// iterator on file locations
 						if (f.getLocationsSize() > 0) {
 							for (SFileLocation sfl : f.getLocations()) {
-								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-								System.out.println("ssh " + sfl.getNode_name() + " ls -l " + mp + "/" + sfl.getLocation());
+								String n = sfl.getNode_name();
+								if (sfl.getNode_name().contains(";")) {
+									n = sfl.getNode_name().split(";")[0];
+								}
+								String mp = cli.client.getMP(n, sfl.getDevid());
+								System.out.println("ssh " + n + " ls -l " + mp + "/" + sfl.getLocation());
 							}
 						}
 					}
@@ -3297,9 +3317,12 @@ public class MetaStoreClient {
 						ofl_del = ofl_del && cli.client.offline_filelocation(sfl);
 					if (ofl_del) {
 						String mp, cmd = null;
-						mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+						String n = sfl.getNode_name();
+						if (n.contains(";"))
+							n = sfl.getNode_name().split(";")[0];
+						mp = cli.client.getMP(n, sfl.getDevid());
 						if (mp != null)
-							cmd = "ssh " + sfl.getNode_name() + " rm -rf " + mp + "/" + sfl.getLocation();
+							cmd = "ssh " + n + " rm -rf " + mp + "/" + sfl.getLocation();
 						System.out.println("CMD: {" + cmd + "}");
 						// runRemoteCmd(cmd);
 					}
@@ -4040,8 +4063,11 @@ public class MetaStoreClient {
 							int j = 0;
 							
 							for (SFileLocation sfl : f.getLocations()) {
-								String cmd = "ssh " + (sfl.getNode_name().equals("") ? backupNodeName : sfl.getNode_name());
-								String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
+								String n = sfl.getNode_name();
+								if (n.contains(";"))
+									n = sfl.getNode_name().split(";")[0];
+								String cmd = "ssh " + (n.equals("") ? backupNodeName : n);
+								String mp = cli.client.getMP(n, sfl.getDevid());
 								cmd += " \"cd " + mp + "/" + sfl.getLocation() + "; find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}';\"";
 								//System.out.println(cmd);
 								md5s[j] = runRemoteCmdWithResult(cmd);
@@ -4136,8 +4162,12 @@ public class MetaStoreClient {
 					// iterator on file locations
 					if (file.getLocationsSize() > 0) {
 						for (SFileLocation sfl : file.getLocations()) {
-							String mp = cli.client.getMP(sfl.getNode_name(), sfl.getDevid());
-							System.out.println("ssh " + sfl.getNode_name() + " ls -l " + mp + "/" + sfl.getLocation());
+							String n = sfl.getNode_name();
+							if (sfl.getNode_name().contains(";")) {
+								n = sfl.getNode_name().split(";")[0];
+							}
+							String mp = cli.client.getMP(n, sfl.getDevid());
+							System.out.println("ssh " + n + " ls -l " + mp + "/" + sfl.getLocation());
 						}
 					}
 				} catch (NumberFormatException e) {
