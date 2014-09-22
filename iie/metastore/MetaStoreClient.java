@@ -80,8 +80,12 @@ import devmap.DevMap.DevStat;
 public class MetaStoreClient {
 	// client should be the local datacenter;
 	public Database local_db;
+	public String local_alterUri;
 	public IMetaStoreClient client;
+	private String master_host = null;
+	private int master_port;
 	private ConcurrentHashMap<String, IMetaStoreClient> climap = new ConcurrentHashMap<String, IMetaStoreClient>();
+	private ConcurrentHashMap<String, String> alterUriMap = new ConcurrentHashMap<String, String>();
 	
 	public static <T> T newInstance(Class<T> theClass,
 			Class<?>[] parameterTypes, Object[] initargs) {
@@ -214,6 +218,8 @@ public class MetaStoreClient {
 				return null;
 			}
 		};
+		master_host = serverName;
+		master_port = port;
 		return RetryingMetaStoreClient.getProxy("thrift://" + serverName + ":" + port, 5, 1, hookLoader, HiveMetaStoreClient.class.getName());
 	}
 	
@@ -232,20 +238,25 @@ public class MetaStoreClient {
 		initmap(preconnect);
 	}
 	
-	public MetaStoreClient(String serverName) throws MetaException {
-		client = createMetaStoreClient(serverName, 9083);
+	public MetaStoreClient(String uris) throws MetaException {
+		client = createMetaStoreClient(uris);
 		initmap(false);
 	}
-
 	
 	private void initmap(boolean preconnect) throws MetaException {
 		// get local attribution
 		try {
-			this.local_db = client.get_local_attribution();
+			local_db = client.get_local_attribution();
+			local_alterUri = client.get_ms_uris();
+			if (local_alterUri != null && local_alterUri.length() > 0) {
+				client.close();
+				client = createMetaStoreClient("thrift://" + master_host + ":" + master_port + "," + local_alterUri);
+			}
 		} catch (TException e) {
 			throw new MetaException(e.toString());
 		}
 		climap.put(local_db.getName(), client);
+		alterUriMap.put(local_db.getName(), local_alterUri);
 		
 		// get all attributions
 		List<Database> ld;
@@ -260,9 +271,12 @@ public class MetaStoreClient {
 					System.out.println("Try to connect to Attribution " + db.getName() + ", uri=" + db.getParameters().get("service.metastore.uri"));
 					try { 
 						IMetaStoreClient cli = createMetaStoreClient(db.getParameters().get("service.metastore.uri"));
+						String uri = cli.get_ms_uris();
 						climap.put(db.getName(), cli);
-					} catch (MetaException me) {
+						alterUriMap.put(db.getName(), uri);
+					} catch (Exception me) {
 						System.out.println("Connect to Datacenter " + db.getName() + ", uri=" + db.getParameters().get("service.metastore.uri") + " failed!");
+						me.printStackTrace();
 					}
 				}
 			}
@@ -276,7 +290,9 @@ public class MetaStoreClient {
 			try {
 				Database rdb = client.get_attribution(db_name);
 				cli = createMetaStoreClient(rdb.getParameters().get("service.metastore.uri"));
+				String uri = cli.get_ms_uris();
 				climap.put(db_name, cli);
+				alterUriMap.put(db_name, uri);
 			} catch (NoSuchObjectException e) {
 				System.out.println(e);
 			} catch (MetaException e) {
