@@ -72,6 +72,7 @@ import org.eclipse.jetty.util.log.Log;
 
 import com.alibaba.fastjson.JSON;
 
+
 import redis.clients.jedis.Jedis;
 
 import devmap.DevMap;
@@ -891,6 +892,50 @@ public class MetaStoreClient {
 		}
 	}
 	
+	public static class ScrubnRule {
+		public String type;
+		public List<Integer> times = new ArrayList<Integer>();
+		public List<String> rules = new ArrayList<String>();
+		public enum ScrubAction {
+			DELETE, DOWNREP, MIGRATE,
+		}
+		public ScrubAction action;
+		
+		public String toString() {
+			String r = "Rule -> {" + type;
+			for(int i = 1 ; i <= 4 ; i++){
+				String act = null;
+				if(rules.get(i-1).equals("del")){
+					action = ScrubAction.DELETE;
+				} else if(rules.get(i-1).equals("drep")){
+					action = ScrubAction.DOWNREP;
+				}else if(rules.get(i-1).equals("migr")){
+					action = ScrubAction.MIGRATE;
+				} 
+				
+				switch (action) {
+				case DELETE:
+					act = "delete";
+					break;
+				case DOWNREP:
+					act = "downrep";
+					break;
+				case MIGRATE:
+					act = "migrate";
+					break;
+				default:
+					act = "unknown";
+				}
+				if(i == 4){
+					r+= "; t" + i + "_limit=" + times.get(i-1) + ", t" + i + "_action=" + act + "}";
+				}else{
+					r+= "; t" + i + "_limit=" + times.get(i-1) + ", t" + i + "_action=" + act;
+				}
+			}
+			return r;
+		}
+	}
+	
 	public static class Option {
 	     String flag, opt;
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
@@ -1035,6 +1080,7 @@ public class MetaStoreClient {
 	    		System.out.println("-scrub_fast: use multi-thread to get files.");
 	    		System.out.println("-avglen : get avg len by table split value.");
 	    		System.out.println("-scrub  : into scrub mode, do auto clean.");
+	    		System.out.println("-scrubn : into scrubn mode, do auto clean.");
 	    		System.out.println("-fls    : control FLSelector watch list.");
 	    		System.out.println("-statchk: do OldMS/NewMS file/filelocation status check.");
 	    		System.out.println("-rchk   : NewMS redis index/content check.");
@@ -2775,6 +2821,542 @@ public class MetaStoreClient {
 					}
 				}
 			}
+			if (o.flag.equals("-scrubn")) {
+				// into scrubn mode, auto clean
+				// n levels data life period management
+				// Logic: 
+				// 1. get all files, calculate the file length, store into hash map;
+				// 2. while (true) {
+				//       get store ratio
+				//       decide file set that should scrub
+				//       reget new files, update hash map
+				//    }
+				// RULE LOGIC => type:action:t1_limit:t2_limit:t3_limit:t4_limit
+				// RULE EXAMP => ratio:0.15:0.15:0.15:0.15:0.15;+hlw:drep#730:drep#730:del#730:migr#730;+all:drep#30:drep#30:drep#30:drep#30;
+				Double target_ratio = 0.15;
+				Double ctarget_ratio = 0.15;
+				Double gtarget_ratio = 0.15;
+				Double mtarget_ratio = 0.15;
+				Double starget_ratio = 0.15;
+				
+				List<ScrubnRule> srl = new ArrayList<ScrubnRule>();
+				
+				cli.client.setTimeout(120);
+				if (scrub_rule != null) {
+					String[] rules = scrub_rule.split(";");
+					for (int i = 0; i < rules.length; i++) {
+						if (rules[i].startsWith("ratio")) {
+							String[] r1 = rules[i].split(":");
+							if (r1.length >= 6)
+								target_ratio = Double.parseDouble(r1[1]);
+								ctarget_ratio = Double.parseDouble(r1[2]);
+								gtarget_ratio = Double.parseDouble(r1[3]);
+								mtarget_ratio = Double.parseDouble(r1[4]);
+								starget_ratio = Double.parseDouble(r1[5]);
+						}
+						if (rules[i].startsWith("+")) {
+							String[] r2 = rules[i].split(":");
+							if (r2.length >= 5) {
+								ScrubnRule sr = new ScrubnRule();
+								sr.type = r2[0].substring(1);
+								for(int j = 0 ;j < 4 ; j++){
+									String [] r3 = r2[j+1].split("#");
+									if (r3[0].equalsIgnoreCase("del")) {
+										sr.rules.add(r3[0]);
+									} else if (r3[0].equalsIgnoreCase("drep")) {
+										sr.rules.add(r3[0]);
+									} else if (r3[0].equalsIgnoreCase("migr")) {
+										sr.rules.add(r3[0]);
+									}
+									sr.times.add(new Double(Double.parseDouble(r3[1]) * 24.0).intValue());
+								}
+								srl.add(sr);
+							}
+						}
+					}
+				} else {
+					ScrubnRule sr = new ScrubnRule();
+					sr.type = "all";
+					for(int j = 0;j<4;j++){
+						sr.times.add(30 * 24);
+						sr.rules.add("drep");
+					}
+					srl.add(sr);
+					
+					sr = new ScrubnRule();
+					sr.type = "all";
+					for(int j = 0;j<4;j++){
+						sr.times.add(400000);
+						sr.rules.add("drel");
+					}
+					srl.add(sr);
+					
+					sr = new ScrubnRule();
+					sr.type = "all";
+					for(int j = 0;j<4;j++){
+						sr.times.add(30 * 24);
+						sr.rules.add("migr");
+					}
+					srl.add(sr);
+				}
+				System.out.println("Target Ratio " + target_ratio + " Cache Target Ratio " + ctarget_ratio
+						 + " General Target Ratio " + gtarget_ratio + " Mass Target Ratio " + mtarget_ratio + " Share Target Ratio" + starget_ratio);
+				for (ScrubnRule sr : srl) {
+					System.out.println(sr);
+				}
+				
+				TreeMap<Long, Map<String, FileStat>> fmap = new TreeMap<Long, Map<String, FileStat>>();
+				if (scrub_max < 0) {
+					try {
+						scrub_max = cli.client.getMaxFid();
+					} catch (MetaException e) {
+						e.printStackTrace();
+						break;
+					} catch (TException e) {
+						e.printStackTrace();
+						break;
+					}
+				}
+				System.out.println("Get MaxFid() " + scrub_max);
+				long sleepnr = 10;
+				long last_fetch = System.currentTimeMillis();
+				long last_got = 0;
+				
+				//update the fmap
+				update_fmap(cli, 10, serverName, serverPort, fmap, 0, scrub_max, statfs2_getlen);
+				last_got = scrub_max / 10 * 10;
+				System.out.println("Get File Info upto FID " + last_got);
+				
+				while (true) {
+					try {
+						while (cli == null) {
+							cli = __reconnect(serverName, serverPort);
+						}
+
+						Double ratio = 0.0;
+						Double cratio = 0.0;
+						Double gratio = 0.0;
+						Double mratio = 0.0;
+						Double sratio = 0.0;
+						try {
+							Thread.sleep(sleepnr * 1000);
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+						if (System.currentTimeMillis() - last_fetch >= 3600 * 1000) {
+							// do fetch now
+							try {
+								scrub_max = cli.client.getMaxFid();
+							} catch (Exception e) {
+								scrub_max = last_got;
+							}
+							last_fetch = System.currentTimeMillis();
+							if (scrub_max > last_got) {
+								if (!update_fmap(cli, 1, serverName, serverPort, fmap, last_got, scrub_max, statfs2_getlen)) {
+									last_got = scrub_max;
+									System.out.println("Get File Info upto FID " + last_got);
+								} else {
+									System.out.println("Retry ten minites later ...");
+									last_fetch = System.currentTimeMillis() - 3000 * 1000;
+								}
+							}
+						}
+						//judge the ratio to decide to scrub the data or not
+						try {
+							String dms = cli.client.getDMStatus();
+							BufferedReader bufReader = new BufferedReader(new StringReader(dms));
+							String line = null;
+							while ((line = bufReader.readLine()) != null) {
+								if (line.startsWith("True  space")) {
+									String[] ls = line.split(" ");
+									ratio = Double.parseDouble(ls[ls.length - 1]);
+								} else if (line.startsWith("CacheTrue  space")){
+									String[] ls = line.split(" ");
+									cratio = Double.parseDouble(ls[ls.length - 1]);
+								} else if (line.startsWith("GeneralTrue  space")){
+									String[] ls = line.split(" ");
+									gratio = Double.parseDouble(ls[ls.length - 1]);
+								} else if (line.startsWith("MassTrue  space")){
+									String[] ls = line.split(" ");
+									mratio = Double.parseDouble(ls[ls.length - 1]);
+								} else if (line.startsWith("ShareTrue  space")){
+									String[] ls = line.split(" ");
+									sratio = Double.parseDouble(ls[ls.length - 1]);
+								}
+							}
+							System.out.println(" -> Current free ratio " + ratio + ", target ratio " + target_ratio
+									+ ", free cratio " + cratio + ", ctaget ratio " + ctarget_ratio
+									+ ", free gratio " + gratio + ", gtaget ratio " + gtarget_ratio
+									+ ", free mratio " + mratio + ", mtaget ratio " + mtarget_ratio
+									+ ", free sratio " + sratio + ", staget ratio " + starget_ratio);
+							
+							if (target_ratio < ratio && ctarget_ratio < cratio && gtarget_ratio < gratio
+									&& mtarget_ratio < mratio && starget_ratio < sratio) {
+								sleepnr = Math.min(sleepnr * 2, 60);
+								continue;
+							} else {
+								sleepnr = Math.max(sleepnr / 2, 10);
+							}
+
+							// sort by time
+							boolean stop = false;
+							long cur_hour = System.currentTimeMillis() / 1000 / 3600 * 3600;
+							List<Long> fsmapToDel = new ArrayList<Long>();
+
+							for (Long k : fmap.keySet()) {
+								Map<String, FileStat> fsmap = fmap.get(k);
+								long hours = (cur_hour - k) / 3600;
+								long total_free = 0;
+								System.out.println("%%%%%%%%%%%%%%%" + cur_hour);
+								System.out.println("###############" + k);
+								System.out.println("@@@@@@@@@@@@@@@" + hours);
+								System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
+								// iterate on each rule
+								for (ScrubnRule sr : srl) {
+									List<String> toDel = new ArrayList<String>();
+									//judge the table name is right or not
+									for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
+										if (sr.type.equalsIgnoreCase("hlw")) {
+											if (e.getKey().contains("t_gkrz") || 
+													e.getKey().contains("t_gzrz") ||
+													e.getKey().contains("t_jcrz") ||
+													e.getKey().contains("t_ybrz")) {
+												// ok
+											} else
+												continue;
+										} else if (sr.type.equalsIgnoreCase(e.getKey())) {
+											// ok
+										} else if (sr.type.equalsIgnoreCase("all")) {
+											// ok
+										} else {
+											continue;
+										}
+										
+										if(hours > sr.times.get(0) && hours <= sr.times.get(1)){
+											Set<Long> idToDel = new TreeSet<Long>();
+											System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
+											for (Long fid : e.getValue().fids) {
+												try {
+													SFile f = cli.client.get_file_by_id(fid);
+													if(sr.rules.get(0).equalsIgnoreCase("del")){
+														sr.action = ScrubnRule.ScrubAction.DELETE;
+													} else if(sr.rules.get(0).equalsIgnoreCase("drep")){
+														sr.action = ScrubnRule.ScrubAction.DOWNREP;
+													} else if(sr.rules.get(0).equalsIgnoreCase("migr")){
+														sr.action = ScrubnRule.ScrubAction.MIGRATE;
+														
+													}
+
+													switch (sr.action) {
+													case DELETE:
+														cli.client.rm_file_physical(f);
+														total_free += e.getValue().space * f.getRep_nr();
+														toDel.add(e.getKey());
+														System.out.print(f.getFid() + ",");
+														break;
+													case DOWNREP:
+														if (f.getRep_nr() > 1) {
+															cli.client.set_file_repnr(f.getFid(), 1);
+															System.out.print(f.getFid() + ",");
+														}
+														break;
+													case MIGRATE:
+														
+														List<SFileLocation> sfl = f.getLocations();
+														List<SFileLocation> sfl1 = new ArrayList<SFileLocation>();//SSD
+														List<SFileLocation> sfl2 = new ArrayList<SFileLocation>();//GENERAL
+														for(SFileLocation s :sfl){
+															Device dev = cli.client.getDevice(s.getDevid());
+															if(DeviceInfo.getType(dev.getProp()) == MetaStoreConst.MDeviceProp.CACHE){
+																sfl1.add(s);
+															} else if(DeviceInfo.getType(dev.getProp())  == MetaStoreConst.MDeviceProp.GENERAL){
+																sfl2.add(s);
+															}
+														}
+														if(sfl1.size() != 0){
+															if (f.getRep_nr() >= 1) {
+																if(sfl2.size() == 0){
+																	cli.client.set_file_repnr(f.getFid(), 1);
+																	cli.client.replicate(f.getFid(), MetaStoreConst.MDeviceProp.GENERAL);
+																	System.out.print(f.getFid() + ",");
+																} else {
+																	SFile sf = cli.client.get_file_by_id(fid);
+																	List<SFileLocation> sfls = sf.getLocations();
+																	for(SFileLocation sfi : sfls){
+																		Device de = cli.client.getDevice(sfi.getDevid());
+																		if(sfi.getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.ONLINE
+																				 && DeviceInfo.getType(de.getProp())  == MetaStoreConst.MDeviceProp.GENERAL){
+																			cli.client.set_file_repnr(f.getFid(), 1);
+																			for(SFileLocation s : sfl1){
+																				Device dev = cli.client.getDevice(s.getDevid());
+																				cli.client.del_filelocation(dev.getDevid(), s.getLocation());
+																			}
+																			System.out.print(f.getFid() + ",");
+																			break;
+																		}
+																	}
+																}
+															}
+															break;
+														}
+													}
+												} catch (FileOperationException foe) {
+													idToDel.add(fid);
+												} catch (Exception foe) {
+												}
+											}
+											System.out.println("]");
+											if (idToDel.size() > 0) {
+												for (Long fid : idToDel) {
+													e.getValue().fids.remove(fid);
+												}
+											}
+										
+										} else if(hours > sr.times.get(1) && hours <= sr.times.get(2)){
+											Set<Long> idToDel = new TreeSet<Long>();
+											System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
+											for (Long fid : e.getValue().fids) {
+												try {
+													SFile f = cli.client.get_file_by_id(fid);
+													if(sr.rules.get(1).equalsIgnoreCase("del")){
+														sr.action = ScrubnRule.ScrubAction.DELETE;
+													} else if(sr.rules.get(1).equalsIgnoreCase("drep")){
+														sr.action = ScrubnRule.ScrubAction.DOWNREP;
+													} else if(sr.rules.get(1).equalsIgnoreCase("migr")){
+														sr.action = ScrubnRule.ScrubAction.MIGRATE;
+													}
+													switch (sr.action) {
+													case DELETE:
+														cli.client.rm_file_physical(f);
+														total_free += e.getValue().space * f.getRep_nr();
+														toDel.add(e.getKey());
+														System.out.print(f.getFid() + ",");
+														break;
+													case DOWNREP:
+														if (f.getRep_nr() > 1) {
+															cli.client.set_file_repnr(f.getFid(), 1);
+															System.out.print(f.getFid() + ",");
+														}
+														break;
+													case MIGRATE:
+														List<SFileLocation> sfl = f.getLocations();
+														List<SFileLocation> sfl1 = new ArrayList<SFileLocation>();//GENERAL
+														List<SFileLocation> sfl2 = new ArrayList<SFileLocation>();//MASS
+														for(SFileLocation s :sfl){
+															Device dev = cli.client.getDevice(s.getDevid());
+															if(DeviceInfo.getType(dev.getProp()) == MetaStoreConst.MDeviceProp.GENERAL){
+																sfl1.add(s);
+															} else if(DeviceInfo.getType(dev.getProp()) == MetaStoreConst.MDeviceProp.MASS){
+																sfl2.add(s);
+															}
+														}
+														if(sfl1.size() != 0){
+															System.out.println("begin!" + sfl2.size());
+															if (f.getRep_nr() >= 1) {
+																if(sfl2.size() == 0){
+																	cli.client.set_file_repnr(f.getFid(), 1);
+																	cli.client.replicate(f.getFid(), MetaStoreConst.MDeviceProp.MASS);
+																	System.out.print(f.getFid() + ",");
+																} else {
+																	SFile sf = cli.client.get_file_by_id(fid);
+																	List<SFileLocation> sfls = sf.getLocations();
+																	for(SFileLocation sfi : sfls){
+																		Device de = cli.client.getDevice(sfi.getDevid());
+																		if(sfi.getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.ONLINE
+																				 && DeviceInfo.getType(de.getProp())  == MetaStoreConst.MDeviceProp.MASS){
+																			cli.client.set_file_repnr(f.getFid(), 1);
+																			for(SFileLocation s : sfl1){
+																				Device dev = cli.client.getDevice(s.getDevid());
+																				cli.client.del_filelocation(dev.getDevid(), s.getLocation());
+																			}
+																			System.out.print(f.getFid() + ",");
+																			break;
+																		}
+																	}
+																}
+																
+															}
+															break;
+														}
+													}
+												} catch (FileOperationException foe) {
+													idToDel.add(fid);
+												} catch (Exception foe) {
+												}
+											}
+											System.out.println("]");
+											if (idToDel.size() > 0) {
+												for (Long fid : idToDel) {
+													e.getValue().fids.remove(fid);
+												}
+											}
+											
+										} else if(hours > sr.times.get(2) && hours <= sr.times.get(3)){
+											Set<Long> idToDel = new TreeSet<Long>();
+											System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
+											for (Long fid : e.getValue().fids) {
+												try {
+													SFile f = cli.client.get_file_by_id(fid);
+													if(sr.rules.get(2).equalsIgnoreCase("del")){
+														sr.action = ScrubnRule.ScrubAction.DELETE;
+													} else if(sr.rules.get(2).equalsIgnoreCase("drep")){
+														sr.action = ScrubnRule.ScrubAction.DOWNREP;
+													} else if(sr.rules.get(2).equalsIgnoreCase("migr")){
+														sr.action = ScrubnRule.ScrubAction.MIGRATE;
+													}
+													switch (sr.action) {
+													case DELETE:
+														cli.client.rm_file_physical(f);
+														total_free += e.getValue().space * f.getRep_nr();
+														toDel.add(e.getKey());
+														System.out.print(f.getFid() + ",");
+														break;
+													case DOWNREP:
+														if (f.getRep_nr() > 1) {
+															cli.client.set_file_repnr(f.getFid(), 1);
+															System.out.print(f.getFid() + ",");
+														}
+														break;
+													case MIGRATE:
+														List<SFileLocation> sfl = f.getLocations();
+														List<SFileLocation> sfl1 = new ArrayList<SFileLocation>();//MASS
+														List<SFileLocation> sfl2 = new ArrayList<SFileLocation>();//NAS
+														for(SFileLocation s :sfl){
+															Device dev = cli.client.getDevice(s.getDevid());
+															if(DeviceInfo.getType(dev.getProp())  == MetaStoreConst.MDeviceProp.MASS){
+																sfl1.add(s);
+															} else if(DeviceInfo.getType(dev.getProp())  == MetaStoreConst.MDeviceProp.SHARED){
+																sfl2.add(s);
+															}
+														}
+														if(sfl1.size() != 0){
+															if (f.getRep_nr() >= 1) {
+																if(sfl2.size() == 0){
+																	cli.client.set_file_repnr(f.getFid(), 1);
+																	cli.client.replicate(f.getFid(), MetaStoreConst.MDeviceProp.SHARED);
+																	System.out.print(f.getFid() + ",");
+																} else {
+																	SFile sf = cli.client.get_file_by_id(fid);
+																	List<SFileLocation> sfls = sf.getLocations();
+																	for(SFileLocation sfi : sfls){
+																		Device de = cli.client.getDevice(sfi.getDevid());
+																		if(sfi.getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.ONLINE
+																				 && DeviceInfo.getType(de.getProp())  == MetaStoreConst.MDeviceProp.SHARED){
+																			cli.client.set_file_repnr(f.getFid(), 1);
+																			for(SFileLocation s : sfl1){
+																				Device dev = cli.client.getDevice(s.getDevid());
+																				cli.client.del_filelocation(dev.getDevid(), s.getLocation());
+																			}
+																			System.out.print(f.getFid() + ",");
+																			break;
+																		}
+																	}
+																}
+																
+															}
+															break;
+														}
+													}
+												} catch (FileOperationException foe) {
+													idToDel.add(fid);
+												} catch (Exception foe) {
+												}
+											}
+											System.out.println("]");
+											if (idToDel.size() > 0) {
+												for (Long fid : idToDel) {
+													e.getValue().fids.remove(fid);
+												}
+											}
+										} else if(hours > sr.times.get(3) || hours < -10000){
+											Set<Long> idToDel = new TreeSet<Long>();
+											System.out.print(sr + " => on " + e.getKey() + " " + e.getValue().fids.size() + " files [");
+											for (Long fid : e.getValue().fids) {
+												try {
+													SFile f = cli.client.get_file_by_id(fid);
+													if(sr.rules.get(3).equalsIgnoreCase("del")){
+														sr.action = ScrubnRule.ScrubAction.DELETE;
+													} else if(sr.rules.get(3).equalsIgnoreCase("drep")){
+														sr.action = ScrubnRule.ScrubAction.DOWNREP;
+													} else if(sr.rules.get(3).equalsIgnoreCase("migr")){
+														sr.action = ScrubnRule.ScrubAction.MIGRATE;
+													}
+													switch (sr.action) {
+													case DELETE:
+														cli.client.rm_file_physical(f);
+														total_free += e.getValue().space * f.getRep_nr();
+														toDel.add(e.getKey());
+														System.out.print(f.getFid() + ",");
+														break;
+													case DOWNREP:
+														if (f.getRep_nr() > 1) {
+															cli.client.set_file_repnr(f.getFid(), 1);
+															System.out.print(f.getFid() + ",");
+														}
+														break;
+													case MIGRATE:
+														break;
+													}
+												} catch (FileOperationException foe) {
+													idToDel.add(fid);
+												} catch (Exception foe) {
+												}
+											}
+											System.out.println("]");
+											if (idToDel.size() > 0) {
+												for (Long fid : idToDel) {
+													e.getValue().fids.remove(fid);
+												}
+											}
+										}
+										for (String s : toDel) {
+											fsmap.remove(s);
+										}
+										FreeSpace fs = __get_free_space_ratio(cli);
+										if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
+											stop = true;
+											break;
+										}
+									}
+								}
+								
+								if (fsmap.size() == 0)
+									fsmapToDel.add(k);
+								if (stop)
+									break;
+							}
+							if (fsmapToDel.size() > 0) {
+								for (Long k : fsmapToDel) {
+									fmap.remove(k);
+								}
+							}
+						} catch (MetaException e1) {
+							e1.printStackTrace();
+							if (e1.getCause() instanceof ConnectException) {
+								try {
+									cli.stop();
+								} catch (Exception se) {
+								}
+								cli = null;
+							}
+						} catch (TException e1) {
+							e1.printStackTrace();
+							try {
+								cli.stop();
+							} catch (Exception se) {
+							}
+							cli = null;
+						}
+					} catch (Exception e) { 
+						e.printStackTrace();
+						try {
+							cli.stop();
+						} catch (Exception se) {
+						}
+						cli = null;
+					}
+				}
+			}
 			if (o.flag.equals("-avglen")) {
 				// get avg length and record number of each table in some time range
 				long end = 0;
@@ -3999,16 +4581,21 @@ public class MetaStoreClient {
 			if (o.flag.equals("-fcrp")) {
 				// create a new file by policy
 				CreatePolicy cp = new CreatePolicy();
-				cp.setOperation(CreateOperation.CREATE_IF_NOT_EXIST_AND_GET_IF_EXIST);
+				cp.setOperation(CreateOperation.CREATE_NEW_RANDOM);
 				
 				try {
 					List<SplitValue> values = new ArrayList<SplitValue>();
-					values.add(new SplitValue("rel_time", 1, "1024", 0));
-					values.add(new SplitValue("rel_time", 1, "2048", 0));
-					values.add(new SplitValue("isp_name", 2, "2", 0));
+					Date d = new SimpleDateFormat("yyyy-MM-dd-HH:mm:ss").parse(o.opt);
+					values.add(new SplitValue("c_fssj", 1, d.getTime() /1000 +"", 2));
+					values.add(new SplitValue("c_fssj", 1, d.getTime() /1000 +3600 + "", 2));
+					values.add(new SplitValue("c_ydz", 2, "8-7", 2));
 
-					file = cli.client.create_file_by_policy(cp, 2, "db1", "wb", values);
+					file = cli.client.create_file_by_policy(cp, 2, "db1", "t_dx_rz_qydx", values);
 					System.out.println("Create file: " + toStringSFile(file));
+				} catch (ParseException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+					break;
 				} catch (FileOperationException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
