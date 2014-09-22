@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-06-16 16:01:10 macan>
+ * Time-stamp: <2014-09-22 16:58:19 macan>
  *
  */
 
@@ -116,6 +116,8 @@ static int g_sockfd;
 static struct sockaddr_in g_server;
 static char *g_server_str = NULL;
 static int g_port = 20202;
+
+static struct sockaddr_in g_serverR;
 
 static int g_specify_dev = 0;
 static char *g_dev_str = NULL;
@@ -941,7 +943,7 @@ out:
  */
 int __dgram_sr(char *send, char **recv)
 {
-    socklen_t serverSize = sizeof(g_server);
+    socklen_t serverSize = sizeof(g_serverR);
     char reply[1500];
     int br, gotResponse = 0, err = 0;
 
@@ -954,7 +956,7 @@ int __dgram_sr(char *send, char **recv)
     
     memset(reply, 0, sizeof(reply));
     if ((br = recvfrom(g_sockfd, reply, 1500, 0,
-                       (struct sockaddr*) &g_server, &serverSize)) == -1) {
+                       (struct sockaddr*) &g_serverR, &serverSize)) == -1) {
         if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
             hvfs_err(lib, "Recv TIMEOUT!\n");
             err = -errno;
@@ -1608,7 +1610,7 @@ void do_help()
 static void *__async_recv_thread_main(void *args)
 {
     sigset_t set;
-    socklen_t serverSize = sizeof(g_server);
+    socklen_t serverSize = sizeof(g_serverR);
     int br, err = 0;
 
     /* first, let us block the SIGALRM */
@@ -1629,7 +1631,7 @@ static void *__async_recv_thread_main(void *args)
         while (!g_async_recv_thread_stop) {
             memset(reply, 0, sizeof(reply));
             if ((br = recvfrom(g_sockfd, reply, sizeof(reply), 0,
-                               (struct sockaddr*) &g_server, &serverSize)) == -1) {
+                               (struct sockaddr*) &g_serverR, &serverSize)) == -1) {
                 if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                     hvfs_err(lib, "Recv TIMEOUT!\n");
                 } else {
