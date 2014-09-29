@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-09-22 16:58:19 macan>
+ * Time-stamp: <2014-09-26 15:41:56 macan>
  *
  */
 
@@ -136,6 +136,9 @@ static LIST_HEAD(g_verify);
 
 static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
+
+static char *g_copy_cmd = "scp -qpr";
+static int g_is_rsync = 0;
 
 /* dpi for heartbeat using
  */
@@ -1873,17 +1876,20 @@ static void *__rep_thread_main(void *args)
 #if 1
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
-                        "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
+                        "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
                         "cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
+                        g_copy_cmd,
                         pos->from.node, pos->from.mp, pos->from.location,
-                        pos->to.node, pos->to.mp, pos->to.location,
+                        (g_is_rsync ? "" : pos->to.node),
+                        (g_is_rsync ? "" : ":"),
+                        pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location);
 #else
                 sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
                         "ssh %s stat -t %s/%s 2>&1 && "
-                        "scp -qpr %s:%s/%s/ %s:%s/%s 2>&1 && "
+                        "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
                         "if [ -d %s/%s ]; then cd %s/%s && "
                         "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | "
                         "md5sum ; "
@@ -1892,8 +1898,11 @@ static void *__rep_thread_main(void *args)
                         "md5sum ; fi",
                         pos->to.node, pos->to.mp, dirname(dir),
                         pos->from.node, pos->from.mp, pos->from.location,
+                        g_copy_cmd,
                         pos->from.node, pos->from.mp, pos->from.location,
-                        pos->to.node, pos->to.mp, pos->to.location,
+                        (g_is_rsync ? "" : pos->to.node),
+                        (g_is_rsync ? "" : ":"),
+                        pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location);
@@ -2224,7 +2233,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:C:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -2241,6 +2250,7 @@ int main(int argc, char *argv[])
         {"mkd", required_argument, 0, 'M'},
         {"reptn", required_argument, 0, 'R'},
         {"deltn", required_argument, 0, 'D'},
+        {"cpcmd", required_argument, 0, 'C'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -2299,6 +2309,12 @@ int main(int argc, char *argv[])
             g_del_thread_nr = atoi(optarg);
             if (!g_del_thread_nr)
                 g_del_thread_nr = 1;
+            break;
+        case 'C':
+            g_copy_cmd = strdup(optarg);
+            if (strncmp(g_copy_cmd, "rsync", 5) == 0) {
+                g_is_rsync = 1;
+            }
             break;
         case 'f':
         {
