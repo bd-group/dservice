@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Graphs of MetaStore Files</title>
+        <script type="text/javascript" src="d3/d3.js"></script>
+        <script type="text/javascript" src="path.js"></script>
+    </head>
+    <body>
+        <script type="text/javascript">
+           d3.select("body")
+             .append("h2")
+             .text("MetaStore File Status on Date " + search["date"]);
+
+           var dataset = ["1.1", "1.2", "2.1", "3.1", "4.1", "5.1", "6.1", "6.2", "6.3", "6.4"];
+
+           d3.select("body").append("ul").selectAll("li")
+	         .data(dataset)
+             .enter()
+             .append("li")
+             .append("a")
+             .attr("href", function(d) {return "page" + d + ".html?id=" + search["id"]})
+             .html(function(d) {return d});
+        </script>
+        <p>
+	[Args: city, date, id, hours, db]
+        </p>
+    </body>
+</html>
