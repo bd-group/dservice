@@ -25,6 +25,19 @@
   display: none;
 }
 
+div.tooltip {
+  position: absolute;
+  text-align: center;
+  width: 150px;
+  height: 30px;
+  padding: 2px;
+  font: 12px sans-serif;
+  background: lightsteelblue;
+  border: 0px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
 </style>
 <body>
 <title>DB.Table -> Space</title>
@@ -50,6 +63,12 @@ var yAxis = d3.svg.axis()
     .scale(y)
     .orient("left")
     .ticks(10, "");
+
+var div = d3.select("body").append("div")
+    .attr("class", "tooltip")
+    .style("opacity", 0);
+
+var doub = d3.format(".2f");
 
 d3.select("body").append("h3").text("DB.Table -> Space").attr("align", "center");
 
@@ -91,7 +110,20 @@ d3.csv(path + "/page2.1.csv", type, function(error, data) {
       .attr("x", function(d) { return x(d.db_table); })
       .attr("width", x.rangeBand())
       .attr("y", function(d) { return y(d.space / 1024 / 1024 / 1024); })
-      .attr("height", function(d) { return height - y(d.space / 1024 / 1024 / 1024); });
+      .attr("height", function(d) { return height - y(d.space / 1024 / 1024 / 1024); })
+      .on("mouseover", function(d) {
+            div.transition()
+                .duration(200)
+                .style("opacity", .9);
+            div .html(d.db_table + "</br>" + doub(d.space / 1024 / 1024 / 1024) + " GB")
+                .style("left", (d3.event.pageX) + "px")
+                .style("top", (d3.event.pageY - 28) + "px");
+      })
+      .on("mouseout", function(d) {
+            div.transition()
+                .duration(500)
+                .style("opacity", 0);
+      });
 
 });
 
