@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-02-21 15:33:35 macan>
+ * Time-stamp: <2014-10-29 10:53:11 macan>
  *
  */
 
@@ -39,6 +39,18 @@
 #include <sys/sysinfo.h>
 
 HVFS_TRACING_INIT();
+
+#define min(x,y) ({ \
+        typeof(x) _x = (x);     \
+        typeof(y) _y = (y);     \
+        (void) (&_x == &_y);    \
+        _x < _y ? _x : _y; })
+
+#define max(x,y) ({ \
+        typeof(x) _x = (x);     \
+        typeof(y) _y = (y);     \
+        (void) (&_x == &_y);    \
+        _x > _y ? _x : _y; })
 
 #define GET_GL_DISK_SN "find /dev/disk/by-id/ -iregex '.*%s-[^-]*$' -exec stat -c '%%N' {} \\; | sed -e 's/.*%s-\\([0-9a-zA-Z_]*\\).*..\\/..\\/\\([a-z]*\\).*/OK \\1 \\2/g'"
 
@@ -117,7 +129,9 @@ struct verify_args
     int level;
 };
 
-#define DEV_MAPPING           "/DEV_MAPPING"
+#define DEV_MAPPING             "/DEV_MAPPING"
+
+#define DS_AUDIT                "/DS_AUDIT"
 
 #define _GNU_SOURCE
 
