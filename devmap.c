@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-12-20 20:39:49 macan>
+ * Time-stamp: <2014-10-29 14:57:13 macan>
  *
  */
 
@@ -21,6 +21,19 @@ static int open_shm()
     fd = shm_open(DEV_MAPPING, oflag, 0644);
     if (fd < 0) {
         printf("shm_open(%s) failed w/ %s\n", DEV_MAPPING, strerror(errno));
+        return -1;
+    }
+
+    return fd;
+}
+
+static int open_audit()
+{
+    int fd = 0, oflag = O_RDWR | O_CREAT;
+
+    fd = shm_open(DS_AUDIT, oflag, 0644);
+    if (fd < 0) {
+        printf("shm_open(%s) failed w/ %s\n", DS_AUDIT, strerror(errno));
         return -1;
     }
 
@@ -94,4 +107,47 @@ JNIEXPORT jstring JNICALL Java_devmap_DevMap_getDevMaps(JNIEnv *env, jclass cls)
 out:
     content = (*env)->NewStringUTF(env, res);
     return content;
+}
+
+JNIEXPORT jboolean JNICALL Java_devmap_DevMap_appendAuditLog(JNIEnv *env, jclass cls, 
+                                                             jstring str)
+{
+    int err = 0;
+    const char *ns = (*env)->GetStringUTFChars(env, str, 0);
+    int bw = 0, bl = strlen(ns);
+
+    /* Step 1: open the shm, create it if needed */
+    int fd = open_audit();
+    if (fd < 0) {
+        err = -EBADF;
+        goto out;
+    }
+    
+    /* Step 2: append the log lines to SHM file */
+    lock_shm(fd, SHMLOCK_WR);
+    err = lseek(fd, 0, SEEK_END);
+    if (err < 0) {
+        printf("lseek the audit file error %s(%d)\n", strerror(errno), errno);
+        goto out_release;
+    }
+
+    do {
+        err = write(fd, ns + bw, bl - bw);
+        if (err <= 0) {
+            printf("write to shm file error %s(%d)\n", strerror(errno), errno);
+            goto out_release;
+        }
+        bw += err;
+    } while (bw < bl);
+    err = 0;
+
+out_release:
+    lock_shm(fd, SHMLOCK_UN);
+    (*env)->ReleaseStringUTFChars(env, str, ns);
+    
+    /* Step 3: close it */
+    close_shm(fd);
+
+out:    
+    return !err;
 }

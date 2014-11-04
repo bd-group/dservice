@@ -4,12 +4,13 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-09-26 15:41:56 macan>
+ * Time-stamp: <2014-11-02 11:22:58 macan>
  *
  */
 
 #include "common.h"
 #include "jsmn.h"
+#include "lib/memory.h"
 
 #define MAX_FILTERS     10
 struct dservice_conf
@@ -25,6 +26,7 @@ struct dservice_conf
     int fl_max_retry;
     int max_keeping_days;
     int enable_dscan;
+    int enable_audit;
     char *addr_filter;
     char *data_path;
 };
@@ -46,6 +48,7 @@ static struct dservice_conf g_ds_conf = {
     .fl_max_retry = 100,
     .max_keeping_days = 30,
     .enable_dscan = 0,
+    .enable_audit = 0,
     .addr_filter = NULL,
     /* FIXIME: change it to data */
     .data_path = "data",
@@ -96,12 +99,14 @@ static sem_t g_rep_sem;
 static sem_t g_del_sem;
 static sem_t g_async_recv_sem;
 static sem_t g_dscan_sem;
+static sem_t g_audit_sem;
 
 static pthread_t g_timer_thread = 0;
 static pthread_t *g_rep_thread = NULL;
 static pthread_t *g_del_thread = NULL;
 static pthread_t g_async_recv_thread = 0;
 static pthread_t g_dscan_thread = 0;
+static pthread_t g_audit_thread = 0;
 
 static int g_timer_thread_stop = 0;
 static int *g_rep_thread_stop = NULL;
@@ -109,6 +114,9 @@ static int *g_del_thread_stop = NULL;
 static int g_main_thread_stop = 0;
 static int g_async_recv_thread_stop = 0;
 static int g_dscan_thread_stop = 0;
+static int g_audit_thread_stop = 0;
+
+static char g_audit_header[128];
 
 static char *g_devtype = NULL;
 
@@ -137,6 +145,8 @@ static LIST_HEAD(g_verify);
 static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
 
+/* rsync cmd: rsync -rp --partial (-z)
+ */
 static char *g_copy_cmd = "scp -qpr";
 static int g_is_rsync = 0;
 
@@ -267,42 +277,32 @@ out:
  */
 static void __convert_host_to_ip(char *host, char *ip)
 {
-    struct ifaddrs *ifaddr, *ifa;
-    int family, s;
-    int err = 0, copied = 0;
+    struct hostent *he;
+    int copied = 0, i;
 
     if (!g_ds_conf.addr_filter) {
         strcpy(ip, host);
         return;
     }
 
-    err = getifaddrs(&ifaddr);
-    if (err) {
-        hvfs_err(lib, "getifaddrs() failed w/ %s(%d)\n",
-                 strerror(errno), errno);
+    he = gethostbyname(host);
+    if (!he) {
+        hvfs_err(lib, "gethostbyname(%s) failed w/ %s(%d)\n",
+                 host, strerror(errno), errno);
         goto out;
     }
+    for (i = 0; i < he->h_length; i++) {
+        struct sockaddr_in sa;
 
-    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr == NULL)
-            continue;
-        family = ifa->ifa_addr->sa_family;
-        if (family == AF_INET) {
-            s = getnameinfo(ifa->ifa_addr,
-                            sizeof(struct sockaddr_in),
-                            ip, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            if (s != 0) {
-                hvfs_err(lib, "getnameinfo() failed %s\n", gai_strerror(s));
-            } else {
-                if (strstr(ip, g_ds_conf.addr_filter) != NULL) {
-                    /* ok, use this IP */
-                    copied = 1;
-                    break;
-                }
-            }
+        sa.sin_addr.s_addr = *((unsigned long *)he->h_addr_list[i]);
+        inet_ntop(AF_INET, &(sa.sin_addr), ip, NI_MAXHOST);
+        if (strstr(ip, g_ds_conf.addr_filter) != NULL) {
+            /* ok, use this IP */
+            copied = 1;
+            break;
         }
     }
-    
+
 out:    
     if (!copied) {
         strcpy(ip, host);
@@ -731,6 +731,19 @@ reopen:
     return fd;
 }
 
+int open_audit()
+{
+    int fd = 0, oflag = O_RDWR | O_CREAT;
+
+    fd = shm_open(DS_AUDIT, oflag, 0644);
+    if (fd < 0) {
+        printf("shm_open(%s) failed w/ %s\n", DS_AUDIT, strerror(errno));
+        return -1;
+    }
+
+    return fd;
+}
+
 #define SHMLOCK_UN      0
 #define SHMLOCK_WR      1
 #define SHMLOCK_RD      2
@@ -985,7 +998,7 @@ out:
  * @arg1: send => data to send
  * @arg2: recv => data buffer to recv
  */
-int __dgram_send(char *send)
+static inline int __dgram_send(char *send)
 {
     int err = 0;
 
@@ -996,6 +1009,27 @@ int __dgram_send(char *send)
         goto out;
     }
     
+out:
+    return err;
+}
+
+int __dgram_sendmsg(struct iovec *iov, int iov_len)
+{
+    ssize_t err = 0;
+    struct msghdr msg = {
+        .msg_name = (void *)&g_server,
+        .msg_namelen = sizeof(g_server),
+        .msg_iov = iov,
+        .msg_iovlen = iov_len,
+    };
+
+    err = sendmsg(g_sockfd, &msg, MSG_NOSIGNAL);
+    if (err < 0) {
+        hvfs_err(lib, "Send datagram packet (iov) failed w/ %s\n",
+                 strerror(errno));
+        err = -errno;
+        goto out;
+    }
 out:
     return err;
 }
@@ -1182,6 +1216,22 @@ int handle_commands(char *recv)
                 SET_RA_FROM(13, 21);
             else if (strcmp(pos, "to") == 0)
                 SET_RA_TO(13, 21);
+
+            /* convert hostname to ip address */
+            {
+                char *__t;
+                char ip[NI_MAXHOST];
+
+                __t = ra->from.node;
+                __convert_host_to_ip(__t, ip);
+                ra->from.node = strdup(ip);
+                xfree(__t);
+
+                __t = ra->to.node;
+                __convert_host_to_ip(__t, ip);
+                ra->to.node = strdup(ip);
+                xfree(__t);
+            }
 
             xlock_lock(&g_rep_lock);
             list_add_tail(&ra->list, &g_rep);
@@ -1520,13 +1570,14 @@ static void *__timer_thread_main(void *arg)
         }
 
         cur = time(NULL);
-        /* TODO: */
-        do_heartbeat(cur);
+        /* first, refresh the map, then do report */
         refresh_map(cur);
+        do_heartbeat(cur);
         /* trigger incomplete requests if they exists */
         sem_post(&g_rep_sem);
         sem_post(&g_del_sem);
         sem_post(&g_dscan_sem);
+        sem_post(&g_audit_sem);
     }
 
     hvfs_debug(lib, "Hooo, I am exiting...\n");
@@ -1591,21 +1642,26 @@ out:
 void do_help()
 {
     hvfs_plain(lib,
-               "Version 1.0.0b\n"
+               "Version 1.0.0c\n"
                "Copyright (c) 2013 IIE and Ma Can <ml.macana@gmail.com>\n\n"
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
                "-p, --port        UDP port of DiskManager.\n"
                "-t, --host        Set local host name.\n"
                "-d, --dev         Use this specified dev: DEVID:MOUNTPOINT.\n"
+               "-f, --sdfilter    Filter for device name.\n"
+               "-m, --mpfilter    Filter for mount point.\n"
                "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
                "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
-               "-S, --dscan       Enable device scanning.\n"
+               "-o, --timeo       Timeout value.\n"
+               "-S, --dscan       Enable device scanning.(default disabled)\n"
+               "-A, --audit       Enable audit logging.(default disabled)\n"
                "-b, --prob        Scan probility for single dir.\n"
                "-R, --reptn       Set rep thread number.\n"
                "-D, --deltn       Set del thread number.\n"
                "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
                "-M, --mkd         Set max keeping days for lingering dirs.\n"
+               "-C, --cpcmd       Copy command: rsync or scp.\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -1874,7 +1930,7 @@ static void *__rep_thread_main(void *args)
                           pos->from.node, pos->from.mp, pos->from.location);
                 pos->status = REP_STATE_DOING;
 #if 1
-                sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
+                sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
                         "cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
@@ -1887,7 +1943,7 @@ static void *__rep_thread_main(void *args)
                         pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location);
 #else
-                sprintf(cmd, "ssh %s umask -S 0 && mkdir -p %s/%s && "
+                sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
                         "ssh %s stat -t %s/%s 2>&1 && "
                         "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
                         "if [ -d %s/%s ]; then cd %s/%s && "
@@ -2211,6 +2267,204 @@ static void *__dscan_thread_main(void *arg)
     pthread_exit(0);
 }
 
+void __audit_log_handling(char *p, long len)
+{
+    char *q = p, *u = p;
+    int i, n;
+    
+    for (i = 0, n = 0; i < len; i++) {
+        if (*(p + i) == '\n') {
+            if (g_ds_conf.enable_audit) {
+                n++;
+                if (n >= 20 || i == len - 1) {
+                    /* Send it to server immediately */
+                    struct iovec iov[2];
+
+                    iov[0].iov_base = g_audit_header;
+                    iov[0].iov_len = strlen(g_audit_header);
+                    iov[1].iov_base = u;
+                    iov[1].iov_len = p + i - u + 1;
+                    __dgram_sendmsg(iov, 2);
+                    n = 0;
+                    u = p + i + 1;
+                }
+            } else {
+                char *s = NULL, *t;
+                int j;
+
+                *(p + i) = '\0';
+                hvfs_info(lib, "Got '%s'\n", q);
+                for (j = 0, t = q; ++j; t = NULL) {
+                    t = strtok_r(t, ",", &s);
+                    if (!t) {
+                        break;
+                    }
+                    hvfs_debug(lib, "-> Got %d %s\n", j, t);
+                    switch (j) {
+                    case 1:
+                        /* tag */
+                        break;
+                    case 2:
+                        /* timestamp, ms */
+                        break;
+                    case 3:
+                        /* devid */
+                        break;
+                    case 4:
+                        /* location */
+                        break;
+                    case 5:
+                        /* VFSOperation */
+                        break;
+                    }
+                }
+            }
+            q = p + i + 1;
+        }
+    }
+    if (q < p + len) {
+        hvfs_warning(lib, "Incomplete audit line '%s'.\n", q);
+    }
+}
+
+void __audit_log_count(char *p, long len)
+{
+    static long tnr = 0;
+    long lnr = 0, i;
+
+    for (i = 0; i < len; i++) {
+        if (*(p + i) == '\n')
+            lnr++;
+    }
+    tnr += lnr;
+    hvfs_info(lib, "Got %ld audit lines, total %ld audit lines\n", lnr, tnr);
+}
+
+void __get_audit_log()
+{
+    char *buf = NULL;
+    int err = 0, br;
+    long start, end, len;
+    
+    /* Step 1: open the shm */
+    int fd = open_audit();
+    if (fd < 0)
+        goto out;
+
+    /* Step 2: use RW lock, read in the content, and truncate it */
+    lock_shm(fd, SHMLOCK_WR);
+    end = lseek(fd, 0, SEEK_END);
+    if (end < 0) {
+        hvfs_err(lib, "lseek 1 failed w/ %s\n", strerror(errno));
+        goto out_release;
+    }
+    start = max(0L, end - 10 * 1024 * 1024);
+    len = end - start;
+    err = lseek(fd, start, SEEK_SET);
+    if (err < 0) {
+        hvfs_err(lib, "lseek 2 failed w/ %s\n", strerror(errno));
+        goto out_release;
+    }
+    if (len <= 0) {
+        goto out_release;
+    }
+    
+    buf = xmalloc(len + 1);
+    if (!buf) {
+        hvfs_err(lib, "xmalloc failed, no memory\n");
+        goto out_release;
+    }
+    buf[len] = '\0';
+
+    br = 0;
+    do {
+        err = read(fd, buf + br, len - br);
+        if (err <= 0) {
+            hvfs_err(lib, "read failed w/ %s\n", strerror(errno));
+            goto out_free;
+        }
+        br += err;
+    } while (br < len);
+
+    char *p = buf;
+
+    if (start > 0) {
+        while (p < buf + len && *p != '\n') {
+            p++;
+        }
+        p++;
+    }
+    
+    if (end > start + (p - buf)) {
+        err = ftruncate(fd, start + (p - buf));
+        if (err < 0) {
+            hvfs_err(lib, "ftruncate failed w/ %s\n", strerror(errno));
+            goto out_free;
+        }
+    }
+
+    if (p < buf + len) {
+        // ok, handling the content
+        __audit_log_count(p, buf + len - p);
+        __audit_log_handling(p, buf + len - p);
+    }
+
+out_free:
+    xfree(buf);
+out_release:
+    lock_shm(fd, SHMLOCK_UN);
+out:
+    close(fd);
+}
+
+static void *__audit_thread_main(void *arg)
+{
+    sigset_t set;
+    time_t cur;
+    static time_t last = 0;
+    int err;
+
+    /* first, let us block the SIGALRM */
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
+                                             * errs */
+    /* then, we loop for the timer events */
+    while (!g_audit_thread_stop) {
+        err = sem_wait(&g_audit_sem);
+        if (err) {
+            if (errno == EINTR)
+                continue;
+            hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
+        }
+
+        cur = time(NULL);
+        if (last + 5 <= cur) {
+            last = cur;
+            __get_audit_log();
+        }
+    }
+
+    hvfs_debug(lib, "Hooo, I am exiting...\n");
+    pthread_exit(0);
+}
+
+int setup_audit()
+{
+    int err = 0;
+
+    err = pthread_create(&g_audit_thread, NULL, &__audit_thread_main,
+                         NULL);
+    if (err) {
+        hvfs_err(lib, "Create audit thread failed w/ %s\n",
+                 strerror(errno));
+        err = -errno;
+        goto out;
+    }
+out:
+    return err;
+}
+
 int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
@@ -2233,7 +2487,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:C:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:C:A";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -2251,6 +2505,7 @@ int main(int argc, char *argv[])
         {"reptn", required_argument, 0, 'R'},
         {"deltn", required_argument, 0, 'D'},
         {"cpcmd", required_argument, 0, 'C'},
+        {"audit", no_argument, 0, 'A'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -2299,6 +2554,9 @@ int main(int argc, char *argv[])
             break;
         case 'S':
             g_ds_conf.enable_dscan = 1;
+            break;
+        case 'A':
+            g_ds_conf.enable_audit = 1;
             break;
         case 'R':
             g_rep_thread_nr = atoi(optarg);
@@ -2408,6 +2666,8 @@ int main(int argc, char *argv[])
     sem_init(&g_rep_sem, 0, 0);
     sem_init(&g_del_sem, 0, 0);
     sem_init(&g_async_recv_sem, 0, 0);
+    sem_init(&g_dscan_sem, 0, 0);
+    sem_init(&g_audit_sem, 0, 0);
 
 #if 0
     char *str;
@@ -2552,6 +2812,14 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* setup audit thread */
+    sprintf(g_audit_header, "+node:%s\n+CMD\n+CMD\n", g_hostname);
+    err = setup_audit();
+    if (err) {
+        hvfs_err(lib, "setup_audit() failed w/ %d\n", err);
+        goto out_audit;
+    }
+
     get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
     di_free(di, nr);
     
@@ -2591,6 +2859,11 @@ int main(int argc, char *argv[])
         sem_post(&g_timer_sem);
         pthread_join(g_timer_thread, NULL);
     }
+    g_audit_thread_stop = 1;
+    if (g_audit_thread) {
+        sem_post(&g_audit_sem);
+        pthread_join(g_audit_thread, NULL);
+    }
     {
         int i;
 
@@ -2626,6 +2899,7 @@ int main(int argc, char *argv[])
 
     hvfs_info(lib, "Main thread exiting ...\n");
 
+out_audit:
 out_dscan:
 out_async_recv:
 out_del:
