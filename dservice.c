@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-11-02 11:22:58 macan>
+ * Time-stamp: <2014-12-26 11:12:53 macan>
  *
  */
 
@@ -27,6 +27,8 @@ struct dservice_conf
     int max_keeping_days;
     int enable_dscan;
     int enable_audit;
+    int drop_rep_threshold;
+    int drop_rep_unit;
     char *addr_filter;
     char *data_path;
 };
@@ -49,6 +51,8 @@ static struct dservice_conf g_ds_conf = {
     .max_keeping_days = 30,
     .enable_dscan = 0,
     .enable_audit = 0,
+    .drop_rep_threshold = 3000,
+    .drop_rep_unit = 2800,
     .addr_filter = NULL,
     /* FIXIME: change it to data */
     .data_path = "data",
@@ -146,6 +150,8 @@ static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
 
 /* rsync cmd: rsync -rp --partial (-z)
+ * if use timeout, then replace it as: timeout 1h rsync -rp --partial (-z)
+ * timeout 1h scp -qpr 
  */
 static char *g_copy_cmd = "scp -qpr";
 static int g_is_rsync = 0;
@@ -392,6 +398,84 @@ void di_free(struct disk_info *di, int nr)
     xfree(di);
 }
 
+int get_disk_stats(char *dev, long *rnr, long *wnr, long *enr)
+{
+    char buf[1024];
+    char *line = NULL;
+    size_t len = 0;
+    FILE *f;
+    int err = 0, lnr = 0, devlen = strlen(dev);
+
+    if (devlen == 3) {
+        /* this is the whole disk */
+        sprintf(buf, GET_RW_SECTORS, dev);
+    } else if (isdigit(dev[devlen - 1])) {
+        /* this might be one partition */
+        char wdev[32];
+
+        strcpy(wdev, dev);
+        wdev[3] = '\0';
+        sprintf(buf, GET_RW_SECTORS_EXT, wdev, dev);
+    } else {
+        /* BAD device name, not ata,scsi? ignore them */
+        return -EINVAL;
+    }
+
+    f = popen(buf, "r");
+
+    if (f == NULL) {
+        err = -errno;
+        hvfs_err(lib, "popen(GET_RW_SECTORS) failed w/ %s\n",
+                 strerror(errno));
+        goto out;
+    } else {
+        if (rnr != NULL)
+            *rnr = 0;
+        if (wnr != NULL)
+            *wnr = 0;
+        if (enr != NULL)
+            *enr = 0;
+        /* read from the result stream */
+        while ((lnr = getline(&line, &len, f)) != -1) {
+            /* ok, parse the results */
+            if (lnr > 2) {
+                char *p, *sp;
+                int i;
+
+                for (i = 0, p = line; ++i; p = NULL) {
+                    p = strtok_r(p, " \n", &sp);
+                    if (!p)
+                        break;
+                    hvfs_debug(lib, "2 %d %s\n", i, p);
+                    switch (i) {
+                    case 1:
+                        /* read sector nr */
+                        if (rnr != NULL)
+                            *rnr = atol(p);
+                        break;
+                    case 2:
+                        /* write sector nr */
+                        if (wnr != NULL)
+                            *wnr = atol(p);
+                        break;
+                    case 3:
+                        /* IO pending time */
+                        if (enr != NULL)
+                            *enr = atol(p);
+                        break;
+                    }
+                    hvfs_debug(lib, "2 %d %s FFF\n", i, p);
+                }
+            }
+        }
+        free(line);
+    }
+    pclose(f);
+
+out:
+    return err;
+}
+
 int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 {
     char buf[1024];
@@ -512,9 +596,14 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
         int i;
 
         for (i = 0; i < *nr; i++) {
-            t[i].read_nr = 0;
-            t[i].write_nr = 0;
-            t[i].err_nr = 0;
+            /* get disk read/write sectors here */
+            err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
+                                 &t[i].err_nr);
+            if (err) {
+                t[i].read_nr = 0;
+                t[i].write_nr = 0;
+                t[i].err_nr = 0;
+            }
 
             err = statfs(t[i].mount_path, &s);
             if (err) {
@@ -654,9 +743,14 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
         int i;
 
         for (i = 0; i < *nr; i++) {
-            t[i].read_nr = 0;
-            t[i].write_nr = 0;
-            t[i].err_nr = 0;
+            /* get disk read/write sectors here */
+            err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
+                                 &t[i].err_nr);
+            if (err) {
+                t[i].read_nr = 0;
+                t[i].write_nr = 0;
+                t[i].err_nr = 0;
+            }
 
             err = statfs(t[i].mount_path, &s);
             if (err) {
@@ -840,8 +934,10 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
             default:;
             }
         }
+        /* BUG-XXX: do NOT update nrs from SHM file; otherwise we might
+         * corrupt /sys/block/xxx/stat NRs. */
         /* find and update */
-        for (i = 0; i < nr; i++) {
+        /*for (i = 0; i < nr; i++) {
             if (strcmp(dpi[i].dev_sn, this.dev_sn) == 0) {
                 dpi[i].read_nr = this.read_nr;
                 dpi[i].write_nr = this.write_nr;
@@ -849,6 +945,7 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
                 break;
             }
         }
+        */
         xfree(this.mount_path);
         xfree(this.dev_sn);
         xfree(line);
@@ -1371,6 +1468,24 @@ static void __free_verify_args(struct verify_args *va)
     xfree(va->target.location);
 }
 
+void __check_and_drop_reps()
+{
+    struct rep_args *pos, *n;
+
+    xlock_lock(&g_rep_lock);
+    list_for_each_entry_safe(pos, n, &g_rep, list) {
+        if (pos->status == REP_STATE_INIT && 
+            pos->ttl + g_ds_conf.fl_interval < time(NULL)) {
+            hvfs_info(lib, "DROP REP TO{%s:%s/%s} FROM{%s:%s/%s} status %d\n",
+                      pos->to.node, pos->to.mp, pos->to.location,
+                      pos->from.node, pos->from.mp, pos->from.location,
+                      pos->status);
+            pos->status = REP_STATE_ERROR_DONE;
+        }
+    }
+    xlock_unlock(&g_rep_lock);
+}
+
 int __do_heartbeat()
 {
     char query[64 * 1024];
@@ -1431,8 +1546,9 @@ int __do_heartbeat()
             mode = QUICK_HB_MODE;
             break;
         }
-        hvfs_info(lib, "POS REP_R to.location %s status %d\n",
-                  pos->to.location, pos->status);
+        hvfs_info(lib, "POS REP_R to.location %s status %d latency=%ld\n",
+                  pos->to.location, pos->status,
+                  (pos->status == REP_STATE_DONE ? pos->latency : -1L));
         if (pos->status == REP_STATE_DONE) {
             len += sprintf(query + len, "+REP:%s,%s,%s,%s\n",
                            pos->to.node, pos->to.devid, pos->to.location,
@@ -1455,6 +1571,8 @@ int __do_heartbeat()
         }
     }
     xlock_unlock(&g_rep_lock);
+
+    //__check_and_drop_reps();
     
     xlock_lock(&g_del_lock);
     list_for_each_entry_safe(pos2, n2, &g_del, list) {
@@ -1928,7 +2046,22 @@ static void *__rep_thread_main(void *args)
                 hvfs_info(lib, "Begin Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
                           pos->to.node, pos->to.mp, pos->to.location,
                           pos->from.node, pos->from.mp, pos->from.location);
+                if (cur - pos->ttl >= g_ds_conf.fl_interval) {
+                    /* if this request is lasting too long, reject it */
+                    hvfs_warning(lib, "Reject Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
+                                 pos->to.node, pos->to.mp, pos->to.location,
+                                 pos->from.node, pos->from.mp, pos->from.location);
+                    pos->status = REP_STATE_ERROR_DONE;
+                    list_del(&pos->list);
+                    xlock_lock(&g_rep_lock);
+                    list_add_tail(&pos->list, &g_rep);
+                    xlock_unlock(&g_rep_lock);
+                    atomic64_dec(&g_di.hrep);
+                    atomic64_inc(&g_di.drep);
+                    continue;
+                }
                 pos->status = REP_STATE_DOING;
+                pos->latency = time(NULL);
 #if 1
                 sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
                         "ssh %s stat -t %s/%s 2>&1 && "
@@ -1981,6 +2114,7 @@ static void *__rep_thread_main(void *args)
                     pos->retries >= g_ds_conf.fl_max_retry) {
                     // delete it and report +FAIL
                     pos->status = REP_STATE_ERROR_DONE;
+                    pos->latency = time(NULL) - pos->latency;
                     list_del(&pos->list);
                     xlock_lock(&g_rep_lock);
                     list_add_tail(&pos->list, &g_rep);
@@ -2037,6 +2171,10 @@ static void *__rep_thread_main(void *args)
                             /* fail quickly */
                             pos->retries += g_ds_conf.fl_max_retry;
                         }
+                    } else if (strstr(line, "Input/output error") != NULL) {
+                        /* IOError, which means source file or target file's
+                         * disk failed? Fail quickly */
+                        pos->retries += g_ds_conf.fl_max_retry;
                     }
                 }
                 xfree(line);
@@ -2069,6 +2207,7 @@ static void *__rep_thread_main(void *args)
 
             /* add to g_rep list if needed */
             if (pos->status == REP_STATE_DONE) {
+                pos->latency = time(NULL) - pos->latency;
                 list_del(&pos->list);
                 pos->digest = digest;
                 xlock_lock(&g_rep_lock);

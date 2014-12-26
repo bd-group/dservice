@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-10-29 10:53:11 macan>
+ * Time-stamp: <2014-12-19 16:16:36 macan>
  *
  */
 
@@ -70,6 +70,10 @@ struct disk_info
 
 #define GET_SCSI_DISK_SN_EXT "find /dev/disk/by-id/ -iregex '.*scsi-[^-]*$' -exec stat -c '%N' {} \\; | sed -e 's/.*scsi-\\([0-9a-zA-Z_-]*\\).*..\\/..\\/\\([a-z0-9]*\\).*/\\1 \\2/g' | sort | awk '{cmd = \"mount -l | grep \\\"\" $2 \" \\\"\"; while ((cmd | getline result) > 0) {print $0\" \"result} }' | awk 'BEGIN{FS=\" type\"} {print \"OK\",$1}' | cut -d\" \" -f1,2,3,6-"
 
+#define GET_RW_SECTORS "cat /sys/block/%s/stat | awk '{print $3,$7,$10}'"
+
+#define GET_RW_SECTORS_EXT "cat /sys/block/%s/%s/stat | awk '{print $3,$7,$10}'"
+
 struct disk_part_info
 {
     char *dev_sn;               /* global unique SN-partX */
@@ -95,6 +99,7 @@ struct rep_args
     struct list_head list;
     struct floc_desc to, from;
     time_t ttl;
+    time_t latency;
     char *digest;
     int retries;
 #define REP_STATE_INIT          0
