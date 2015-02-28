@@ -675,6 +675,7 @@ public class MonitorHandler extends AbstractHandler {
 		String date = request.getParameter("date");
 		String id = request.getParameter("id");
 		String hours = request.getParameter("hours");
+		String snhours = request.getParameter("nhours");
 		String indb = request.getParameter("db");
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
 		HashMap<String, List<SFile>> map = new HashMap<String, List<SFile>>();
@@ -723,6 +724,9 @@ public class MonitorHandler extends AbstractHandler {
 								if (hours != null) {
 									nhour = Long.parseLong(hours);
 									nhours = 1L;
+								}
+								if (snhours != null) {
+									nhours = Long.parseLong(snhours);
 								}
 							} catch (Exception e) {
 							}
