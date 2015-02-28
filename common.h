@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-12-19 16:16:36 macan>
+ * Time-stamp: <2015-01-21 17:27:33 macan>
  *
  */
 
@@ -108,6 +108,7 @@ struct rep_args
 #define REP_STATE_ERROR         3
 #define REP_STATE_ERROR_DONE    4
     int status;
+    int errcode;
 };
 
 struct del_args
@@ -122,6 +123,7 @@ struct del_args
 #define DEL_STATE_ERROR         3
 #define DEL_STATE_ERROR_DONE    4
     int status;
+    int errcode;
 };
 
 struct verify_args

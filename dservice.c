@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-12-26 11:12:53 macan>
+ * Time-stamp: <2015-02-05 20:34:13 macan>
  *
  */
 
@@ -718,6 +718,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                                        g_ds_conf.mpfilter[i]) == 0) {
                                 // filtered
                                 *nr -= 1;
+                                filtered = 1;
                                 break;
                             }
                         }
@@ -1009,7 +1010,7 @@ int setup_dgram(char *server, int port)
 {
     struct timeval timeout = {30, 0};
     struct hostent* hostInfo;
-    int err = 0;
+    int err = 0, ttl = 64;
     
     g_sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_sockfd == -1) {
@@ -1026,6 +1027,15 @@ int setup_dgram(char *server, int port)
 
     if ((setsockopt(g_sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, 
                     sizeof(timeout))) != 0) {
+        hvfs_err(lib, "setsockopt() failed w/ %s\n", strerror(errno));
+        err = -errno;
+        goto out;
+    }
+
+    /* BUG-XXX: for larget system, we have to add ttl to route multicast IP
+     * packets in several subnets. */
+    if ((setsockopt(g_sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, 
+                    sizeof(ttl))) != 0) {
         hvfs_err(lib, "setsockopt() failed w/ %s\n", strerror(errno));
         err = -errno;
         goto out;
@@ -1481,6 +1491,7 @@ void __check_and_drop_reps()
                       pos->from.node, pos->from.mp, pos->from.location,
                       pos->status);
             pos->status = REP_STATE_ERROR_DONE;
+            pos->errcode = -ETIMEDOUT;
         }
     }
     xlock_unlock(&g_rep_lock);
@@ -1550,9 +1561,10 @@ int __do_heartbeat()
                   pos->to.location, pos->status,
                   (pos->status == REP_STATE_DONE ? pos->latency : -1L));
         if (pos->status == REP_STATE_DONE) {
-            len += sprintf(query + len, "+REP:%s,%s,%s,%s\n",
+            len += sprintf(query + len, "+REP:%s,%s,%s,%s,%ld\n",
                            pos->to.node, pos->to.devid, pos->to.location,
-                           pos->digest);
+                           pos->digest,
+                           pos->latency);
             list_del(&pos->list);
             __free_rep_args(pos);
             xfree(pos);
@@ -1936,6 +1948,7 @@ static void *__del_thread_main(void *args)
                 hvfs_err(lib, "popen(%s) failed w/ %s\n",
                          cmd, strerror(errno));
                 pos->status = DEL_STATE_ERROR;
+                pos->errcode = -errno;
                 continue;
             } else {
                 char *line = NULL;
@@ -1959,8 +1972,10 @@ static void *__del_thread_main(void *args)
                     else {
                         if (nosuchfod)
                             pos->status = DEL_STATE_DONE;
-                        else
+                        else {
                             pos->status = DEL_STATE_ERROR;
+                            pos->errcode = -WEXITSTATUS(status);
+                        }
                     }
                 } else {
                     if (pos->status == DEL_STATE_ERROR)
@@ -1971,6 +1986,7 @@ static void *__del_thread_main(void *args)
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
                 pos->status = DEL_STATE_ERROR;
+                pos->errcode = -EINTR;
             } else if (WIFSTOPPED(status)) {
                 hvfs_err(lib, "CMD(%s) stopped by signal %d\n", cmd, WSTOPSIG(status));
                 pos->status = DEL_STATE_ERROR;
@@ -1993,6 +2009,22 @@ static void *__del_thread_main(void *args)
 
     hvfs_debug(lib, "Hooo, I am exiting ...\n");
     pthread_exit(0);
+}
+
+static int __is_dev_mounted(char *devid)
+{
+    int r = 0, i;
+
+    xlock_lock(&g_dpi_lock);
+    for (i = 0; i < g_nr; i++) {
+        if (strcmp(devid, g_dpi[i].dev_sn) == 0) {
+            r = 1;
+            break;
+        }
+    }
+    xlock_unlock(&g_dpi_lock);
+
+    return r;
 }
 
 static void *__rep_thread_main(void *args)
@@ -2052,6 +2084,7 @@ static void *__rep_thread_main(void *args)
                                  pos->to.node, pos->to.mp, pos->to.location,
                                  pos->from.node, pos->from.mp, pos->from.location);
                     pos->status = REP_STATE_ERROR_DONE;
+                    pos->errcode = -ETIMEDOUT;
                     list_del(&pos->list);
                     xlock_lock(&g_rep_lock);
                     list_add_tail(&pos->list, &g_rep);
@@ -2060,6 +2093,23 @@ static void *__rep_thread_main(void *args)
                     atomic64_inc(&g_di.drep);
                     continue;
                 }
+                /* BUG-XXX: we should check if to.mp mounted, otherwise, data
+                 * might go to OS disk!!! */
+                if (!__is_dev_mounted(pos->to.devid)) {
+                    hvfs_warning(lib, "Unmounted Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
+                                 pos->to.node, pos->to.mp, pos->to.location,
+                                 pos->from.node, pos->from.mp, pos->from.location);
+                    pos->status = REP_STATE_ERROR_DONE;
+                    pos->errcode = -EINVAL;
+                    list_del(&pos->list);
+                    xlock_lock(&g_rep_lock);
+                    list_add_tail(&pos->list, &g_rep);
+                    xlock_unlock(&g_rep_lock);
+                    atomic64_dec(&g_di.hrep);
+                    atomic64_inc(&g_di.drep);
+                    continue;
+                }
+                
                 pos->status = REP_STATE_DOING;
                 pos->latency = time(NULL);
 #if 1
@@ -2115,6 +2165,7 @@ static void *__rep_thread_main(void *args)
                     // delete it and report +FAIL
                     pos->status = REP_STATE_ERROR_DONE;
                     pos->latency = time(NULL) - pos->latency;
+                    pos->errcode = -ETIMEDOUT;
                     list_del(&pos->list);
                     xlock_lock(&g_rep_lock);
                     list_add_tail(&pos->list, &g_rep);
@@ -2135,6 +2186,7 @@ static void *__rep_thread_main(void *args)
                          cmd, strerror(errno));
                 /* change state to ERROR? */
                 pos->status = REP_STATE_ERROR;
+                pos->errcode = -errno;
                 continue;
             } else {
                 char *line = NULL;
@@ -2165,16 +2217,19 @@ static void *__rep_thread_main(void *args)
                                 hvfs_err(lib, "popen(%s) failed w/ %s\n",
                                          mkdircmd, strerror(errno));
                                 pos->retries += g_ds_conf.fl_max_retry;
+                                pos->errcode = -errno;
                             }
                             pclose(lf);
                         } else {
                             /* fail quickly */
                             pos->retries += g_ds_conf.fl_max_retry;
+                            pos->errcode = -ENOENT;
                         }
                     } else if (strstr(line, "Input/output error") != NULL) {
                         /* IOError, which means source file or target file's
                          * disk failed? Fail quickly */
                         pos->retries += g_ds_conf.fl_max_retry;
+                        pos->errcode = -EIO;
                     }
                 }
                 xfree(line);
@@ -2186,8 +2241,10 @@ static void *__rep_thread_main(void *args)
                 if (WEXITSTATUS(status)) {
                     if (pos->status == REP_STATE_ERROR)
                         pos->status = REP_STATE_INIT;//reset to INIT state
-                    else
+                    else {
                         pos->status = REP_STATE_ERROR;
+                        pos->errcode = -WEXITSTATUS(status);
+                    }
                 } else {
                     if (pos->status == REP_STATE_ERROR)
                         pos->status = REP_STATE_INIT;
@@ -2197,6 +2254,7 @@ static void *__rep_thread_main(void *args)
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
                 pos->status = REP_STATE_ERROR;
+                pos->errcode = -EINTR;
             } else if (WIFSTOPPED(status)) {
                 hvfs_err(lib, "CMD(%s) stopped by signal %d\n", cmd, WSTOPSIG(status));
                 pos->status = REP_STATE_ERROR;
