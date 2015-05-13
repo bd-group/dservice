@@ -22,7 +22,7 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 import static org.fusesource.lmdbjni.Constants.*;
 
-public class MMSSMigrater {
+public class MM2SSMigrater {
 	Env env = new Env();
 	Database db = null;
 	public String db_path = "./lmdb";
@@ -83,7 +83,7 @@ public class MMSSMigrater {
 	}
 	
 	public static void do_scan(String prefix) {
-		MMSSMigrater mdb = new MMSSMigrater();
+		MM2SSMigrater mdb = new MM2SSMigrater();
 		
 		if (mdb.open(prefix)) {
 			mdb.scan();
@@ -198,7 +198,7 @@ public class MMSSMigrater {
 	    }
 
 	    // open local mdb file
-	    MMSSMigrater mdb = new MMSSMigrater();
+	    MM2SSMigrater mdb = new MM2SSMigrater();
 	    if (mdb.open(prefix)) {
 	    	try {
 				recycleSet(ca, mdb, daystr, do_delete);
@@ -211,7 +211,7 @@ public class MMSSMigrater {
 	    ca.quit();
 	}
 
-	private static void recycleSet(ClientAPI ca, MMSSMigrater mdb, String dstr, 
+	private static void recycleSet(ClientAPI ca, MM2SSMigrater mdb, String dstr, 
 			boolean do_delete) throws Exception {
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
 		DateFormat df2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -306,7 +306,7 @@ public class MMSSMigrater {
 		
 	}
 
-	private static boolean migrateSet(ClientAPI ca, String set, MMSSMigrater mdb, 
+	private static boolean migrateSet(ClientAPI ca, String set, MM2SSMigrater mdb, 
 			boolean do_delete) throws Exception {
 		boolean r = false;
 		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
