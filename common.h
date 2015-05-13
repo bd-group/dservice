@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-01-21 17:27:33 macan>
+ * Time-stamp: <2015-03-25 15:11:44 macan>
  *
  */
 
@@ -116,6 +116,7 @@ struct del_args
     struct list_head list;
     struct floc_desc target;
     time_t ttl;
+    time_t latency;
     int retries;
 #define DEL_STATE_INIT          0
 #define DEL_STATE_DOING         1
@@ -134,6 +135,20 @@ struct verify_args
 #define VERIFY_LEVEL_META       1
 #define VERIFY_LEVEL_MD5        2
     int level;
+};
+
+struct dtrace_args
+{
+    struct list_head list;
+    char *dev_sn;               /* unique number */
+    time_t born;
+    time_t died;
+    long rep_err;
+    long del_err;
+    long rep_nr;                /* total number of replicate */
+    long del_nr;                /* total number of delete */
+    long rep_lat;               /* total latency for replciate */
+    long del_lat;               /* total latency for delete */
 };
 
 #define DEV_MAPPING             "/DEV_MAPPING"

@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-02-05 20:34:13 macan>
+ * Time-stamp: <2015-05-13 16:56:58 macan>
  *
  */
 
@@ -31,8 +31,12 @@ struct dservice_conf
     int drop_rep_unit;
     char *addr_filter;
     char *data_path;
+    long rep_max_ticks;
+    long del_max_ticks;
 };
 
+#define DS_REP_MAX_TICKS     7200
+#define DS_DEL_MAX_TICKS     600
 static struct dservice_conf g_ds_conf = {
     .sdfilter = {
         "sda",
@@ -56,6 +60,9 @@ static struct dservice_conf g_ds_conf = {
     .addr_filter = NULL,
     /* FIXIME: change it to data */
     .data_path = "data",
+    /* set max ticks to 7200, means at least 2 hours */
+    .rep_max_ticks = DS_REP_MAX_TICKS,
+    .del_max_ticks = DS_DEL_MAX_TICKS,
 };
 
 struct dev_scan_context
@@ -83,6 +90,7 @@ struct dservice_info
 
     long upts;                  /* startup timestamp */
     long uptime;                /* system uptime */
+    long recvts;                /* last recv ok timestamp */
     double loadavg[3];          /* system loadavg */
 
     atomic_t updated;
@@ -104,6 +112,7 @@ static sem_t g_del_sem;
 static sem_t g_async_recv_sem;
 static sem_t g_dscan_sem;
 static sem_t g_audit_sem;
+static sem_t g_liveness_sem;
 
 static pthread_t g_timer_thread = 0;
 static pthread_t *g_rep_thread = NULL;
@@ -111,6 +120,7 @@ static pthread_t *g_del_thread = NULL;
 static pthread_t g_async_recv_thread = 0;
 static pthread_t g_dscan_thread = 0;
 static pthread_t g_audit_thread = 0;
+static pthread_t g_liveness_thread = 0;
 
 static int g_timer_thread_stop = 0;
 static int *g_rep_thread_stop = NULL;
@@ -119,6 +129,10 @@ static int g_main_thread_stop = 0;
 static int g_async_recv_thread_stop = 0;
 static int g_dscan_thread_stop = 0;
 static int g_audit_thread_stop = 0;
+static int g_liveness_thread_stop = 0;
+
+static atomic64_t *g_rep_thread_ticks = 0;
+static atomic64_t *g_del_thread_ticks = 0;
 
 static char g_audit_header[128];
 
@@ -141,6 +155,10 @@ static xlock_t g_del_lock;
 static LIST_HEAD(g_del);
 static xlock_t g_verify_lock;
 static LIST_HEAD(g_verify);
+static xlock_t g_dtrace_lock;
+static LIST_HEAD(g_dtrace);
+
+static int g_dtrace_update = 0;
 
 #define NORMAL_HB_MODE          0
 #define QUICK_HB_MODE           1
@@ -150,11 +168,17 @@ static int g_rep_mkdir_on_nosuchfod = 0;
 static int g_dev_scan_prob = 100;
 
 /* rsync cmd: rsync -rp --partial (-z)
- * if use timeout, then replace it as: timeout 1h rsync -rp --partial (-z)
- * timeout 1h scp -qpr 
+ * V1: if use timeout, then replace it as: timeout 1h rsync -rp --partial (-z)
+ * timeout 1h scp -qpr
+ * V2: if use timeout, use -O 1h
  */
 static char *g_copy_cmd = "scp -qpr";
 static int g_is_rsync = 0;
+
+/*
+ * timeout return 124 for truely timeout (network overload? or something else)
+ */
+static char *g_timeout_str = "timeout 1h";
 
 /* dpi for heartbeat using
  */
@@ -166,9 +190,15 @@ static int __get_sysinfo()
 {
     struct sysinfo s;
     static time_t last = 0;
+    time_t cur = time(NULL);
     int err, i;
 
-    if (last == 0) last = time(NULL);
+    if (last == 0) last = cur;
+    if (cur - last < 0) {
+        hvfs_warning(lib, "Detect timestamp adjust backward, "
+                     "reset sysinfoTS.\n");
+        last = cur;
+    }
     
     memset(&s, 0, sizeof(s));
     err = sysinfo(&s);
@@ -193,7 +223,7 @@ static int __get_sysinfo()
     } else if (atomic_read(&g_di.updated)) {
         atomic_set(&g_di.updated, 0);
         return 1;
-    } else if (time(NULL) - last >= 60) {
+    } else if (cur - last >= 60) {
         return 1;
     } else
         return 0;
@@ -215,7 +245,7 @@ static void __sigaction_default(int signo, siginfo_t *info, void *arg)
         lib_segv(signo, info, arg);
     } else if (signo == SIGHUP || signo == SIGINT || signo == SIGTERM) {
         if (!g_main_thread_stop) {
-            hvfs_info(lib, "Exit DService ...\n");
+            hvfs_info(lib, "Exit DService, please wait ...\n");
             g_main_thread_stop = 1;
             sem_post(&g_main_sem);
         } else {
@@ -829,10 +859,18 @@ reopen:
 int open_audit()
 {
     int fd = 0, oflag = O_RDWR | O_CREAT;
+    int err = 0;
 
     fd = shm_open(DS_AUDIT, oflag, 0644);
     if (fd < 0) {
         printf("shm_open(%s) failed w/ %s\n", DS_AUDIT, strerror(errno));
+        return -1;
+    }
+    // BUG-XXX: should allow other user write this file
+    err = fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+    if (err < 0) {
+        printf("fchmod() failed w/ %s\n", strerror(errno));
+        close(fd);
         return -1;
     }
 
@@ -1157,6 +1195,92 @@ int fix_disk_parts(struct disk_part_info *dpi, int nr)
     return err;
 }
 
+#define DTRACE_REP      0
+#define DTRACE_REP_ERR  1
+#define DTRACE_DEL      2
+#define DTRACE_DEL_ERR  3
+
+void update_dtrace(char *dev_sn, int type, int latency)
+{
+    struct dtrace_args *pos;
+    int found = 0;
+
+    xlock_lock(&g_dtrace_lock);
+retry:
+    list_for_each_entry(pos, &g_dtrace, list) {
+        if (strcmp(pos->dev_sn, dev_sn) == 0) {
+            switch (type) {
+            case DTRACE_REP:
+                pos->rep_nr++;
+                pos->rep_lat += latency;
+                break;
+            case DTRACE_REP_ERR:
+                pos->rep_err++;
+                break;
+            case DTRACE_DEL:
+                pos->del_nr++;
+                pos->del_lat += latency;
+                break;
+            case DTRACE_DEL_ERR:
+                pos->del_err++;
+                break;
+            }
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        struct dtrace_args *da = xzalloc(sizeof(struct dtrace_args));
+
+        if (da) {
+            INIT_LIST_HEAD(&da->list);
+            da->dev_sn = strdup(dev_sn);
+            da->born = time(NULL);
+            /* insert into table */
+            list_add_tail(&da->list, &g_dtrace);
+            goto retry;
+        }
+    }
+    xlock_unlock(&g_dtrace_lock);
+    if (found && !g_dtrace_update)
+        g_dtrace_update = 1;
+}
+
+void check_dtrace()
+{
+    struct dtrace_args *pos;
+    char p[1024], *q;
+
+    if (g_dtrace_update) {
+        q = p;
+        xlock_lock(&g_dtrace_lock);
+        list_for_each_entry(pos, &g_dtrace, list) {
+            q += snprintf(q, 1023, "+B:%s,%ld,%ld,%ld,%ld,%ld,%ld\n",
+                          pos->dev_sn,
+                          pos->rep_nr, pos->rep_err, pos->rep_lat,
+                          pos->del_nr, pos->del_err, pos->del_lat);
+            hvfs_info(lib, "DEV:%s REP(%ld,%ld,%lf), DEL(%ld,%ld,%lf)\n",
+                      pos->dev_sn,
+                      pos->rep_nr, pos->rep_err,
+                      ((double)pos->rep_lat / pos->rep_nr),
+                      pos->del_nr, pos->del_err,
+                      ((double)pos->del_lat / pos->del_nr));
+        }
+        xlock_unlock(&g_dtrace_lock);
+        g_dtrace_update = 0;
+        /* send the +B: info to server */
+        if (q - p > 0) {
+            struct iovec iov[2];
+
+            iov[0].iov_base = g_audit_header;
+            iov[0].iov_len = strlen(g_audit_header);
+            iov[1].iov_base = p;
+            iov[1].iov_len = q - p;
+            __dgram_sendmsg(iov, 2);
+        }
+    }
+}
+
 void refresh_map(time_t cur)
 {
     static time_t last = 0;
@@ -1193,6 +1317,9 @@ void refresh_map(time_t cur)
 
         hvfs_info(lib, "Map refreshed and g_dpi updated=%d\n", update);
     update_last:
+        last = cur;
+    } else if (cur - last < 0) {
+        hvfs_warning(lib, "Detect timestamp adjust backward, reset lastTS.\n");
         last = cur;
     }
 }
@@ -1434,7 +1561,7 @@ int handle_commands(char *recv)
 
                     hvfs_info(lib, "Verify '%s' time range: [%ld days], del it\n",
                               fpath, (time(NULL) - buf.st_mtime) / 86400);
-                    sprintf(cmd, "rm -rf %s", fpath);
+                    sprintf(cmd, "%s rm -rf %s", g_timeout_str, fpath);
                     f = popen(cmd, "r");
                     if (f == NULL) {
                         hvfs_err(lib, "popen(%s) failed w/ %s\n",
@@ -1537,7 +1664,7 @@ int __do_heartbeat()
     /* Add new INFO cmd: collect this node's load, queued rep/del */
     if (__get_sysinfo()) {
         len += sprintf(query + len, "+INFO:%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,"
-                       "%ld,%0.2f\n",
+                       "%ld,%0.2f,%ld\n",
                        atomic64_read(&g_di.qrep),
                        atomic64_read(&g_di.hrep),
                        atomic64_read(&g_di.drep),
@@ -1547,7 +1674,8 @@ int __do_heartbeat()
                        atomic64_read(&g_di.tver),
                        atomic64_read(&g_di.tvyr),
                        g_di.uptime,
-                       g_di.loadavg[0]
+                       g_di.loadavg[0],
+                       (time(NULL) - g_di.recvts)
             );
     }
 
@@ -1561,6 +1689,9 @@ int __do_heartbeat()
                   pos->to.location, pos->status,
                   (pos->status == REP_STATE_DONE ? pos->latency : -1L));
         if (pos->status == REP_STATE_DONE) {
+            /* update dtrace info */
+            update_dtrace(pos->to.devid, DTRACE_REP, pos->latency);
+
             len += sprintf(query + len, "+REP:%s,%s,%s,%s,%ld\n",
                            pos->to.node, pos->to.devid, pos->to.location,
                            pos->digest,
@@ -1572,8 +1703,12 @@ int __do_heartbeat()
             atomic64_dec(&g_di.drep);
             nr2++;
         } else if (pos->status == REP_STATE_ERROR_DONE) {
-            len += sprintf(query + len, "+FAIL:REP:%s,%s,%s\n",
-                           pos->to.node, pos->to.devid, pos->to.location);
+            /* update dtrace info */
+            update_dtrace(pos->to.devid, DTRACE_REP_ERR, pos->latency);
+
+            len += sprintf(query + len, "+FAIL:REP:%s,%s,%s,%d\n",
+                           pos->to.node, pos->to.devid, pos->to.location,
+                           pos->errcode);
             list_del(&pos->list);
             __free_rep_args(pos);
             xfree(pos);
@@ -1592,12 +1727,17 @@ int __do_heartbeat()
             mode = QUICK_HB_MODE;
             break;
         }
-        hvfs_info(lib, "POS DEL_R target.location %s status %d\n",
-                  pos2->target.location, pos2->status);
+        hvfs_info(lib, "POS DEL_R target.location %s status %d latency=%ld\n",
+                  pos2->target.location, pos2->status,
+                  (pos2->status == REP_STATE_DONE ? pos2->latency : -1L));
         if (pos2->status == DEL_STATE_DONE) {
-            len += sprintf(query + len, "+DEL:%s,%s,%s\n",
+            /* update dtrace info */
+            update_dtrace(pos2->target.devid, DTRACE_DEL, pos2->latency);
+
+            len += sprintf(query + len, "+DEL:%s,%s,%s,%ld\n",
                            pos2->target.node, pos2->target.devid, 
-                           pos2->target.location);
+                           pos2->target.location,
+                           pos2->latency);
             list_del(&pos2->list);
             __free_del_args(pos2);
             xfree(pos2);
@@ -1605,9 +1745,13 @@ int __do_heartbeat()
             atomic64_dec(&g_di.ddel);
             nr2++;
         } else if (pos2->status == DEL_STATE_ERROR_DONE) {
-            len += sprintf(query + len, "+FAIL:DEL:%s,%s,%s\n",
+            /* update dtrace info */
+            update_dtrace(pos2->target.devid, DTRACE_DEL_ERR, pos2->latency);
+
+            len += sprintf(query + len, "+FAIL:DEL:%s,%s,%s,%d\n",
                            pos2->target.node, pos2->target.devid, 
-                           pos2->target.location);
+                           pos2->target.location,
+                           pos2->errcode);
             list_del(&pos2->list);
             __free_del_args(pos2);
             xfree(pos2);
@@ -1668,15 +1812,115 @@ void do_heartbeat(time_t cur)
             hb_interval = g_ds_conf.hb_interval;
         }
         last = cur;
+    } else if (cur - last < 0) {
+        hvfs_warning(lib, "Detect timestamp adjust backward, reset last HBTS.\n");
+        last = cur;
+    }
+}
+
+static inline void __post_ticks()
+{
+    int i = 0;
+    
+    for (i = 0; i < g_rep_thread_nr; i++) {
+        atomic64_inc(&g_rep_thread_ticks[i]);
+    }
+    for (i = 0; i < g_del_thread_nr; i++) {
+        atomic64_inc(&g_del_thread_ticks[i]);
     }
 }
 
 static void __itimer_default(int signo, siginfo_t *info, void *arg)
 {
     sem_post(&g_timer_sem);
+    __post_ticks();
     hvfs_verbose(lib, "Did this signal handler called?\n");
 
     return;
+}
+
+static void __do_kill(char *tag, int pid)
+{
+    char cmd[256];
+    FILE *f = NULL;
+
+    sprintf(cmd, "kill %d", pid);
+    f = popen(cmd, "r");
+    if (f == NULL) {
+        hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                 cmd, strerror(errno));
+    } else {
+        hvfs_err(lib, "Try to kill child %s process %d\n",
+                 tag, pid);
+        pclose(f);
+    }
+}
+
+static int check_thread_liveness()
+{
+    int i;
+
+    for (i = 0; i < g_rep_thread_nr; i++) {
+        if (atomic64_read(&g_rep_thread_ticks[i]) > 
+            g_ds_conf.rep_max_ticks) {
+            /* clean for all running child processes */
+            char cmd[4096];
+            FILE *f = NULL;
+            
+            sprintf(cmd, "ps -ef | grep scp | grep -v grep | awk '$3==%u {print $2}'", 
+                    getpid());
+            f = popen(cmd, "r");
+
+            if (f == NULL) {
+                hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                         cmd, strerror(errno));
+                continue;
+            } else {
+                char *line = NULL;
+                size_t len = 0;
+                
+                while ((getline(&line, &len, f)) != -1) {
+                    __do_kill("REP", atoi(line));
+                }
+                xfree(line);
+            }
+            pclose(f);
+        }
+        hvfs_debug(lib, "REP[%d] ticks=%ld\n", i, 
+                   atomic64_read(&g_rep_thread_ticks[i]));
+    }
+
+    for (i = 0; i < g_del_thread_nr; i++) {
+        if (atomic64_read(&g_del_thread_ticks[i]) > 
+            g_ds_conf.del_max_ticks) {
+            /* clean for all running child processes */
+            char cmd[4096];
+            FILE *f = NULL;
+            
+            sprintf(cmd, "ps -ef | grep rm | grep -v grep | awk '$3==%u {print $2}'", 
+                    getpid());
+            f = popen(cmd, "r");
+
+            if (f == NULL) {
+                hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                         cmd, strerror(errno));
+                continue;
+            } else {
+                char *line = NULL;
+                size_t len = 0;
+                
+                while ((getline(&line, &len, f)) != -1) {
+                    __do_kill("DEL", atoi(line));
+                }
+                xfree(line);
+            }
+            pclose(f);
+        }
+        hvfs_debug(lib, "DEL[%d] ticks=%ld\n", i, 
+                   atomic64_read(&g_del_thread_ticks[i]));
+    }
+
+    return 0;
 }
 
 static void *__timer_thread_main(void *arg)
@@ -1708,6 +1952,10 @@ static void *__timer_thread_main(void *arg)
         sem_post(&g_del_sem);
         sem_post(&g_dscan_sem);
         sem_post(&g_audit_sem);
+        /* ticks checking */
+        sem_post(&g_liveness_sem);
+        /* dtrace checking */
+        check_dtrace();
     }
 
     hvfs_debug(lib, "Hooo, I am exiting...\n");
@@ -1772,8 +2020,8 @@ out:
 void do_help()
 {
     hvfs_plain(lib,
-               "Version 1.0.0c\n"
-               "Copyright (c) 2013 IIE and Ma Can <ml.macana@gmail.com>\n\n"
+               "Version 1.0.0e\n"
+               "Copyright (c) 2013-2015 IIE and Ma Can <ml.macana@gmail.com>\n\n"
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
                "-p, --port        UDP port of DiskManager.\n"
@@ -1783,9 +2031,12 @@ void do_help()
                "-m, --mpfilter    Filter for mount point.\n"
                "-x, --mkdirs      Try to create the non-exist directory to REP success.\n"
                "-T, --devtype     Specify the disk type: e.g. scsi, ata, usb, ...\n"
-               "-o, --timeo       Timeout value.\n"
+               "-o, --timeo       Timeout value for reprot.\n"
+               "-O, --thr_timeo   Thread Rep/Del timeout value.\n"
                "-S, --dscan       Enable device scanning.(default disabled)\n"
                "-A, --audit       Enable audit logging.(default disabled)\n"
+               "-K, --tickR       Set tick for replicate thread\n"
+               "-k, --tickD       Set tick for delete thread\n"
                "-b, --prob        Scan probility for single dir.\n"
                "-R, --reptn       Set rep thread number.\n"
                "-D, --deltn       Set del thread number.\n"
@@ -1827,6 +2078,7 @@ static void *__async_recv_thread_main(void *args)
                     hvfs_err(lib, "Recv from Server reply failed w/ %s\n", strerror(errno));
                 }
             } else {
+                g_di.recvts = time(NULL);
                 if (br == 0) {
                     /* target ordered shutdown? (in UDP?) */
                     hvfs_err(lib, "Recv from Server failed? w/ %s\n", strerror(errno));
@@ -1863,12 +2115,14 @@ static void *__del_thread_main(void *args)
                                              * errs */
     /* then, we loop for the enqueue events */
     while (!g_del_thread_stop[tid]) {
+        atomic64_set(&g_del_thread_ticks[tid], LONG_MIN);
         err = sem_wait(&g_del_sem);
         if (err) {
             if (errno == EINTR)
                 continue;
             hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
         }
+        atomic64_set(&g_del_thread_ticks[tid], 0);
 
         cur = time(NULL);
         /* NOTE: only handle ONE request now */
@@ -1897,6 +2151,8 @@ static void *__del_thread_main(void *args)
                 hvfs_info(lib, "Begin Delete: TARGET{%s:%s/%s}\n",
                           pos->target.node, pos->target.mp, pos->target.location);
                 pos->status = DEL_STATE_DOING;
+                pos->latency = time(NULL);
+
                 /* double check the node */
                 if (strcmp(pos->target.node, g_hostname) != 0) {
                     hvfs_warning(lib, "This DEL request want to del file on node %s"
@@ -1905,7 +2161,8 @@ static void *__del_thread_main(void *args)
                     len += sprintf(cmd, "ssh %s ", pos->target.node);
                 }
 #if 1
-                len += sprintf(cmd + len, "rm -rf %s/%s",
+                len += sprintf(cmd + len, "%s rm -rf %s/%s",
+                               g_timeout_str,
                                pos->target.mp, pos->target.location);
 #else
                 len += sprintf(cmd + len, "ls %s/%s",
@@ -1929,6 +2186,8 @@ static void *__del_thread_main(void *args)
                     pos->retries >= g_ds_conf.fl_max_retry) {
                     // delete it and report +FAIL
                     pos->status = DEL_STATE_ERROR_DONE;
+                    pos->latency = time(NULL) - pos->latency;
+                    pos->errcode = -ETIMEDOUT;
                     list_del(&pos->list);
                     xlock_lock(&g_del_lock);
                     list_add_tail(&pos->list, &g_del);
@@ -1958,6 +2217,11 @@ static void *__del_thread_main(void *args)
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
                     if (strstr(line, "No such file or directory") != NULL) {
                         nosuchfod = 1;
+                    } else if (strstr(line, "Input/output error") != NULL) {
+                        /* IOError, which means target file's disk failed?
+                         * Fail quickly */
+                        pos->retries += g_ds_conf.fl_max_retry;
+                        pos->errcode = -EIO;
                     }
                 }
                 xfree(line);
@@ -1976,6 +2240,13 @@ static void *__del_thread_main(void *args)
                             pos->status = DEL_STATE_ERROR;
                             pos->errcode = -WEXITSTATUS(status);
                         }
+                    }
+                    /* 
+                     * If get errcode 124, it means disk might be timed out?
+                     */
+                    if (WEXITSTATUS(status) == 124) {
+                        hvfs_err(lib, "Got timedout for disk: %s(%s)\n",
+                                 pos->target.devid, pos->target.mp);
                     }
                 } else {
                     if (pos->status == DEL_STATE_ERROR)
@@ -1997,6 +2268,7 @@ static void *__del_thread_main(void *args)
 
             /* add to g_del list if needed */
             if (pos->status == DEL_STATE_DONE) {
+                pos->latency = time(NULL) - pos->latency;
                 list_del(&pos->list);
                 xlock_lock(&g_del_lock);
                 list_add_tail(&pos->list, &g_del);
@@ -2043,12 +2315,14 @@ static void *__rep_thread_main(void *args)
                                              * errs */
     /* then, we loop for the enqueue events */
     while (!g_rep_thread_stop[tid]) {
+        atomic64_set(&g_rep_thread_ticks[tid], LONG_MIN);
         err = sem_wait(&g_rep_sem);
         if (err) {
             if (errno == EINTR)
                 continue;
             hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
         }
+        atomic64_set(&g_rep_thread_ticks[tid], 0);
 
         cur = time(NULL);
         /* NOTE: only handle ONE request now */
@@ -2174,7 +2448,8 @@ static void *__rep_thread_main(void *args)
                     atomic64_inc(&g_di.drep);
                     continue;
                 } else {
-                    sprintf(cmd, "rm -rf %s/%s", pos->to.mp, pos->to.location);
+                    sprintf(cmd, "%s rm -rf %s/%s",
+                            g_timeout_str, pos->to.mp, pos->to.location);
                 }
                 break;
             }
@@ -2244,6 +2519,13 @@ static void *__rep_thread_main(void *args)
                     else {
                         pos->status = REP_STATE_ERROR;
                         pos->errcode = -WEXITSTATUS(status);
+                    }
+                    /* 
+                     * If get errcode 124, it means disk might be timed out?
+                     */
+                    if (WEXITSTATUS(status) == 124) {
+                        hvfs_err(lib, "Got timedout for disk: %s(%s)\n",
+                                 pos->to.devid, pos->to.mp);
                     }
                 } else {
                     if (pos->status == REP_STATE_ERROR)
@@ -2457,6 +2739,10 @@ static void *__dscan_thread_main(void *arg)
                 hvfs_err(lib, "__device_scan() failed w/ %s\n", strerror(errno));
             }
             last = cur;
+        } else if (cur - last < 0) {
+            hvfs_warning(lib, "Detect timestamp adjust backward, "
+                         "reset last dscanTS.\n");
+            last = cur;
         }
     }
 
@@ -2639,6 +2925,10 @@ static void *__audit_thread_main(void *arg)
         if (last + 5 <= cur) {
             last = cur;
             __get_audit_log();
+        } else if (cur - last < 0) {
+            hvfs_warning(lib, "Detect timestamp adjust backward, "
+                         "reset auditTS.\n");
+            last = cur;
         }
     }
 
@@ -2662,12 +2952,54 @@ out:
     return err;
 }
 
+static void *__liveness_thread_main(void *arg)
+{
+    sigset_t set;
+    int err;
+
+    /* first, let us block the SIGALRM */
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL); /* oh, we do not care about the
+                                             * errs */
+    /* then, we loop for the timer events */
+    while (!g_liveness_thread_stop) {
+        err = sem_wait(&g_liveness_sem);
+        if (err) {
+            if (errno == EINTR)
+                continue;
+            hvfs_err(lib, "sem_wait() failed w/ %s\n", strerror(errno));
+        }
+
+        check_thread_liveness();
+    }
+
+    hvfs_debug(lib, "Hooo, I am exiting...\n");
+    pthread_exit(0);
+}
+
+int setup_liveness()
+{
+    int err = 0;
+
+    err = pthread_create(&g_liveness_thread, NULL, &__liveness_thread_main,
+                         NULL);
+    if (err) {
+        hvfs_err(lib, "Create liveness thread failed w/ %s\n",
+                 strerror(errno));
+        err = -errno;
+        goto out;
+    }
+out:
+    return err;
+}
+
 int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
     struct disk_part_info *dpi = NULL;
     int nr = 0, nr2 = 0;
-    int err = 0;
+    int err = 0, m_cc_set = 0;
 
 #ifndef COMPILE_DATE
 #define COMPILE_DATE "Unknown Date"
@@ -2680,11 +3012,12 @@ int main(int argc, char *argv[])
 #endif
 
     memset(&g_di, 0, sizeof(g_di));
-    srandom(time(NULL));
+    g_di.recvts = g_di.upts = time(NULL);
+    srandom(g_di.upts);
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:I:b:M:SR:D:C:A";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:SR:D:C:AK:k:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -2695,6 +3028,7 @@ int main(int argc, char *argv[])
         {"mkdirs", no_argument, 0, 'x'},
         {"devtype", required_argument, 0, 'T'},
         {"timeo", required_argument, 0, 'o'},
+        {"thr_timeo", required_argument, 0, 'O'},
         {"iph", required_argument, 0, 'I'},
         {"prob", required_argument, 0, 'b'},
         {"dscan", no_argument, 0, 'S'},
@@ -2703,6 +3037,8 @@ int main(int argc, char *argv[])
         {"deltn", required_argument, 0, 'D'},
         {"cpcmd", required_argument, 0, 'C'},
         {"audit", no_argument, 0, 'A'},
+        {"tickR", required_argument, 0, 'K'},
+        {"tickD", required_argument, 0, 'k'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -2740,6 +3076,9 @@ int main(int argc, char *argv[])
         case 'o':
             g_ds_conf.hb_interval = atoi(optarg);
             break;
+        case 'O':
+            g_timeout_str = strdup(optarg);
+            break;
         case 'I':
             g_ds_conf.addr_filter = strdup(optarg);
             break;
@@ -2770,6 +3109,7 @@ int main(int argc, char *argv[])
             if (strncmp(g_copy_cmd, "rsync", 5) == 0) {
                 g_is_rsync = 1;
             }
+            m_cc_set = 1;
             break;
         case 'f':
         {
@@ -2809,6 +3149,20 @@ int main(int argc, char *argv[])
             xfree(fstr);
             break;
         }
+        case 'K':
+        {
+            g_ds_conf.rep_max_ticks = atol(optarg);
+            if (g_ds_conf.rep_max_ticks <= 0)
+                g_ds_conf.rep_max_ticks = DS_REP_MAX_TICKS;
+            break;
+        }
+        case 'k':
+        {
+            g_ds_conf.del_max_ticks = atol(optarg);
+            if (g_ds_conf.del_max_ticks <= 0)
+                g_ds_conf.del_max_ticks = DS_DEL_MAX_TICKS;
+            break;
+        }
         default:
             hvfs_err(lib, "Invalid arguments!\n");
             return EINVAL;
@@ -2827,6 +3181,17 @@ int main(int argc, char *argv[])
             return errno;
         }
         hvfs_info(lib, "Get hostname as '%s'\n", g_hostname);
+    }
+
+    /* refix g_copy_cmd */
+    if (g_timeout_str != NULL) {
+        char __cmd[1024];
+
+        snprintf(__cmd, 1023, "%s %s", g_timeout_str, g_copy_cmd);
+        if (m_cc_set)
+            xfree(g_copy_cmd);
+        g_copy_cmd = strdup(__cmd);
+        hvfs_info(lib, "Reset g_copy_cmd to '%s'\n", g_copy_cmd);
     }
 
 #if 0
@@ -2882,6 +3247,7 @@ int main(int argc, char *argv[])
     xlock_init(&g_rep_lock);
     xlock_init(&g_del_lock);
     xlock_init(&g_dpi_lock);
+    xlock_init(&g_dtrace_lock);
 
     /* setup signals */
     err = __init_signal();
@@ -2928,6 +3294,16 @@ int main(int argc, char *argv[])
             err = -ENOMEM;
             goto out_rep;
         }
+        g_rep_thread_ticks = xzalloc(g_rep_thread_nr * sizeof(atomic64_t));
+        if (!g_rep_thread_ticks) {
+            hvfs_err(lib, "xzalloc(%d) long failed, no memory.\n",
+                     g_rep_thread_nr);
+            err = -ENOMEM;
+            goto out_rep;
+        }
+        for (i = 0; i < g_rep_thread_nr; i++) {
+            atomic64_set(&g_rep_thread_ticks[i], LONG_MIN);
+        }
         g_rep_thread = xzalloc(g_rep_thread_nr * sizeof(pthread_t));
         if (!g_rep_thread) {
             hvfs_err(lib, "xzalloc(%d) pthread_t failed, no memory.\n",
@@ -2969,6 +3345,17 @@ int main(int argc, char *argv[])
             err = -ENOMEM;
             goto out_del;
         }
+        g_del_thread_ticks = xzalloc(g_del_thread_nr * sizeof(atomic64_t));
+        if (!g_del_thread_ticks) {
+            hvfs_err(lib, "xzalloc(%d) long failed, no memory.\n",
+                     g_del_thread_nr);
+            err = -ENOMEM;
+            goto out_del;
+        }
+        for (i = 0; i < g_del_thread_nr; i++) {
+            atomic64_set(&g_del_thread_ticks[i], LONG_MIN);
+        }
+
         g_del_thread = xzalloc(g_del_thread_nr * sizeof(pthread_t));
         if (!g_del_thread) {
             hvfs_err(lib, "xzalloc(%d) pthread_t failed, no memory.\n",
@@ -3017,6 +3404,13 @@ int main(int argc, char *argv[])
         goto out_audit;
     }
 
+    /* setup liveness check thread */
+    err = setup_liveness();
+    if (err) {
+        hvfs_err(lib, "setup_liveness() failed w/ %d\n", err);
+        goto out_liveness;
+    }
+
     get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
     di_free(di, nr);
     
@@ -3061,6 +3455,11 @@ int main(int argc, char *argv[])
         sem_post(&g_audit_sem);
         pthread_join(g_audit_thread, NULL);
     }
+    g_liveness_thread_stop = 1;
+    if (g_liveness_thread) {
+        sem_post(&g_liveness_sem);
+        pthread_join(g_liveness_thread, NULL);
+    }
     {
         int i;
 
@@ -3096,6 +3495,7 @@ int main(int argc, char *argv[])
 
     hvfs_info(lib, "Main thread exiting ...\n");
 
+out_liveness:
 out_audit:
 out_dscan:
 out_async_recv:
