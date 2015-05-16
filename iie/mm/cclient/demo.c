@@ -177,6 +177,17 @@ int main(int argc, char *argv[])
     free(buffer);
 #endif
 
+    {
+        int x = 0;
+        char key[256], *info = NULL;
+
+        for (x = 0; x < 100; x++) {
+            sprintf(key, "%s@__%d", "default", x);
+            info = mmcc_put(key, key, strlen(key));
+            printf("mmcc_put(%s) info=%s\n", key, info);
+        }
+    }
+
     err = thread_get("default", 100000, 500);
     if (err) {
         printf("thread_get() failed w/ %d\n", err);

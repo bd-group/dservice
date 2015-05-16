@@ -13,6 +13,7 @@
 extern "C" {
 #endif
 
+#include <sys/uio.h>
 #include <unistd.h>
 /*
  * Provide url list, splited by ';'
@@ -20,14 +21,29 @@ extern "C" {
 int mmcc_init(char *uris);
 
 /*
+ * finalize mmcc client
+ */
+int mmcc_fina();
+    
+/*
  * Return the fast lookup info, it can be used as 'key' in get()
  */
 char *mmcc_put(char *key, void *content, size_t len);
+
+char *mmcc_put_iov(char *key, struct iovec *iov, int iovlen);
+    
 
 /*
  * Caller should free the allocated memory by 'free'
  */
 int mmcc_get(char *key, void **buffer, size_t *len);
+
+
+/*
+ * Delete the whole set, release storage space
+ */
+int mmcc_del_set(char *set);
+
 
 /*
  * ERROR numbers
@@ -47,6 +63,8 @@ struct key2info
 };
 
 struct key2info *get_k2i(char *set, int *nr);
+
+void mmcc_debug_mode(int enable);
 
 #ifdef __cplusplus
 }

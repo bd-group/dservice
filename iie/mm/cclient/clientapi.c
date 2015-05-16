@@ -17,6 +17,7 @@
 
 #define DUPNUM 2
 
+extern char *g_uris;
 extern char *redisHost;
 extern int redisPort;
 extern unsigned int hvfs_mmcc_tracing_flags;
@@ -24,23 +25,18 @@ extern unsigned int hvfs_mmcc_tracing_flags;
 struct redisConnection;
 
 int client_init();
+int client_fina();
 int update_mmserver();
 int get_mm_object(char* set, char* md5, void **buf, size_t* length);
 int search_mm_object(char *infos, void **buf, size_t *length);
 struct redisConnection *getRC();
 void putRC(struct redisConnection *rc);
+int del_mm_set(char *set);
 
-static int init_with_sentinel(char *uris)
+static inline void __fetch_from_sentinel(char *uris)
 {
-    int err = 0, inited = 0;
-
-    err = client_init();
-    if (err) {
-        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
-        goto out;
-    }
-
     char *dup = strdup(uris), *p, *n = NULL, *q, *m = NULL;
+    int inited = 0;
 
     p = dup;
     do {
@@ -90,11 +86,25 @@ static int init_with_sentinel(char *uris)
                         hvfs_warning(mmcc, "Invalid SENTINEL reply? len=%ld\n",
                                      r->elements);
                     } else {
-                        redisHost = strdup(r->element[0]->str);
-                        redisPort = atoi(r->element[1]->str);
-                        hvfs_info(mmcc, "OK, got MMM Server %s:%d\n",
-                                  redisHost, redisPort);
-                        inited = 1;
+                        if (redisHost == NULL || redisPort == -1) {
+                            redisHost = strdup(r->element[0]->str);
+                            redisPort = atoi(r->element[1]->str);
+                            hvfs_info(mmcc, "OK, got MM Master Server %s:%d\n",
+                                      redisHost, redisPort);
+                            inited = 1;
+                        } else {
+                            if ((strcmp(r->element[0]->str, redisHost) != 0) ||
+                                atoi(r->element[1]->str) != redisPort) {
+                                hvfs_info(mmcc, "Change MM Master Server from "
+                                          "%s:%d to %s:%s\n",
+                                          redisHost, redisPort,
+                                          r->element[0]->str,
+                                          r->element[1]->str);
+                                redisHost = strdup(r->element[0]->str);
+                                redisPort = atoi(r->element[1]->str);
+                                inited = 1;
+                            }
+                        }
                     }
                 }
                 freeReplyObject(r);
@@ -106,7 +116,21 @@ static int init_with_sentinel(char *uris)
         } else
             break;
     } while (p = NULL, 1);
-    
+}
+
+static int init_with_sentinel(char *uris)
+{
+    int err = 0;
+
+    err = client_init();
+    if (err) {
+        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
+        goto out;
+    }
+
+    __fetch_from_sentinel(uris);
+    g_uris = uris;
+
 out:
     return err;
 }
@@ -180,12 +204,36 @@ int mmcc_init(char *uris)
         return EMMINVAL;
     
     if (strstr(uris, "STL://")) {
-        return init_with_sentinel(uris + 6);
+        int err = 0;
+        struct redisConnection *rc = NULL;
+
+        err = init_with_sentinel(uris + 6);
+        if (err) {
+            hvfs_err(mmcc, "init_with_sentinel(%s) failed w/ %d\n",
+                     uris, err);
+            return err;
+        }
+        
+        rc = getRC();
+        if (!rc) {
+            hvfs_err(mmcc, "getRC() failed\n");
+            return EINVAL;
+        }
+
+        /* FIXME: do auto config */
+        putRC(rc);
+
+        return err;
     } else if (strstr(uris, "STA://")) {
         return init_standalone(uris + 6);
     } else {
         return init_standalone(uris);
     }
+}
+
+int mmcc_fina()
+{
+    return client_fina();
 }
 
 static inline void __parse_token(char *key, int *m, int *n)
@@ -222,5 +270,24 @@ int mmcc_get(char *key, void **buffer, size_t *len)
     
     xfree(dup);
 
+    return err;
+}
+
+int mmcc_del_set(char *set)
+{
+    int err = 0;
+
+    if (set == NULL || strlen(set) == 0) {
+        err = -EINVAL;
+        goto out;
+    }
+    
+    err = del_mm_set(set);
+    if (err) {
+        hvfs_err(mmcc, "del_mm_set(%s) failed w/ %d\n",
+                 set, err);
+        goto out;
+    }
+out:
     return err;
 }
