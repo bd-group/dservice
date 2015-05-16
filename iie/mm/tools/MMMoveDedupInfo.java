@@ -67,6 +67,7 @@ public class MMMoveDedupInfo {
 		int kdays = 3;
 		long cday = System.currentTimeMillis() / 86400000 * 86400;
 		long bTs;
+		long iter = Long.MAX_VALUE - 1, j = 0;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -99,6 +100,14 @@ public class MMMoveDedupInfo {
 					System.exit(0);
 				}
 				kdays = Integer.parseInt(o.opt);
+			}
+			if (o.flag.equals("-iter")) {
+				// iter number
+				if (o.opt == null) {
+					System.out.println("-iter NR");
+					System.exit(0);
+				}
+				iter = Long.parseLong(o.opt);
 			}
 		}
 		
@@ -136,6 +145,9 @@ public class MMMoveDedupInfo {
 			if (cursor.equalsIgnoreCase("0")) {
 				isDone = true;
 			}
+			j++;
+			if (j > iter)
+				break;
 		}
 		
 		if (infos != null && infos.size() > 0) {
