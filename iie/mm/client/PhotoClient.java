@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.Map.Entry;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.ScanParams;
+import redis.clients.jedis.ScanResult;
 import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
@@ -1563,5 +1565,118 @@ public class PhotoClient {
 
 	public void setSs_id(long ss_id) {
 		this.ss_id = ss_id;
+	}
+	
+	public String list(String set, String prefix) throws IOException {
+		int err = 0;
+		ArrayList<String> files = new ArrayList<String>();
+		ScanParams sp = new ScanParams();
+		boolean isDone = false;
+		String cursor = ScanParams.SCAN_POINTER_START;
+		String match_str = null;
+		String match_str2 = null;
+		if (prefix.endsWith("/"))
+			match_str = prefix + "*";
+		else {
+			match_str = prefix + "/*";
+			match_str2 = prefix;
+		}
+		sp.match(match_str);
+		
+		System.out.println("MATCH: " + match_str);
+		refreshJedis();
+		try {
+			while (!isDone) {
+				ScanResult<Entry<String, String>> r = jedis.get().hscan(set, cursor, sp);
+				for (Entry<String, String> entry : r.getResult()) {
+					String sub = entry.getKey().substring(match_str.length() - 2);
+					System.out.println("-> " + entry.getKey() + ", " + sub);
+					if (sub.matches("/.+") && !sub.matches("/.*/.+")) {
+						files.add(entry.getKey());
+					}
+				}
+				cursor = r.getStringCursor();
+				if (cursor.equalsIgnoreCase("0")) {
+					isDone = true;
+				}
+			}
+			if (match_str2 != null) {
+				String entry = jedis.get().hget(set, match_str2);
+				if (entry != null) {
+					files.add(match_str2);
+				}
+			}
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken, wait in getObject ...");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (JedisException e) {
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+		
+		String r = "";
+		for (String f : files) {
+			if (f.endsWith("/"))
+				r += "drw-r--r--   " + f + "\n";
+			else
+				r += "-rw-r--r--   " + f + "\n";
+		}
+		return r;
+	}
+	
+	/**
+	 * 
+	 * @param set
+	 * @param dir_full_path
+	 * @return 0: ok, 1: exist, 2: failed
+	 * @throws IOException
+	 */
+	public int mkdir(String set, String dir_full_path) throws IOException {
+		int err = 0;
+		
+		refreshJedis();
+		
+		if (!dir_full_path.endsWith("/"))
+			dir_full_path += "/";
+		if (dir_full_path.length() == 1)
+			return 1;
+		try {
+			String parent = dir_full_path.substring(0, 
+					dir_full_path.lastIndexOf("/", dir_full_path.length() - 2));
+			System.out.println("parent=" + parent);
+			if (parent.length() > 1) {
+				if (jedis.get().hget(set, parent) == null)
+					return 2;
+			}
+			jedis.get().hget(set, parent);
+			long r = jedis.get().hset(set, dir_full_path, "__IS_DIRECTORY");
+			if (r == 1)
+				return 0;
+			else
+				return 1;
+		} catch (JedisConnectionException e) {
+			System.out.println("Jedis connection broken, wait in getObject ...");
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (JedisException e) {
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis.set(rf.putBrokenInstance(jedis.get()));
+			else
+				jedis.set(rf.putInstance(jedis.get()));
+		}
+		return 2;
 	}
 }

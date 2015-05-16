@@ -596,6 +596,28 @@ public class ClientAPI {
 	}
 	
 	/**
+	 * Simulate directory list
+	 */
+	public String list(String set, String prefix) throws IOException, Exception {
+		if (set == null)
+			throw new Exception("Invalid set name.");
+		if (prefix == null)
+			prefix = "/";
+		return pc.list(set, prefix);
+	}
+	
+	/**
+	 * Simulate directory make
+	 */
+	public int mkdir(String set, String dir_full_path) throws IOException, Exception {
+		if (set == null)
+			throw new Exception("Invalid set name.");
+		if (dir_full_path == null)
+			throw new Exception("Invalid directory name.");
+		return pc.mkdir(set, dir_full_path);
+	}
+	
+	/**
 	 * 批量读取某个集合的所有key
 	 * It is thread-safe
 	 *

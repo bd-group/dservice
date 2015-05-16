@@ -56,6 +56,7 @@ public class RedisFactory {
 			}
 		} catch (Exception e) {
 			jsp.destroy();
+			jsp = null;
 		}
 		return null;
 	}
@@ -72,6 +73,7 @@ public class RedisFactory {
 			}
 		} catch (Exception e) {
 			jsp.destroy();
+			jsp = null;
 		}
 		return null;
 	}
