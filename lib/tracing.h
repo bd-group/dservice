@@ -3,7 +3,7 @@
  *                           <macan@ncic.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2013-11-28 18:54:16 macan>
+ * Time-stamp: <2015-05-12 11:37:40 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -191,11 +191,14 @@ extern atomic_t g_env_prot;
     } while (0)
 #endif
 
+
 #define HVFS_VV PRINTK
 /* Use HVFS_BUG() to get the SIGSEGV signal to debug in the GDB */
+//        (*((int *)0) = 1);
+// Eh, we change SIGSEGV to SIGINT now, for fuse framework.
 #define HVFS_BUG() do {                         \
-        HVFS_VV(KERN_PLAIN "HVFS BUG :(\n");    \
-        (*((int *)0) = 1);                      \
+        HVFS_VV(KERN_PLAIN "FS BUG :(\n");      \
+        kill(getpid(), SIGINT);                 \
     } while (0)
 #define HVFS_BUGON(str) do {                        \
         HVFS_VV(KERN_PLAIN "Bug on '" #str "'\n");  \

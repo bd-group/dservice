@@ -64,8 +64,8 @@ LFLAGS += -L$(JEMALLOC_HOME)/lib -ljemalloc
 endif
 
 # Region for depend files
-LIB_AR_SOURCE = lib.c ring.c conf.c segv.c time.c
-LIB_H_SOURCE = lib.h ring.h memory.h hvfs_u.h tracing.h err.h xlist.h xlock.h 
+LIB_AR_SOURCE = lib.c ring.c conf.c segv.c time.c md5.c
+LIB_H_SOURCE = lib.h ring.h memory.h hvfs_u.h tracing.h err.h xlist.h xlock.h md5.h
 
 lib_h_depend_files = $(patsubst %.h, $(LIB_PATH)/%.h, $(LIB_H_SOURCE))
 
