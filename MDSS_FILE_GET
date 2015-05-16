@@ -1,0 +1,3 @@
+#!/bin/bash
+
+CLASSPATH=lib/commons-io-2.2.jar:lib/commons-pool2-2.1.jar:lib/jedis-2.5.1.jar:build/iie.jar java iie.mm.client.MDSS_FILE_GET -uri "STL://localhost:26379" $@
