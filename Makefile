@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2014-08-22 11:10:58 macan>
+# Time-stamp: <2015-05-12 11:33:29 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -11,9 +11,11 @@
 GCC = gcc
 ECHO = /bin/echo
 MAKE = make
+SHELL := /bin/bash
 
 GIT = env git
 GIT_SHA = `$(GIT) rev-parse HEAD`
+GIT_DIRTY = `$(GIT) diff --shortstat 2> /dev/null | tail -n1`
 
 INOTIFY=inotify-tools-3.14
 
@@ -34,32 +36,34 @@ JTEST = Test
 WATCHER = watcher
 
 LUCENE_JAR = $(LCHOME)/lucene-core-4.2.1.jar
-LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-queries-4.2.1.jar:$(LCHOME)/lucene-sandbox-4.2.1.jar
+LUCENE_TEST_JAR = $(LCHOME)/lucene-analyzers-common-4.2.1.jar:$(LCHOME)/lucene-queries-4.2.1.jar:$(LCHOME)/lucene-sandbox-4.2.1.jar:$(LCHOME)/lucene-queryparser-4.2.1.jar
 
 THRIFT_JAR = $(MSHOME)/libthrift-0.9.0.jar:$(MSHOME)/libfb303-0.9.0.jar
 
-METASTORE_API = $(MSHOME)/hive-metastore-0.10.0.jar:$(THRIFT_JAR)
+METASTORE_API = $(HADOOP_HOME)/hadoop-core-1.0.3.jar:$(MSHOME)/hive-metastore-0.10.0.jar:$(MSHOME)/hive-common-0.10.0.jar:$(MSHOME)/metamorphosis-client-1.4.4.jar:$(MSHOME)/metamorphosis-commons-1.4.4.jar:$(THRIFT_JAR)
 METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR):$(LUCENE_JAR):$(LUCENE_TEST_JAR)
 
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
 LMDB=$(shell pwd)/lib/lmdbjni-all-99-master-20130507.185246-2.jar
 
-MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.0.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar:$(LMDB)
+MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.1.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar:$(LMDB)
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/:lib/fastjson-1.1.39.jar
 
 MMCC = build/libmmcc.so
 MMHC = build/libmmhc.so
+MMFS = build/libmmfs.so
 
 DEMO = build/demo
 
 IIE = iie
 MSCLI = mscli
+MFS = mfs
 
 OBJS = $(DSERVICE) $(DEVMAP_SO) $(JTEST).class $(WATCHER)
 
-all: $(OBJS) $(IIE) $(MSCLI)
+all: $(OBJS) $(IIE) $(MSCLI) GEN_VERSION_FILE
 	@$(ECHO) -e "Build OK."
 
 mmcc : DEPEND $(MMCC) 
@@ -83,11 +87,32 @@ DEPEND :
 	@$(MAKE) --no-print-directory -C $(LOCAL_DB)
 	@cp -rpf $(LOCAL_DB)/liblmdb.so lib/
 
+GEN_VERSION_FILE :
+	@$(ECHO) -e " " GEN .VERSION
+	@echo $(GIT_SHA) > .VERSION
+	@echo DIRTY: $(GIT_DIRTY) >> .VERSION
+	@echo $(COMPILE_HOST) @ $(COMPILE_DATE) >> .VERSION
+
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
 	@$(ECHO) -e " " CC"\t" $@
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/client.c -o build/client.o
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/clientapi.c -o build/clientapi.o
 	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
+
+$(MMFS) : $(MMCC) iie/mm/fuse/mmfs_ll.c iie/mm/fuse/mmfs.c
+	@$(ECHO) -e " " CC"\t" $@
+	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs.c -o build/mmfs.o
+	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_ll.c -o build/mmfs_ll.o
+	@$(GCC) -Llib -Lbuild build/mmfs.o build/mmfs_ll.o -shared -o $(MMFS) -Wl,-soname,libmmfs.so -lmmcc -lhiredis -lrt -lhvfs -lpthread
+
+$(MFS) : $(MMFS) iie/mm/fuse/mmfs_fuse0.c iie/mm/fuse/mmfs_fuse1.c iie/mm/fuse/mmfs_mkfs.c
+	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_mkfs.c -o build/mmfs_mkfs.o
+	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_fuse0.c -o build/mmfs_fuse0.o
+	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_fuse1.c -o build/mmfs_fuse1.o
+	@$(GCC) -Llib -Lbuild build/mmfs_mkfs.o build/mmfs_ll.o -o build/mkfs.mmfs -lmmcc -lhiredis -lrt -lhvfs -lpthread
+	@$(GCC) -Llib -Lbuild build/mmfs_fuse0.o build/mmfs_ll.o -o build/mmfs_test -lmmcc -lhiredis -lrt -lhvfs -lpthread
+	@$(GCC) -Llib -Lbuild build/mmfs_fuse1.o build/mmfs_ll.o -o build/mmfs_v1 -lmmfs -lfuse -lmmcc -lhiredis -lrt -lhvfs -lpthread
+	@$(ECHO) done
 
 $(MMHC) : iie/mm/hclient/hclient.c
 	@$(ECHO) -e " " CC"\t" $@
@@ -139,7 +164,7 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	#@CLASSPATH=$(CP):build javac -d build $(IIE)/databak/*.java
 	@$(ECHO) -e " " JAR"\t" iie.jar
 	#@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/databak/*.class 
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/mm/tools/*.class
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/mm/tools/*.class; rm -rf $(IIE)/metastore;
 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
