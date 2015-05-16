@@ -3,7 +3,10 @@ package iie.mm.server;
 import iie.mm.client.Feature.FeatureTypeString;
 
 import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
@@ -15,6 +18,27 @@ public class MMServer {
 	public static class Option {
 	     String flag, opt;
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
+	}
+	
+	public static String getHostIPByHint(String hint) throws SocketException {
+		String node = null;
+		
+		Enumeration<NetworkInterface> e = NetworkInterface.getNetworkInterfaces();
+		while (e.hasMoreElements()) {
+			NetworkInterface n = (NetworkInterface)e.nextElement();
+			Enumeration<InetAddress> ee = n.getInetAddresses();
+			while (ee.hasMoreElements()) {
+				InetAddress i = (InetAddress)ee.nextElement();
+				if (i.getHostAddress().contains(hint)) {
+					node = i.getHostAddress();
+					break;
+				}
+			}
+			if (node != null)
+				break;
+		}
+		
+		return node;
 	}
 
 	public static void main(String[] args) {
@@ -94,6 +118,7 @@ public class MMServer {
 				System.out.println("-fXML : face detector XML config file path.");
 				System.out.println("-ssm  : enable secondary server master.");
 				System.out.println("-lmdb : set lmdb prefix path.");
+				System.out.println("-uip  : use IP as hostname.");
 				
 				System.exit(0);
 			}
@@ -245,6 +270,13 @@ public class MMServer {
 				}
 				return;
 			}
+			if (o.flag.equals("-uip")) {
+				try {
+					serverName = MMServer.getHostIPByHint(outsideIP);
+				} catch (SocketException e) {
+					e.printStackTrace();
+				}
+			}
 		}
 		
 		if (outsideIP == null) {
@@ -255,7 +287,7 @@ public class MMServer {
 				InetAddress[] a = InetAddress.getAllByName(InetAddress.getLocalHost().getHostName());
 				for (InetAddress ia : a) {
 					if (ia.getHostAddress().contains(outsideIP)) {
-						System.out.println("Got host IP " + ia.getHostAddress() + " by hint " + outsideIP);
+						System.out.println("[1] Got host IP " + ia.getHostAddress() + " by hint " + outsideIP);
 						outsideIP = ia.getHostAddress();
 						isSetOutsideIP = true;
 					}
@@ -263,6 +295,16 @@ public class MMServer {
 			} catch (UnknownHostException e) {
 				e.printStackTrace();
 				System.exit(0);
+			}
+			if (!isSetOutsideIP) {
+				try {
+					String hint = outsideIP;
+					outsideIP = getHostIPByHint(hint);
+					isSetOutsideIP = true;
+					System.out.println("[2] Got host IP " + outsideIP + " by hint " + hint);
+				} catch (SocketException e) {
+					e.printStackTrace();
+				}
 			}
 		}
 		

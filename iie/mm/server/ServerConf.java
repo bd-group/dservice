@@ -83,6 +83,12 @@ public class ServerConf {
 	private static long ckpt_ts = -1L;
 	
 	private String lmdb_prefix = ".";
+	
+	// FIXME: BUG-XXX: Auto migrate kvs and clean mm.dedup.info when memory exceeds 
+	// redis' used_memory * memfull_ratio
+	private double memFullRatio = 0.6;
+	
+	private long memorySize = 32; // in GB
 
 	public ServerConf(int httpPort) throws Exception {
 		this.nodeName = InetAddress.getLocalHost().getHostName();

@@ -40,8 +40,11 @@ public class LMDBInterface {
 			try {
 				Cursor cursor = db.openCursor(tx);
 				try {
-					Entry entry = cursor.get(FIRST); 
-					return string(entry.getKey());
+					Entry entry = cursor.get(FIRST);
+					if (entry != null)
+						return string(entry.getKey());
+					else
+						return null;
 				} finally {
 					// Make sure you close the cursor to avoid leaking reasources.
 					cursor.close();

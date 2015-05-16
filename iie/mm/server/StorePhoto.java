@@ -252,7 +252,7 @@ public class StorePhoto {
 					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
 					+ "return ARGV[2] end";
 			sha = jedis.get().scriptLoad(script);
-//			System.out.println(sha);
+			System.out.println("Load script as " + sha);
 		}
 		
 		StringBuffer rVal = new StringBuffer(128);

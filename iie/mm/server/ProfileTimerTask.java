@@ -188,6 +188,7 @@ public class ProfileTimerTask extends TimerTask {
 						ServerConf.setCkpt_ts(Long.parseLong(ckpt));
 				} catch (Exception e) {
 				}
+				// FIXME: update memory usage to trigger migration and mm.dedup.info clean
 			}
 		} catch (Exception e) {
 			jedis = RedisFactory.putBrokenInstance(jedis);
