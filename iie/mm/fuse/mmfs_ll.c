@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-16 12:19:02 macan>
+ * Time-stamp: <2015-05-19 07:21:29 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1107,14 +1107,30 @@ out:
     return err;
 }
 
-int __mmfs_fread(struct mstat *ms, void **data, u64 off, u64 size)
+/* Note that, for each read, caller must make sure it is read from ONE chunk,
+ * otherwise, it will be rejected.
+ *
+ * Note that offset should be in-chunk offset.
+ */
+int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
+                       u64 chkid)
 {
     redisReply *rpy = NULL;
     size_t rlen = 0;
+    u64 chk_begin, chk_end;
+    struct redisConnection *rc = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    /* validate chunk */
+    chk_begin = g_msb.chunk_size * chkid;
+    chk_end = g_msb.chunk_size * (chkid + 1);
 
+    if (!data) {
+        hvfs_err(lib, "NULL buffer to read in.\n");
+        return -EINVAL;
+    }
+
+    rc = getRC();
     if (!rc) {
         hvfs_err(lib, "getRC() failed\n");
         return -EINVAL;
@@ -1132,23 +1148,34 @@ int __mmfs_fread(struct mstat *ms, void **data, u64 off, u64 size)
         goto out;
     }
 
-    if (off + size > ms->mdu.size) {
-        if (off > ms->mdu.size) {
+    if (chk_begin + off + size > ms->mdu.size) {
+        if (chk_begin + off > ms->mdu.size) {
             hvfs_debug(lib, "Read offset across the boundary (%ld vs %ld)\n",
-                       off, ms->mdu.size);
+                       chk_begin + off, ms->mdu.size);
             err = -EFBIG;
             goto out;
         } else {
             /* Convention: for fuse client, it always read for some pages, we
              * should truncate the size to validate range */
-            size = ms->mdu.size - off;
+            if (chk_end > ms->mdu.size)
+                size = ms->mdu.size - chk_begin - off;
+            else
+                size = chk_end - chk_begin - off;
         }
     }
 
-    hvfs_debug(lib, "__mmfs_fread(%ld) off=%ld, size=%ld, mdu.size=%ld\n",
-               ms->ino, (u64)off, (u64)size, ms->mdu.size);
+    hvfs_debug(lib, "__mmfs_fread_chunk(%ld) off=%ld, size=%ld, mdu.size=%ld, "
+               "chk(%ld)=[%ld,%ld)\n",
+               ms->ino, (u64)off, (u64)size, ms->mdu.size,
+               chkid, chk_begin, chk_end);
 
-    rpy = redisCommand(rc->rc, "hget _IN_%ld %s", ms->ino, MMFS_INODE_BLOCK);
+    if (likely(chkid == 0)) {
+        rpy = redisCommand(rc->rc, "hget _IN_%ld %s", 
+                           ms->ino, MMFS_INODE_BLOCK);
+    } else {
+        rpy = redisCommand(rc->rc, "hget _IN_%ld %s_%ld", 
+                           ms->ino, MMFS_INODE_BLOCK, chkid);
+    }
     if (rpy == NULL) {
         hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
         putRC(rc);
@@ -1174,14 +1201,6 @@ int __mmfs_fread(struct mstat *ms, void **data, u64 off, u64 size)
                      ms->ino, rpy->str, err);
             goto out_free;
         }
-        if (!*data) {
-            *data = xzalloc(size);
-            if (!*data) {
-                err = -ENOMEM;
-                xfree(buf);
-                goto out_free;
-            }
-        }
         if (rlen - off < 0) {
             hvfs_warning(lib, "_IN_%ld block size %ld - off %ld < 0\n",
                          ms->ino, rlen, off);
@@ -1189,10 +1208,10 @@ int __mmfs_fread(struct mstat *ms, void **data, u64 off, u64 size)
         } else if (off + size > rlen) {
             hvfs_warning(lib, "_IN_%ld block size %ld < request size %ld\n",
                          ms->ino, rlen, size);
-            memcpy(*data, buf + off, rlen - off);
+            memcpy(data, buf + off, rlen - off);
             err = rlen - off;
         } else {
-            memcpy(*data, buf + off, size);
+            memcpy(data, buf + off, size);
             err = size;
         }
         xfree(buf);
@@ -1206,7 +1225,59 @@ out:
     return err;
 }
 
-int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size)
+int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
+{
+    u64 chkid, endchk;
+    s64 loff, lsize, end = size + off;
+    s64 rsize, trsize = 0;
+    int j;
+    
+    /* use [off, off+size) to identify how many chunks we need to read */
+    chkid = off / g_msb.chunk_size;
+    endchk = (off + size) / g_msb.chunk_size;
+    endchk -= (off + size) % g_msb.chunk_size == 0 ? 1 : 0;
+
+    hvfs_debug(lib, "__mmfs_fread(%ld) [%ld,%ld) CHK %ld to %ld.\n",
+               ms->ino, off, off + size, chkid, endchk);
+
+
+    for (j = 0; chkid <= endchk; chkid++, j++) {
+        loff = off - (chkid + j) * g_msb.chunk_size;
+        if (loff < 0) loff = 0;
+        lsize = min(g_msb.chunk_size - loff, 
+                    end - (chkid + j) * g_msb.chunk_size - loff);
+
+        rsize = __mmfs_fread_chunk(ms, data + trsize, loff, lsize, chkid);
+        if (rsize < 0) {
+            /* chunk read failed */
+            hvfs_err(lib, "fread(%ld) chunk(%ld) faild w/ %ld\n",
+                     ms->ino, chkid, rsize);
+            trsize = rsize;
+            goto out;
+        } else if (rsize == 0) {
+            /* chunk read w/ EOF */
+            break;
+        } else if (rsize < lsize) {
+            /* chunk read w/ partial region */
+            hvfs_err(lib, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
+            trsize += rsize;
+            break;
+        } else if (rsize > lsize) {
+            /* chunk read beyond region? */
+            hvfs_err(lib, "fread(%ld) chunk(%ld) beyond region expect %ld, "
+                     "but got %ld.\n",
+                     ms->ino, chkid, lsize, rsize);
+            rsize = lsize;
+        }
+        off += rsize;
+        trsize += rsize;
+    }
+
+out:
+    return trsize;
+}
+
+int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
 {
     redisReply *rpy = NULL;
     char *set = NULL, *p, name[64], key[256], *info = NULL;
@@ -1255,10 +1326,18 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size)
     hvfs_debug(lib, "_IN_%ld block put key=%s info=%s\n",
                ms->ino, key, info);
 
-    rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
-                       ms->ino,
-                       MMFS_INODE_BLOCK,
-                       key);
+    if (likely(chkid == 0)) {
+        rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
+                           ms->ino,
+                           MMFS_INODE_BLOCK,
+                           key);
+    } else {
+        rpy = redisCommand(rc->rc, "hset _IN_%ld %s_%ld %s",
+                           ms->ino,
+                           MMFS_INODE_BLOCK,
+                           chkid,
+                           key);
+    }
     if (rpy == NULL) {
         hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
         putRC(rc);
@@ -1295,7 +1374,8 @@ out:
     return err;
 }
 
-int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen)
+int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
+                   u64 chkid)
 {
     redisReply *rpy = NULL;
     char *set = NULL, *p, name[64], key[256], *info = NULL;
@@ -1346,10 +1426,18 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen)
     hvfs_debug(lib, "_IN_%ld block put key=%s info=%s\n",
                ms->ino, key, info);
 
-    rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
-                       ms->ino,
-                       MMFS_INODE_BLOCK,
-                       key);
+    if (likely(chkid == 0)) {
+        rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
+                           ms->ino,
+                           MMFS_INODE_BLOCK,
+                           key);
+    } else {
+        rpy = redisCommand(rc->rc, "hset _IN_%ld %s_%ld %s",
+                           ms->ino,
+                           MMFS_INODE_BLOCK,
+                           chkid,
+                           key);
+    }
     if (rpy == NULL) {
         hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
         putRC(rc);

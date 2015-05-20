@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-16 11:38:29 macan>
+ * Time-stamp: <2015-05-18 15:23:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -82,8 +82,6 @@ static char *mmfs_ccolor[] __attribute__((unused)) =
 #define MMFS_INODE_CHUNKNR      "__chk**(^%"
 
 #define MMFS_DEFAULT_UMASK      0644
-
-#define MMFS_LARGE_FILE_CHUNK   (10 * 1024 * 1024)
 
 struct mdu
 {
@@ -203,6 +201,8 @@ struct mmfs_sb
 #define MMFS_SB_U_SPACE 0x02
 
     xlock_t lock;
+
+    u64 chunk_size;
 };
 
 struct __mmfs_fuse_mgr
@@ -219,6 +219,9 @@ struct __mmfs_fuse_mgr
 
     char *uris;
     char *namespace;
+
+#define MMFS_LARGE_FILE_CHUNK   (10 * 1024 * 1024)
+    u64 chunk_size;
 };
 
 /* Regin for Internal APIs */
@@ -273,11 +276,11 @@ int __mmfs_linkadd(struct mstat *ms, s32 nlink);
 
 int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu);
 
-int __mmfs_fread(struct mstat *ms, void **data, u64 off, u64 size);
+int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size);
 
-int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size);
+int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid);
 
-int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen);
+int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen, u64 chkid);
 
 int __mmfs_readdir(mmfs_dir_t *dir);
 
