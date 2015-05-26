@@ -66,6 +66,8 @@ struct key2info *get_k2i(char *set, int *nr);
 
 void mmcc_debug_mode(int enable);
 
+extern time_t g_client_tick;
+
 #ifdef __cplusplus
 }
 #endif 

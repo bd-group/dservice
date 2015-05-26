@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-18 15:23:48 macan>
+ * Time-stamp: <2015-05-25 17:18:34 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,6 +47,8 @@
 #ifndef IOV_MAX
 #define IOV_MAX 1024
 #endif
+
+#define EHOLE   -1050
 
 static char *mmfs_ccolor[] __attribute__((unused)) = 
 {
@@ -212,6 +214,7 @@ struct __mmfs_fuse_mgr
     u32 noatime:1;
     u32 nodiratime:1;
     u32 ismkfs:1;
+    u32 perm:1;
 
     u32 ttl:8;                  /* lru translate cache ttl */
 
@@ -219,6 +222,7 @@ struct __mmfs_fuse_mgr
 
     char *uris;
     char *namespace;
+    char *rootdir;
 
 #define MMFS_LARGE_FILE_CHUNK   (10 * 1024 * 1024)
     u64 chunk_size;
@@ -295,5 +299,15 @@ int __mmfs_update_sb(struct mmfs_sb *msb);
 int __mmfs_get_sb(struct mmfs_sb *msb);
 
 void __update_msb(int flag, s64 delta);
+
+int __mmfs_inc_shadow_dir(u64 dino);
+
+int __mmfs_dec_shadow_dir(u64 dino);
+
+int __mmfs_is_shadow_dir(u64 dino);
+
+int __mmfs_rename_log(u64 ino, u64 opino, u64 npino);
+
+int __mmfs_rename_fix(u64 ino);
 
 #endif

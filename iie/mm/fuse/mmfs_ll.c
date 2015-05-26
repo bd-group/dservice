@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-19 07:21:29 macan>
+ * Time-stamp: <2015-05-26 13:46:42 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -900,6 +900,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
 
     /* Step 1: delete the dentry in parent ino's hash table */
     if (flags & __MMFS_UNLINK_DENTRY) {
+        /* Step 1.1 delete dentry in parent _IN_ */
         rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s",
                            g_ops[__MMFS_R_OP_DELETE_DENTRY].sha,
                            pino, ms->name);
@@ -1014,6 +1015,14 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
                 }
             }
             freeReplyObject(rpy);
+
+            /* Step 2.3 rename fix for non DIR */
+            if (!S_ISDIR(ms->mdu.mode)) {
+                err = __mmfs_rename_fix(ms->mdu.ino);
+                if (err) {
+                    hvfs_err(lib, "rename fix: ino=%ld\n", ms->mdu.ino);
+                }
+            }
         }
     }
 out:
@@ -1186,7 +1195,7 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
         hvfs_warning(lib, "_IN_%ld does not exist or MM error\n",
                      ms->ino);
         if (ms->mdu.size > 0) {
-            err = -ENOENT;
+            err = EHOLE;
         } else {
             err = -EFBIG;
         }
@@ -1195,6 +1204,8 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
     if (rpy->type == REDIS_REPLY_STRING) {
         void *buf = NULL;
         
+        hvfs_debug(lib, "Call mmcc_get to read _IN_%ld CHK=%ld %s\n", 
+                   ms->ino, chkid, rpy->str);
         err = mmcc_get(rpy->str, &buf, &rlen);
         if (err) {
             hvfs_err(lib, "_IN_%ld block get(%s) failed w/ %d\n",
@@ -1259,7 +1270,7 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
             break;
         } else if (rsize < lsize) {
             /* chunk read w/ partial region */
-            hvfs_err(lib, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
+            hvfs_debug(lib, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
             trsize += rsize;
             break;
         } else if (rsize > lsize) {
@@ -1507,7 +1518,7 @@ int __mmfs_readdir(mmfs_dir_t *dir)
 
     /* hscan the dentries */
     rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 100",
-                       dir->dino, dir->cursor);
+                       dir->dino, dir->cursor == NULL ? "0" : dir->cursor);
     if (rpy == NULL) {
         hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
         putRC(rc);
@@ -1525,6 +1536,7 @@ int __mmfs_readdir(mmfs_dir_t *dir)
         rpy->element[1]->type == REDIS_REPLY_ARRAY) {
         int i = 0, j = 0, tlen = 0, clen = 0;
 
+        xfree(dir->cursor);
         dir->cursor = strdup(rpy->element[0]->str);
         
         for (i = 0; i < rpy->element[1]->elements; i += 2) {
@@ -1590,4 +1602,328 @@ out:
     }
 
     return err;
+}
+
+int __mmfs_inc_shadow_dir(u64 dino)
+{
+    redisReply *rpy = NULL;
+    int err = 0;
+
+    if (dino <= 0) {
+        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        return -EINVAL;
+    }
+
+    struct redisConnection *rc = getRC();
+
+    if (!rc) {
+        hvfs_err(lib, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    /* inc the shadow dir count */
+    rpy = redisCommand(rc->rc, "hincrby _SD_%s %ld 1",
+                       g_msb.name, dino);
+    if (rpy == NULL) {
+        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        putRC(rc);
+        err = EMMMETAERR;
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+                 dino, rpy->str);
+        err = -ENOENT;
+        freeReplyObject(rpy);
+        goto out;
+    }
+    freeReplyObject(rpy);
+out:
+    putRC(rc);
+
+    return err;
+}
+
+int __mmfs_dec_shadow_dir(u64 dino)
+{
+    redisReply *rpy = NULL;
+    int err = 0, deleted = 0;
+
+    if (dino <= 0) {
+        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        return -EINVAL;
+    }
+
+    struct redisConnection *rc = getRC();
+
+    if (!rc) {
+        hvfs_err(lib, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    hvfs_debug(lib, "dec shadow dino %ld\n", dino);
+
+    /* dec the shadow dir count */
+    rpy = redisCommand(rc->rc, "hincrby _SD_%s %ld -1",
+                       g_msb.name, dino);
+    if (rpy == NULL) {
+        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        putRC(rc);
+        err = EMMMETAERR;
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+                 dino, rpy->str);
+        err = -ENOENT;
+        freeReplyObject(rpy);
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_INTEGER) {
+        if (rpy->integer <= 0) {
+            char set[256];
+
+            sprintf(set, "o%ld", dino);
+            err = mmcc_del_set(set);
+            if (err) {
+                hvfs_err(lib, "do MMCC set %s delete failed, manual delete.\n",
+                         set);
+            }
+            hvfs_debug(lib, "MMCC set %s deleted (not shadow).\n", set);
+            deleted = 1;
+        }
+    }
+    freeReplyObject(rpy);
+
+    if (deleted){
+        rpy = redisCommand(rc->rc, "hdel _SD_%s %ld",
+                           g_msb.name, dino);
+        if (rpy == NULL) {
+            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            putRC(rc);
+            err = EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(lib, "delete inode %ld in _SD_ failed w/ %s\n",
+                     dino, rpy->str);
+            err = -EINVAL;
+            freeReplyObject(rpy);
+            goto out;
+        }
+        freeReplyObject(rpy);
+    }
+out:
+    putRC(rc);
+
+    return err;
+}
+
+/* Return value: 0->not shadow; 1->is shadow
+ */
+int __mmfs_is_shadow_dir(u64 dino)
+{
+    redisReply *rpy = NULL;
+    int err = 0;
+
+    if (dino <= 0) {
+        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        return -EINVAL;
+    }
+
+    struct redisConnection *rc = getRC();
+
+    if (!rc) {
+        hvfs_err(lib, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    /* check if it is a shadow dir */
+    rpy = redisCommand(rc->rc, "hget _SD_%s %ld", g_msb.name, dino);
+    if (rpy == NULL) {
+        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        putRC(rc);
+        err = EMMMETAERR;
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+                 dino, rpy->str);
+        err = -ENOENT;
+        freeReplyObject(rpy);
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_NIL) {
+        /* ok, there is no dino exist, return 0 */
+        err = 0;
+    }
+    if (rpy->type == REDIS_REPLY_STRING) {
+        err = atoi(rpy->str);
+        if (err < 0) err = 0;
+    }
+    freeReplyObject(rpy);
+out:
+    putRC(rc);
+
+    return err;
+}
+
+int __mmfs_rename_log(u64 ino, u64 opino, u64 npino)
+{
+    redisReply *rpy = NULL;
+    time_t ts = time(NULL);
+    char entry[256];
+    int err = 0;
+
+    struct redisConnection *rc = getRC();
+
+    if (!rc) {
+        hvfs_err(lib, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    hvfs_debug(lib, "rename log: ino %ld rename from P(%ld) to P(%ld).\n",
+               ino, opino, npino);
+
+    snprintf(entry, 256, "%ld|%ld|%ld|%ld", ino, (u64)ts, opino, npino);
+
+    rpy = redisCommand(rc->rc, "hset _RL_%s %s 1",
+                       g_msb.name, entry);
+    if (rpy == NULL) {
+        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        putRC(rc);
+        err = EMMMETAERR;
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(lib, "set rename log failed w %s\n", rpy->str);
+        err = -EINVAL;
+        freeReplyObject(rpy);
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_INTEGER) {
+        if (rpy->integer != 1) {
+            hvfs_err(lib, "deuplicate rename log entry?!\n");
+        }
+    }
+    freeReplyObject(rpy);
+out:
+    putRC(rc);
+
+    return err;
+}
+
+int __mmfs_rename_fix(u64 ino)
+{
+    redisReply *rpy = NULL;
+    char entry[256], *cursor = NULL;
+    char **fields = NULL;
+    int err = 0, nr = 0, i, j;
+
+    struct redisConnection *rc = getRC();
+
+    if (!rc) {
+        hvfs_err(lib, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    hvfs_debug(lib, "rename fix: ino %ld.\n", ino);
+
+    snprintf(entry, 256, "%ld|*", ino);
+
+    do {
+        rpy = redisCommand(rc->rc, "hscan _RL_%s %s match %s",
+                           g_msb.name, 
+                           (cursor == NULL ? "0" : cursor), entry);
+        if (rpy == NULL) {
+            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            putRC(rc);
+            err = EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(lib, "scan rename fix failed w/ %s\n", rpy->str);
+            err = -EINVAL;
+            freeReplyObject(rpy);
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ARRAY && rpy->elements == 2 &&
+            rpy->element[1]->type == REDIS_REPLY_ARRAY) {
+            int alloc = 1;
+            char **__t;
+
+            xfree(cursor);
+            cursor = strdup(rpy->element[0]->str);
+
+            __t = xrealloc(fields, sizeof(char *) * 
+                           (rpy->element[1]->elements / 2 + nr));
+            if (!__t) {
+                hvfs_err(lib, "xrealloc() fields' pointer array failed.\n");
+                alloc = 0;
+            } else {
+                fields = __t;
+            }
+
+            for (i = 0; i < rpy->element[1]->elements; i+= 2) {
+                char *n = strdup(rpy->element[1]->element[i]->str);
+                char *p = NULL, *q = n, *s = NULL;
+
+                if (alloc)
+                    fields[nr++] = strdup(n);
+
+                /* parse the rename log */
+                for (j = 0; j < 4; j++, n = NULL) {
+                    p = strtok_r(n, "|", &s);
+                    if (!p) {
+                        break;
+                    }
+                    switch (j) {
+                    case 2:
+                        /* old pino */
+                        err = __mmfs_dec_shadow_dir(atol(p));
+                        if (err) {
+                            hvfs_err(lib, "dec shadow dir %s faild w/ %d\n",
+                                     p, err);
+                        }
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                xfree(q);
+            }
+        }
+        freeReplyObject(rpy);
+        if (cursor == NULL || strcmp(cursor, "0") == 0)
+            break;
+    } while (1);
+
+    for (i = 0; i < nr; i++) {
+        hvfs_err(lib, "Try to del %s\n", fields[i]);
+        rpy = redisCommand(rc->rc, "hdel _RL_%s %s",
+                           g_msb.name, fields[i]);
+        if (rpy == NULL) {
+            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            putRC(rc);
+            err = EMMMETAERR;
+            goto out_free;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(lib, "hdel _RL_ field %s failed: %s\n",
+                     fields[i], rpy->str);
+        }
+        freeReplyObject(rpy);
+    }
+    for (i = 0; i < nr; i++) {
+        xfree(fields[i]);
+    }
+out:
+    putRC(rc);
+
+    return err;
+out_free:
+    for (i = 0; i < nr; i++) {
+        xfree(fields[i]);
+    }
+    goto out;
 }

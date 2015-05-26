@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-20 08:48:02 macan>
+ * Time-stamp: <2015-05-26 13:53:31 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 struct __mmfs_fuse_mgr mmfs_fuse_mgr = {.inited = 0,
                                         .namespace = "default",
 };
+
 struct mmfs_sb g_msb = {
     .name = "default",
     .root_ino = MMFS_ROOT_INO,
@@ -441,32 +442,6 @@ void __odc_unlock(struct bhhead *bhh)
 }
 
 static inline
-int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
-{
-    struct bhhead *bhh = NULL;
-    int err = 0;
-
-    bhh = __odc_lookup(ms->ino);
-    if (bhh) {
-        __odc_lock(bhh);
-        if (ms->mdu.version != bhh->ms.mdu.version)
-            ms->mdu = bhh->ms.mdu;
-        err = __mmfs_update_inode(ms, mu);
-        __odc_unlock(bhh);
-        if (err == -EAGAIN) {
-            __odc_lock(bhh);
-            ms->mdu = bhh->ms.mdu;
-            err = __mmfs_update_inode(ms, mu);
-            __odc_unlock(bhh);
-        }
-    } else {
-        err = __mmfs_update_inode(ms, mu);
-    }
-
-    return err;
-}
-
-static inline
 struct bhhead* __get_bhhead(struct mstat *ms)
 {
     struct bhhead *bhh, *tmp_bhh;
@@ -541,15 +516,17 @@ static struct chunk *__get_chunk(u64 chkid)
     return c;
 }
 
-static int __enlarge_chunk_table(struct bhhead *bhh)
+static int __enlarge_chunk_table(struct bhhead *bhh, u64 chkid)
 {
     void *t;
     int nr = bhh->chknr;
 
-    if (nr > 128 * 1024) {
-        nr += 1024;
-    } else {
-        nr *= 2;
+    while (nr <= chkid) {
+        if (nr > 128 * 1024) {
+            nr += 1024;
+        } else {
+            nr *= 2;
+        }
     }
     t = xrealloc(bhh->chunks, sizeof(struct chunk *) * nr);
     if (!t) {
@@ -585,13 +562,13 @@ static void __put_chunk(struct chunk *c)
     xfree(c);
 }
 
-static struct chunk *__lookup_chunk(struct bhhead *bhh, u64 chkid)
+static struct chunk *__lookup_chunk(struct bhhead *bhh, u64 chkid, int lock)
 {
     struct chunk *c;
     int err = 0;
     
     if (chkid >= bhh->chknr) {
-        err = __enlarge_chunk_table(bhh);
+        err = __enlarge_chunk_table(bhh, chkid);
         if (err) {
             hvfs_err(lib, "enlarge chunk table failed w/ %d\n",
                      err);
@@ -618,7 +595,7 @@ static struct chunk *__lookup_chunk(struct bhhead *bhh, u64 chkid)
             }
         }
     }
-    if (c)
+    if (c && lock)
         xlock_lock(&c->lock);
 
     return c;
@@ -683,6 +660,33 @@ static void __put_bhhead(struct bhhead *bhh)
     }
 }
 
+static inline
+int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
+{
+    struct bhhead *bhh = NULL;
+    int err = 0;
+
+    bhh = __odc_lookup(ms->ino);
+    if (bhh) {
+        __odc_lock(bhh);
+        if (ms->mdu.version != bhh->ms.mdu.version)
+            ms->mdu = bhh->ms.mdu;
+        err = __mmfs_update_inode(ms, mu);
+        __odc_unlock(bhh);
+        if (err == -EAGAIN) {
+            __odc_lock(bhh);
+            ms->mdu = bhh->ms.mdu;
+            err = __mmfs_update_inode(ms, mu);
+            __odc_unlock(bhh);
+        }
+        __put_bhhead(bhh);
+    } else {
+        err = __mmfs_update_inode(ms, mu);
+    }
+
+    return err;
+}
+
 void __odc_update(struct mstat *ms)
 {
     struct bhhead *bhh = __odc_lookup(ms->ino);
@@ -723,7 +727,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
     size_t _size = 0;
     int err = 0, alloced = 0;
 
-    c = __lookup_chunk(bhh, chkid);
+    c = __lookup_chunk(bhh, chkid, 0);
     if (!c) {
         hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  ms->ino, chkid);
@@ -762,7 +766,8 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                 if (c->size <= ms->mdu.size) {
                     __prepare_bh(bh, 1);
                 }
-                rlen = __mmfs_fread(ms, bh->data, c->size, g_pagesize);
+                rlen = __mmfs_fread(ms, bh->data, 
+                                    chkid * g_msb.chunk_size + c->size, g_pagesize);
                 if (rlen == -EFBIG) {
                     /* it is ok, we just zero the page */
                     err = 0;
@@ -823,7 +828,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     offset = bh->offset + g_pagesize;
                 } else {
                     /* read in the page now */
-                    rlen = __mmfs_fread(ms, bh->data, c->size, g_pagesize);
+                    rlen = __mmfs_fread(ms, bh->data, 
+                                        chkid * g_msb.chunk_size + c->size, 
+                                        g_pagesize);
                     if (rlen == -EFBIG) {
                         /* it is ok, we just zero the page */
                         err = 0;
@@ -853,7 +860,6 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
 
 out_unlock:
     xrwlock_wunlock(&bhh->clock);
-    __unlock_chunk(c);
 
     return err;
 }
@@ -910,15 +916,14 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
     off_t loff = 0, saved_offset = offset;
     size_t _size, saved_size = size;
 
-    c = __lookup_chunk(bhh, chkid);
+    c = __lookup_chunk(bhh, chkid, 1);
     if (!c) {
         hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  bhh->ms.ino, chkid);
         return -ENOMEM;
     }
 
-    if (offset + size > chkid * g_msb.chunk_size + c->size || 
-        list_empty(&c->bh)) {
+    if (offset + size > c->size || list_empty(&c->bh)) {
         __unlock_chunk(c);
         return -EFBIG;
     }
@@ -959,7 +964,7 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
 static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                      size_t size)
 {
-    u64 chkid, endchk;
+    u64 chkid, endchk, lastchk;
     s64 loff, lsize, end = offset + size;
     int bytes = 0, rlen;
     int err, j;
@@ -967,6 +972,8 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
     chkid = offset / g_msb.chunk_size;
     endchk = (offset + size) / g_msb.chunk_size;
     endchk -= (offset + size) % g_msb.chunk_size == 0 ? 1 : 0;
+    lastchk = bhh->asize / g_msb.chunk_size;
+    lastchk -= bhh->asize % g_msb.chunk_size == 0 ? 1 : 0;
 
     hvfs_debug(lib, "__bh_read(%ld) [%ld,%ld) in CHK[%ld,%ld]\n",
                bhh->ms.ino, offset, offset + size, chkid, endchk);
@@ -991,48 +998,74 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                 /* This SHOULD BE TEST: FIXME */
                 hvfs_warning(lib, "xmalloc() chunk buffer failed, slow mode.\n");
 
-                rlen = __mmfs_fread(&bhh->ms, buf + bytes, offset, lsize);
+                rlen = __mmfs_fread(&bhh->ms, buf + bytes, offset + bytes, lsize);
                 if (rlen < 0) {
+                    if (rlen == EHOLE && chkid < lastchk) {
+                        rlen = -EFBIG;
+                    }
                     if (rlen == -EFBIG) {
                         /* translate EFBIG to OK */
                         err = 0;
+                        rlen = 0;
                     } else {
                         hvfs_err(lib, "do internal fread on _IN_%ld failed w/ %d\n",
                                  bhh->ms.ino, rlen);
                         err = rlen;
+                        goto out;
                     }
-                    goto out;
-                } else if (rlen < lsize) {
-                    hvfs_err(lib, "partial chunk read, expect %ld, get %d\n",
-                             lsize, rlen);
+                }
+                /* ok, fill the buffer cache */
+                if (rlen > 0) {
+                    err = __bh_fill(&bhh->ms, bhh, buf + bytes, 
+                                    offset + bytes, lsize, 1);
+                    if (err < 0) {
+                        hvfs_err(lib, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
+                                 (u64)offset + bytes, 
+                                 (u64)offset + bytes + lsize, err);
+                        goto out;
+                    }
+                }
+                if (rlen < lsize) {
+                    /* partial read: if it is the last chunk, break now;
+                     * otherwise, zero the remain buffer */
+                    hvfs_warning(lib, "partial chunk read, expect %ld, get %d\n",
+                                 lsize, rlen);
                     bytes += rlen;
-                    break;
+                    if (chkid < lastchk) {
+                        memset(buf + bytes, 0, lsize - rlen);
+                        bytes += lsize - rlen;
+                    }
                 } else if (rlen > lsize) {
                     hvfs_err(lib, "chunk read beyond range, expect %ld, get %d\n",
                              lsize, rlen);
-                    rlen = lsize;
+                    bytes += lsize;
+                } else {
+                    bytes += rlen;
                 }
-                /* ok, fill the buffer cache */
-                err = __bh_fill(&bhh->ms, bhh, buf + bytes, 
-                                offset + bytes, lsize, 1);
-                if (err < 0) {
-                    hvfs_err(lib, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
-                             (u64)offset + bytes, 
-                             (u64)offset + bytes + lsize, err);
-                    goto out;
-                }
-                bytes += rlen;
             } else {
+                struct chunk *c = __lookup_chunk(bhh, chkid, 1);
+
+                if (c->size > 0) {
+                    xfree(cdata);
+                    __unlock_chunk(c);
+                    return -EAGAIN;
+                }
                 rlen = __mmfs_fread(&bhh->ms, cdata, chkid * g_msb.chunk_size,
                                     g_msb.chunk_size);
                 if (rlen < 0) {
+                    if (rlen == EHOLE && chkid < lastchk) {
+                        rlen = -EFBIG;
+                    }
                     if (rlen == -EFBIG) {
-                        /* translate EFBIG to OK */
+                        /* translate EFBIG to OK, zero this chunk? */
                         err = 0;
+                        rlen = 0;
                     } else {
                         hvfs_err(lib, "do internal fread on _IN_%ld failed w/ %d\n",
                                  bhh->ms.ino, rlen);
                         err = rlen;
+                        xfree(cdata);
+                        __unlock_chunk(c);
                         goto out;
                     }
                 }
@@ -1045,16 +1078,25 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                                  (chkid) * g_msb.chunk_size, 
                                  (chkid + 1) * g_msb.chunk_size,
                                  err);
+                        xfree(cdata);
+                        __unlock_chunk(c);
                         goto out;
                     }
                 }
+                __unlock_chunk(c);
                 if (rlen >= lsize) {
                     memcpy(buf + bytes, cdata + loff, lsize);
                     bytes += lsize;
                 } else {
-                    /* partial read */
+                    /* partial read: if it is the last chunk, break now;
+                     * otherwise, zero the remain buffer
+                     */
                     memcpy(buf + bytes, cdata + loff, rlen);
                     bytes += rlen;
+                    if (chkid < lastchk) {
+                        memset(buf + bytes, 0, lsize - rlen);
+                        bytes += lsize - rlen;
+                    }
                 }
                 xfree(cdata);
             }
@@ -1062,8 +1104,14 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
             hvfs_err(lib, "buffer cache read _IN_%ld failed w/ %d\n",
                      bhh->ms.ino, err);
             goto out;
-        } else 
+        } else {
+            /* check for partial chunk read */
             bytes += err;
+            if (chkid < lastchk && err < lsize) {
+                memset(buf + bytes, 0, lsize - err);
+                bytes += lsize - err;
+            }
+        }
     }
     err = bytes;
 
@@ -1083,7 +1131,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
 
     ms = bhh->ms;
     
-    c = __lookup_chunk(bhh, chkid);
+    c = __lookup_chunk(bhh, chkid, 1);
     if (!c) {
         hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  bhh->ms.ino, chkid);
@@ -1243,6 +1291,7 @@ out:
  * directory) to ino.
  */
 static time_t *g_mmfs_tick = NULL; /* file system tick */
+
 struct __mmfs_ltc_mgr
 {
     struct regular_hash *ht;
@@ -1269,7 +1318,7 @@ static int __ltc_init(int ttl, int hsize)
     int i;
     
     /* init file system tick */
-    g_mmfs_tick = &mmfs_fuse_mgr.tick;
+    g_mmfs_tick = &g_client_tick;
 
     if (hsize)
         mmfs_ltc_mgr.hsize = hsize;
@@ -1549,7 +1598,7 @@ hit:
         err = __mmfs_stat(pino, &ms);
         if (err) {
             hvfs_debug(lib, "do internal file stat on '%s'"
-                       " failed w/ %d pino %lx (RT %lx)\n",
+                       " failed w/ %d pino %ld (RT %ld)\n",
                        name, err, pino, g_msb.root_ino);
             goto out;
         }
@@ -1743,7 +1792,7 @@ hit:
     ms.ino = 0;
 
     mu.valid = MU_MODE | MU_DEV;
-    mu.mode = mode;
+    mu.mode = mode | S_IFBLK;
     mu.dev = rdev;
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_ALL);
     if (err) {
@@ -2015,7 +2064,7 @@ hit:
         }
 
         /* delete the MMServer space */
-        {
+        if (!__mmfs_is_shadow_dir(ms.ino)) {
             char set[256];
 
             sprintf(set, "o%ld", ms.ino);
@@ -2025,7 +2074,7 @@ hit:
                          set);
                 goto out;
             }
-            hvfs_debug(lib, "MMCC set %s deleted.\n", set);
+            hvfs_debug(lib, "MMCC set %s deleted (not shadow).\n", set);
         }
     }
 out:
@@ -2114,6 +2163,7 @@ out:
  *
  * Basically, we stat and copy the file info to target location; and finally,
  * unlink the original entry.
+ *
  */
 static int mmfs_rename(const char *from, const char *to)
 {
@@ -2212,7 +2262,6 @@ hit:
     saved_ms.name = strdup(saved_ms.name);
     isaved = 1;
     memset(&ms, 0, sizeof(ms));
-    hvfs_info(lib, "saved_ms.name=%s\n", saved_ms.name);
 
     /* cleanup */
     xfree(dup);
@@ -2343,7 +2392,6 @@ hit2:
             goto out;
         }
     }
-    hvfs_info(lib, "saved_ms.name=%s\n", saved_ms.name);
 
     ms.name = name;
     ms.ino = saved_ms.ino;
@@ -2362,6 +2410,12 @@ hit2:
         }
     }
 
+    /* check if file's parent directory changes */
+    if (S_ISREG(saved_ms.mdu.mode) && pino != saved_ms.pino) {
+        __mmfs_rename_log(saved_ms.ino, saved_ms.pino, pino);
+        __mmfs_inc_shadow_dir(saved_ms.pino);
+    }
+
     /* if the target file has been opened, we should update the ODC cached
      * info */
     {
@@ -2373,7 +2427,6 @@ hit2:
         }
     }
 
-    hvfs_info(lib, "saved_ms.name=%s\n", saved_ms.name);
     /* unlink the old file or directory now (only dentry) */
     err = __mmfs_unlink(saved_ms.pino, &saved_ms, __MMFS_UNLINK_DENTRY);
     if (err) {
@@ -2381,6 +2434,47 @@ hit2:
                  "w/ %d (ignore)\n",
                  saved_ms.pino, saved_ms.name, err);
         /* ignore this error */
+    }
+
+    /* invalid the ltc entry if source is a directory */
+    if (S_ISDIR(saved_ms.mdu.mode)) {
+        __ltc_invalid(from);
+    }
+
+    /* nlink fix */
+    if (S_ISDIR(saved_ms.mdu.mode)) {
+        struct mstat __ms;
+
+        /* src parent dir nlink-- */
+        __ms.ino = saved_ms.pino;
+        err = __mmfs_stat(0, &__ms);
+        if (err) {
+            hvfs_err(lib, "__mmfs_stat(%ld) failed w/ %d, nlink-- failed\n",
+                     __ms.ino, err);
+        } else {
+            err = __mmfs_linkadd(&__ms, -1);
+            if (err) {
+                hvfs_err(lib, "__mmfs_linkadd(%ld) failed w/ %d, nlink-- failed\n",
+                         __ms.ino, err);
+            }
+        }
+        /* dst parent dir nlink++ */
+        __ms.ino = pino;
+        err = __mmfs_stat(0, &__ms);
+        if (err) {
+            hvfs_err(lib, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
+                     __ms.ino, err);
+        } else {
+            err = __mmfs_linkadd(&__ms, 1);
+            if (err) {
+                hvfs_err(lib, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
+                         __ms.ino, err);
+            }
+        }
+        if (err) {
+            hvfs_err(lib, "rename success but nlink fix failed, ignore\n");
+            err = 0;
+        }
     }
 
     hvfs_debug(lib, "rename from %s(ino %ld) to %s(ino %ld)\n",
@@ -2623,6 +2717,13 @@ hit:
     /* finally, do update now */
     if (!name || strlen(name) == 0 || strcmp(name, "/") == 0) {
         /* update the final directory by ino */
+        if (pino == g_msb.root_ino) {
+            err = __mmfs_fill_root(&ms);
+            if (err) {
+                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                goto out;
+            }
+        }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
             hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
@@ -2709,6 +2810,13 @@ hit:
     /* finally, do update now */
     if (!name || strlen(name) == 0 || strcmp(name, "/") == 0) {
         /* update the final directory by ino */
+        if (pino == g_msb.root_ino) {
+            err = __mmfs_fill_root(&ms);
+            if (err) {
+                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                goto out;
+            }
+        }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
             hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
@@ -2810,7 +2918,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
 
     /* check the file length now */
     if (size == bhh->asize) {
-        goto out;
+        goto out_put;
     } else if (size > bhh->asize) {
         __set_bhh_dirty(bhh);
         bhh->asize = size;
@@ -2928,6 +3036,13 @@ hit:
     /* finally, do update now */
     if (!name || strlen(name) == 0 || strcmp(name, "/") == 0) {
         /* update the final directory by ino */
+        if (pino == g_msb.root_ino) {
+            err = __mmfs_fill_root(&ms);
+            if (err) {
+                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                goto out;
+            }
+        }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
             hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
@@ -3078,8 +3193,11 @@ static int mmfs_read(const char *pathname, char *buf, size_t size,
     hvfs_debug(lib, "[%ld] 2. offset=%ld, size=%ld, bhh->size=%ld, bhh->asize=%ld\n",
                ms.ino, (u64)offset, (u64)size, bhh->size, bhh->asize);
 
+retry:
     err = __bh_read(bhh, buf, offset, size);
     if (err < 0) {
+        if (err == -EAGAIN)
+            goto retry;
         hvfs_err(lib, "buffer cache read '%s' failed w/ %d\n",
                  pathname, err);
         goto out;
@@ -3222,7 +3340,6 @@ static int mmfs_opendir(const char *pathname, struct fuse_file_info *fi)
         hvfs_err(lib, "xzalloc() mmfs_dir_t failed\n");
         return -ENOMEM;
     }
-    dir->cursor = "0";
 
     fi->fh = (u64)dir;
 
@@ -3305,8 +3422,9 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
     if (off < dir->goffset) {
         /* seek backward, just zero out our brain */
         xfree(dir->di);
-        dir->di = NULL;
-        dir->cursor = "0";
+        u64 ino = dir->dino;
+        memset(dir, 0, sizeof(*dir));
+        dir->dino = ino;
     }
     hvfs_debug(lib, "readdir_plus ino %ld off %ld goff %ld csize %d\n",
                dir->dino, off, dir->goffset, dir->csize);
@@ -3356,7 +3474,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
         dir->di = NULL;
         res = 0;
         
-        if (strcmp(dir->cursor, "0") == 0 && 
+        if (dir->cursor && strcmp(dir->cursor, "0") == 0 && 
             dir->goffset + dir->csize > 0) {
             /* safely break now */
             break;
@@ -3433,6 +3551,7 @@ static int mmfs_release_dir(const char *pathname, struct fuse_file_info *fi)
 {
     mmfs_dir_t *dir = (mmfs_dir_t *)fi->fh;
 
+    xfree(dir->cursor);
     xfree(dir->di);
     xfree(dir);
 
@@ -3493,12 +3612,8 @@ hit:
     ms.name = name;
     ms.ino = 0;
     mu.valid = MU_MODE | MU_CTIME | MU_ATIME | MU_MTIME;
-    mu.mode = mode;
+    mu.mode = mode | S_IFREG;
     mu.atime = mu.mtime = mu.ctime = time(NULL);
-
-    if (mdu_flags & MMFS_MDU_LARGE) {
-        /* do something */
-    }
 
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_ALL);
     if (err) {

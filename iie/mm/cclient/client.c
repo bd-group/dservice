@@ -102,6 +102,8 @@ static sem_t g_timer_sem;
 static pthread_t g_timer_thread = 0;
 static int g_timer_thread_stop = 0;
 
+time_t g_client_tick = 0;
+
 void __clean_rcs(time_t cur);
 void do_update();
 
@@ -150,6 +152,7 @@ static void *__timer_thread_main(void *arg)
 static void __itimer_default(int signo, siginfo_t *info, void *arg)
 {
     sem_post(&g_timer_sem);
+    g_client_tick = time(NULL);
     return;
 }
 
@@ -1145,6 +1148,8 @@ int search_mm_object(char *infos, void **buf, size_t *length)
     begin = tv.tv_sec * 1000000.0 + tv.tv_usec;
 #endif
 
+    /* FIXME: we should random read from backend servers.
+     */
     do {
         p = strtok_r(p, "#", &n);
         if (p != NULL) {

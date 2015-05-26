@@ -203,6 +203,8 @@ int mmcc_init(char *uris)
     if (!uris)
         return EMMINVAL;
     
+    g_client_tick = time(NULL);
+
     if (strstr(uris, "STL://")) {
         int err = 0;
         struct redisConnection *rc = NULL;

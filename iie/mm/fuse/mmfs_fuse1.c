@@ -3,8 +3,8 @@
 /* please use environment variables to pass MMFS specific values */
 int main(int argc, char *argv[])
 {
-    char *value, *uris = NULL, *namespace = NULL;
-    int noatime = -1, ttl = -1, debug = 0;
+    char *value, *uris = NULL, *namespace = NULL, *rootdir = NULL;
+    int noatime = -1, ttl = -1, debug = 0, perm = -1;
     int err = 0;
 
     value = getenv("noatime");
@@ -19,6 +19,14 @@ int main(int argc, char *argv[])
     if (value) {
         namespace = strdup(value);
     }
+    value = getenv("rootdir");
+    if (value) {
+        rootdir = strdup(value);
+    }
+    value = getenv("perm");
+    if (value) {
+        perm = atoi(value);
+    }
     value = getenv("ttl");
     if (value) {
         ttl = atoi(value);
@@ -29,12 +37,14 @@ int main(int argc, char *argv[])
         mmfs_debug_mode(debug);
     }
 
-    if (noatime >= 0 || ttl >= 0 || uris || namespace) {
+    if (noatime >= 0 || ttl >= 0 || perm >= 0 || uris || namespace) {
         /* reset minor value to default value */
         if (noatime < 0)
             noatime = 1;
         if (ttl < 0)
             ttl = 5;
+        if (perm < 0)
+            perm = 0;
         if (!uris) {
             hvfs_err(lib, "ENV 'uris' should be set.\n");
             return EINVAL;
@@ -46,6 +56,7 @@ int main(int argc, char *argv[])
         mmfs_fuse_mgr.sync_write = 0;
         mmfs_fuse_mgr.noatime = (noatime > 0 ? 1 : 0);
         mmfs_fuse_mgr.nodiratime = 1;
+        mmfs_fuse_mgr.perm = (perm > 0 ? 1 : 0);
         mmfs_fuse_mgr.ttl = ttl;
         mmfs_fuse_mgr.uris = uris;
         mmfs_fuse_mgr.namespace = namespace;
