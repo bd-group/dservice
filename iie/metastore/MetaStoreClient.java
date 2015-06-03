@@ -3715,9 +3715,10 @@ public class MetaStoreClient {
 								System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(k * 1000)) + "\t" + hours + " hrs");
 								// iterate on each rule
 								for (ScrubRule sr : srl) {
+									List<String> toDel = new ArrayList<String>();
+									
 									if (hours > sr.soft || hours < -10000) {
 										// act on each table
-										List<String> toDel = new ArrayList<String>();
 										for (Map.Entry<String, FileStat> e : fsmap.entrySet()) {
 											if (sr.type.equalsIgnoreCase("hlw")) {
 												if (e.getKey().contains("t_gkrz") || 
@@ -3768,14 +3769,15 @@ public class MetaStoreClient {
 												}
 											}
 										}
-										for (String s : toDel) {
-											fsmap.remove(s);
-										}
+										
 										FreeSpace fs = __get_free_space_ratio(cli);
 										if (((double)total_free / fs.total) + fs.ratio >= target_ratio) {
 											stop = true;
 											break;
 										}
+									}
+									for (String s : toDel) {
+										fsmap.remove(s);
 									}
 								}
 								if (fsmap.size() == 0)
