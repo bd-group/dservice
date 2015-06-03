@@ -20,10 +20,12 @@
 extern char *g_uris;
 extern char *redisHost;
 extern int redisPort;
+extern atomic_t g_master_connect_err;
 extern unsigned int hvfs_mmcc_tracing_flags;
 
 struct redisConnection;
 
+int client_config(mmcc_config_t *);
 int client_init();
 int client_fina();
 int update_mmserver();
@@ -68,7 +70,7 @@ static inline void __fetch_from_sentinel(char *uris)
                 redisReply *r = NULL;
 
                 if (rc->err) {
-                    hvfs_err(mmcc, "can't connect to redis at %s:%d %s\n",
+                    hvfs_err(mmcc, "can't connect to redis sentinel at %s:%d %s\n",
                              rh, rp, rc->errstr);
                     continue;
                 }
@@ -100,6 +102,7 @@ static inline void __fetch_from_sentinel(char *uris)
                                           redisHost, redisPort,
                                           r->element[0]->str,
                                           r->element[1]->str);
+                                xfree(redisHost);
                                 redisHost = strdup(r->element[0]->str);
                                 redisPort = atoi(r->element[1]->str);
                                 inited = 1;
@@ -111,11 +114,14 @@ static inline void __fetch_from_sentinel(char *uris)
             free_rc:                
                 redisFree(rc);
             }
+            xfree(rh);
             if (inited)
                 break;
         } else
             break;
     } while (p = NULL, 1);
+
+    xfree(dup);
 }
 
 static int init_with_sentinel(char *uris)
@@ -129,7 +135,7 @@ static int init_with_sentinel(char *uris)
     }
 
     __fetch_from_sentinel(uris);
-    g_uris = uris;
+    g_uris = strdup(uris);
 
 out:
     return err;
@@ -235,7 +241,16 @@ int mmcc_init(char *uris)
 
 int mmcc_fina()
 {
-    return client_fina();
+    int err = 0;
+
+    err = client_fina();
+    if (err) {
+        hvfs_err(mmcc, "client_fina() failed w/ %d\n", err);
+        goto out;
+    }
+
+out:
+    return err;
 }
 
 static inline void __parse_token(char *key, int *m, int *n)
@@ -293,3 +308,21 @@ int mmcc_del_set(char *set)
 out:
     return err;
 }
+
+void __master_connect_fail_check()
+{
+#define MASTER_FAIL_CHECK       10
+    atomic_inc(&g_master_connect_err);
+    if (atomic_read(&g_master_connect_err) >= MASTER_FAIL_CHECK) {
+        if (g_uris) {
+            __fetch_from_sentinel(g_uris);
+            atomic_set(&g_master_connect_err, MASTER_FAIL_CHECK >> 2);
+        }
+    }
+}
+
+int mmcc_config(mmcc_config_t *mc)
+{
+    return client_config(mc);
+}
+

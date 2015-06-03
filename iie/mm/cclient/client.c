@@ -44,6 +44,7 @@ struct MMSConf
     int sockperserver;
     int logdupinfo;
     int redistimeout;
+    __timer_cb tcb;
 };
 
 struct MMSCSock
@@ -72,7 +73,8 @@ struct MMSConnection
 
 struct redisConnection
 {
-    time_t ttl;
+    time_t born;                /* born time */
+    time_t ttl;                 /* this connection used last time */
     pid_t tid;
     struct hlist_node hlist;
     atomic_t ref;
@@ -87,6 +89,7 @@ struct MMSConf g_conf = {
     .sockperserver = 5,
     .logdupinfo = 1,
     .redistimeout = 60,
+    .tcb = NULL,
 };
 
 /* quick lookup from THREADID to redisContext */
@@ -104,8 +107,11 @@ static int g_timer_thread_stop = 0;
 
 time_t g_client_tick = 0;
 
+atomic_t g_master_connect_err = {.counter = 0,};
+
 void __clean_rcs(time_t cur);
 void do_update();
+void __master_connect_fail_check();
 
 void mmcc_debug_mode(int enable)
 {
@@ -143,6 +149,11 @@ static void *__timer_thread_main(void *arg)
         }
 
         do_update();
+
+        /* trigger callbacks */
+        if (g_conf.tcb) {
+            g_conf.tcb(&cur);
+        }
     }
 
     hvfs_debug(mmcc, "Hooo, I am exiting...\n");
@@ -153,6 +164,7 @@ static void __itimer_default(int signo, siginfo_t *info, void *arg)
 {
     sem_post(&g_timer_sem);
     g_client_tick = time(NULL);
+
     return;
 }
 
@@ -211,6 +223,16 @@ out:
     return err;
 }
 
+int client_config(mmcc_config_t *mc)
+{
+    int err = 0;
+
+    if (mc->tcb)
+        g_conf.tcb = mc->tcb;
+
+    return err;
+}
+
 int client_init()
 {
     int err = 0, i;
@@ -259,7 +281,8 @@ struct redisConnection *__alloc_rc(pid_t tid)
     struct redisConnection *rc = xzalloc(sizeof(*rc));
 
     if (rc) {
-        rc->ttl = time(NULL);
+        rc->born = time(NULL);
+        rc->ttl = rc->born;
         rc->tid = tid;
         atomic_set(&rc->ref, 0);
         xlock_init(&rc->lock);
@@ -295,18 +318,28 @@ struct redisConnection *getRC();
 
 static inline void freeRC(struct redisConnection *rc)
 {
-    redisFree(rc->rc);
-    rc->rc = NULL;
+    if (rc->rc) {
+        redisFree(rc->rc);
+        rc->rc = NULL;
+    }
 }
+
+int __clean_up_socks(struct MMSConnection *c);
 
 int client_fina()
 {
-    /* free active connections */
+    /* free active redis connections */
     struct redisConnection *tpos;
+    struct MMSConnection *t2pos;
     struct hlist_node *pos, *n;
     struct regular_hash *rh;
     int i;
 
+    /* wait for pending threads */
+    g_timer_thread_stop = 1;
+    sem_post(&g_timer_sem);
+    pthread_join(g_timer_thread, NULL);
+    
     for (i = 0; i < g_rcrh_size; i++) {
         rh = g_rcrh + i;
         xlock_lock(&rh->lock);
@@ -314,11 +347,36 @@ int client_fina()
             hlist_del_init(&tpos->hlist);
             hvfs_debug(mmcc, "FINA clean active RC for TID %ld\n",
                        (long)tpos->tid);
+            freeRC(tpos);
             __put_rc(tpos);
         }
         xlock_unlock(&rh->lock);
     }
-    
+    xfree(g_rcrh);
+
+    /* free active MMS connections */
+    for (i = 0; i < g_rh_size; i++) {
+        rh = g_rh + i;
+        xlock_lock(&rh->lock);
+        hlist_for_each_entry_safe(t2pos, pos, n, &rh->h, hlist) {
+            hlist_del_init(&t2pos->hlist);
+            hvfs_debug(mmcc, "FINA clean active MMSC for Server %s:%d\n",
+                       t2pos->hostname, t2pos->port);
+            __clean_up_socks(t2pos);
+            xfree(t2pos->hostname);
+            xfree(t2pos->sp);
+            xfree(t2pos);
+        }
+        xlock_unlock(&rh->lock);
+    }
+    xfree(g_rh);
+
+    /* free any other global resources, and reset them */
+    xfree(g_uris);
+    g_uris = NULL;
+    xfree(redisHost);
+    redisHost = NULL;
+
     return 0;
 }
 
@@ -540,6 +598,7 @@ int __clean_up_socks(struct MMSConnection *c)
             break;
         } else {
             list_del(&pos->list);
+            close(pos->sock);
             c->sock_nr--;
             xfree(pos);
         }
@@ -594,6 +653,7 @@ int update_mmserver(struct redisConnection *rc)
     rpy = redisCMD(rc->rc, "zrange mm.active 0 -1 withscores");
     if (rpy == NULL) {
         hvfs_err(mmcc, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
@@ -630,6 +690,7 @@ int update_mmserver(struct redisConnection *rc)
             } else {
                 hvfs_err(mmcc, "strtok_r for MMServer failed, ignore.\n");
                 xfree(q);
+                if (_rr) freeReplyObject(_rr);
                 continue;
             }
             p = strtok_r(NULL, ":", &n);
@@ -639,6 +700,7 @@ int update_mmserver(struct redisConnection *rc)
                 hvfs_err(mmcc, "strtok_r for MMServer port failed, ignore.\n");
                 xfree(hostname);
                 xfree(q);
+                if (_rr) freeReplyObject(_rr);
                 continue;
             }
             sid = atol(rpy->element[j + 1]->str);
@@ -651,12 +713,14 @@ int update_mmserver(struct redisConnection *rc)
                              hostname, port);
                     xfree(hostname);
                     xfree(q);
+                    if (_rr) freeReplyObject(_rr);
                     continue;
                 }
             }
 
             xlock_lock(&c->lock);
             xfree(c->hostname);
+            xfree(c->sp);
             c->hostname = hostname;
             c->port = port;
             c->sid = sid;
@@ -692,11 +756,21 @@ void update_mmserver2(struct redisConnection *rc)
         if (c) {
             rpy = redisCMD(rc->rc, "exists mm.hb.%s",
                            c->sp);
+            if (rpy == NULL) {
+                hvfs_err(mmcc, "invalid redis status, connection broken?\n");
+                redisFree(rc->rc);
+                rc->rc = NULL;
+                break;
+            }
             if (rpy->type == REDIS_REPLY_INTEGER) {
                 if (rpy->integer == 1) {
                     c->ttl = time(NULL);
-                    hvfs_debug(mmcc, "Update Server %s ttl to %ld\n",
+                    hvfs_debug(mmcc, "Update MMServer %s ttl to %ld\n",
                                c->sp, (u64)c->ttl);
+                } else {
+                    c->ttl = 0;
+                    hvfs_warning(mmcc, "MMServer %s ttl to ZERO, we lost it.\n",
+                                 c->sp);
                 }
             }
             freeReplyObject(rpy);
@@ -706,9 +780,12 @@ void update_mmserver2(struct redisConnection *rc)
 
 void do_update()
 {
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = NULL;
     static time_t last_check = 0;
     time_t cur;
+
+    rc = getRC();
+    if (!rc) return;
 
     cur = time(NULL);
     if (cur >= last_check + 30) {
@@ -791,11 +868,13 @@ struct redisConnection *getRC()
         }
         rc->rc = redisConnect(redisHost, redisPort);
         if (rc->rc->err) {
-            hvfs_err(mmcc, "can't connect to redis at %s:%d %s\n", 
+            hvfs_err(mmcc, "can't connect to redis master at %s:%d %s\n", 
                      redisHost, redisPort, rc->rc->errstr);
             redisFree(rc->rc);
+            rc->rc = NULL;
             err = EMMMETAERR;
             __put_rc(rc);
+            __master_connect_fail_check();
             goto out;
         }
         err = redisSetTimeout(rc->rc, tv);
@@ -803,6 +882,7 @@ struct redisConnection *getRC()
             hvfs_err(mmcc, "set redis timeout to %d seconds failed w/ %d\n",
                      (int)tv.tv_sec, err);
         }
+        atomic_set(&g_master_connect_err, 0);
         err = update_mmserver(rc);
         if (err) {
             hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
@@ -829,19 +909,16 @@ struct redisConnection *getRC()
     } else {
         if (unlikely(!rc->rc)) {
             /* reconnect to redis server */
+        reconnect:
             rc->rc = redisConnect(redisHost, redisPort);
             if (rc->rc->err) {
-                int n = 2;
-
-                hvfs_err(mmcc, "can't connect to redis at %s:%d %s\n",
+                hvfs_err(mmcc, "can't connect to redis master at %s:%d %s\n",
                          redisHost, redisPort, rc->rc->errstr);
                 redisFree(rc->rc);
                 rc->rc = NULL;
                 __put_rc(rc);
                 err = EMMMETAERR;
-                do {
-                    n = sleep(n);
-                } while (n);
+                __master_connect_fail_check();
                 goto out;
             }
             err = redisSetTimeout(rc->rc, tv);
@@ -856,7 +933,23 @@ struct redisConnection *getRC()
                 hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
                 goto out;
             }
+            atomic_set(&g_master_connect_err, 0);
+        } else {
+            /* if ttl larger than 10min, re-test it */
+            if (time(NULL) - rc->ttl >= 600) {
+                redisReply *rpy = NULL;
+
+                rpy = redisCommand(rc->rc, "ping");
+                if (rpy == NULL) {
+                    hvfs_err(mmcc, "ping %s:%d failed.\n", redisHost, redisPort);
+                    redisFree(rc->rc);
+                    rc->rc = NULL;
+                    goto reconnect;
+                }
+                freeReplyObject(rpy);
+            }
         }
+        rc->ttl = time(NULL);
     }
 
 out:
@@ -936,8 +1029,10 @@ struct MMSCSock *__get_free_sock(struct MMSConnection *c)
                         __free_mmscsock(pos);
                         sleep(1);
                         retry++;
+                        xfree(hostname);
                         continue;
                     }
+                    xfree(hostname);
 
                     dest_addr.sin_family = AF_INET;
                     dest_addr.sin_port = htons(port);
@@ -1070,11 +1165,17 @@ int search_by_info(char *info, void **buf, size_t *length)
     c = __mmsc_lookup(sid);
     if (!c) {
         hvfs_err(mmcc, "lookup Server ID=%ld failed.\n", sid);
+        err = EMMINVAL;
+        goto out;
+    }
+    if (c->ttl <= 0) {
+        err = EMMCONNERR;
         goto out;
     }
     s = __get_free_sock(c);
     if (!s) {
         hvfs_err(mmcc, "get free socket failed.\n");
+        err = EMMCONNERR;
         goto out;
     }
 
@@ -1307,7 +1408,7 @@ static int do_put(long sid, char *set, char *name, void *buffer,
     s = __get_free_sock(c);
     if (!s) {
         hvfs_err(mmcc, "get free socket failed for Server ID=%ld.\n", sid);
-        err = -EINVAL;
+        err = EMMCONNERR;
         goto out;
     }
 
@@ -1410,11 +1511,13 @@ static int do_put_iov(long sid, char *set, char *name, struct iovec *iov,
     c = __mmsc_lookup(sid);
     if (!c) {
         hvfs_err(mmcc, "lookup Server ID=%ld failed.\n", sid);
+        err = EMMINVAL;
         goto out;
  }
     s = __get_free_sock(c);
     if (!s) {
         hvfs_err(mmcc, "get free socket failed.\n");
+        err = EMMCONNERR;
         goto out;
     }
 
@@ -1998,7 +2101,7 @@ int __del_mm_set(char *host, int port, char *set)
     if (!s) {
         hvfs_err(mmcc, "get free socket failed for Server %s:%d.\n",
                  host, port);
-        err = -EINVAL;
+        err = EMMCONNERR;
         goto out;
     }
 

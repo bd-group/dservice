@@ -68,6 +68,15 @@ void mmcc_debug_mode(int enable);
 
 extern time_t g_client_tick;
 
+typedef void *(*__timer_cb)(void *);
+
+typedef struct
+{
+    __timer_cb tcb;
+} mmcc_config_t;
+
+int mmcc_config(mmcc_config_t *);
+
 #ifdef __cplusplus
 }
 #endif 
