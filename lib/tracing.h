@@ -3,7 +3,7 @@
  *                           <macan@ncic.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-12 11:37:40 macan>
+ * Time-stamp: <2015-06-02 12:25:51 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,7 +66,7 @@ extern atomic_t g_env_prot;
 #define HVFS_TRACING_RESTORE(saved) atomic_set(&g_env_prot, saved)
 
 #ifdef HVFS_TRACING
-#define hvfs_tracing(mask, flag, lvl, f, a...) do {                     \
+#define hvfs_tracing(module, mask, flag, lvl, f, a...) do {             \
         if (unlikely(mask & flag)) {                                    \
             struct timeval __cur;                                       \
             struct tm __tmp;                                            \
@@ -91,7 +91,7 @@ extern atomic_t g_env_prot;
             strftime(__ct, 64, "%G-%m-%d %H:%M:%S", &__tmp);            \
             atomic_dec(&g_env_prot);                                    \
             if (mask & HVFS_PRECISE) {                                  \
-                PRINTK("%s.%03ld " lvl "MMCC (%16s, %5d): %s[%lx]: " f, \
+                PRINTK("%s.%03ld " lvl # module " (%16s, %5d): %s[%lx]: " f, \
                        __ct, (long)(__cur.tv_usec / 1000),              \
                        __FILE__, __LINE__, __func__,                    \
                        pthread_self(), ## a);                           \
@@ -100,14 +100,14 @@ extern atomic_t g_env_prot;
                 PRINTK(lvl f, ## a);                                    \
                 FFLUSH(stdout);                                         \
             } else {                                                    \
-                PRINTK("%s.%03ld " lvl f,                               \
+                PRINTK("%s.%03ld " lvl # module ": " f,                 \
                        __ct, (long)(__cur.tv_usec / 1000), ## a);       \
                 FFLUSH(stdout);                                         \
             }                                                           \
         }                                                               \
     } while (0)
 #else
-#define hvfs_tracing(mask, flag, lvl, f, a...)
+#define hvfs_tracing(module, mask, flag, lvl, f, a...)
 #endif  /* !HVFS_TRACING */
 
 #define IS_HVFS_DEBUG(module) ({                            \
@@ -128,46 +128,46 @@ extern atomic_t g_env_prot;
             ret;                                                \
         })
 
-#define hvfs_info(module, f, a...)                          \
-    hvfs_tracing(HVFS_INFO, hvfs_##module##_tracing_flags,  \
+#define hvfs_info(module, f, a...)                                   \
+    hvfs_tracing(module, HVFS_INFO, hvfs_##module##_tracing_flags,   \
                  KERN_INFO, f, ## a)
 
-#define hvfs_plain(module, f, a...)                         \
-    hvfs_tracing(HVFS_PLAIN, hvfs_##module##_tracing_flags, \
+#define hvfs_plain(module, f, a...)                                  \
+    hvfs_tracing(module, HVFS_PLAIN, hvfs_##module##_tracing_flags,  \
                  KERN_PLAIN, f, ## a)
 
-#define hvfs_verbose(module, f, a...)           \
-    hvfs_tracing((HVFS_VERBOSE | HVFS_PRECISE), \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_verbose(module, f, a...)                   \
+    hvfs_tracing(module, (HVFS_VERBOSE | HVFS_PRECISE), \
+                 hvfs_##module##_tracing_flags,         \
                  KERN_VERB, f, ## a)
 
 #ifndef OPTIMIZE
-#define hvfs_debug(module, f, a...)             \
-    hvfs_tracing((HVFS_DEBUG | HVFS_PRECISE),   \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_debug(module, f, a...)                      \
+    hvfs_tracing(module, (HVFS_DEBUG | HVFS_PRECISE),    \
+                 hvfs_##module##_tracing_flags,          \
                  KERN_DEBUG, f, ## a)
 #else
 #define hvfs_debug(module, f, a...)
 #endif
 
-#define hvfs_entry(module, f, a...)             \
-    hvfs_tracing((HVFS_ENTRY | HVFS_PRECISE),   \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_entry(module, f, a...)                      \
+    hvfs_tracing(module, (HVFS_ENTRY | HVFS_PRECISE),    \
+                 hvfs_##module##_tracing_flags,          \
                  KERN_DEBUG, "entry: " f, ## a)
 
-#define hvfs_exit(module, f, a...)              \
-    hvfs_tracing((HVFS_ENTRY | HVFS_PRECISE),   \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_exit(module, f, a...)                       \
+    hvfs_tracing(module, (HVFS_ENTRY | HVFS_PRECISE),    \
+                 hvfs_##module##_tracing_flags,          \
                  KERN_DEBUG, "exit: " f, ## a)
 
-#define hvfs_warning(module, f, a...)           \
-    hvfs_tracing((HVFS_WARN | HVFS_PRECISE),    \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_warning(module, f, a...)                \
+    hvfs_tracing(module, (HVFS_WARN | HVFS_PRECISE), \
+                 hvfs_##module##_tracing_flags,      \
                  KERN_WARNING, f, ##a)
 
-#define hvfs_err(module, f, a...)               \
-    hvfs_tracing((HVFS_ERR | HVFS_PRECISE),     \
-                 hvfs_##module##_tracing_flags, \
+#define hvfs_err(module, f, a...)                    \
+    hvfs_tracing(module, (HVFS_ERR | HVFS_PRECISE),  \
+                 hvfs_##module##_tracing_flags,      \
                  KERN_ERR, f, ##a)
 
 #define SET_TRACING_FLAG(module, flag) do {     \
