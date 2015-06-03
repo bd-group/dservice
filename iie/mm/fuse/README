@@ -1,0 +1,5 @@
+x. How to start a mmfs use client?
+A: ps=32768 namespace='default' debug=1 uris='STL://localhost:26379' LD_LIBRARY_PATH=build:lib build/mmfs_v1 /mnt/mmfs -o allow_other -o use_ino -o entry_timeout=1 -o attr_timeout=1 -o default_permissions -d -f | tee /tmp/mmfs.log
+
+y. How to use valgrind to check mmfs client?
+A: ps=32768 namespace='default' debug=1 uris='STL://localhost:26379' LD_LIBRARY_PATH=build:lib valgrind --leak-check=full --show-leak-kinds=all build/mmfs_v1 /mnt/mmfs -o allow_other -o use_ino -o entry_timeout=1 -o attr_timeout=1 -d -f | tee /tmp/mmfs.log

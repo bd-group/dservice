@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2015-05-12 11:33:29 macan>
+# Time-stamp: <2015-06-02 16:11:12 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -93,19 +93,22 @@ GEN_VERSION_FILE :
 	@echo DIRTY: $(GIT_DIRTY) >> .VERSION
 	@echo $(COMPILE_HOST) @ $(COMPILE_DATE) >> .VERSION
 
-$(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c
+$(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c lib/libhvfs.a
 	@$(ECHO) -e " " CC"\t" $@
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/client.c -o build/client.o
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/clientapi.c -o build/clientapi.o
 	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
 
-$(MMFS) : $(MMCC) iie/mm/fuse/mmfs_ll.c iie/mm/fuse/mmfs.c
+version_hdr :
+	@$(shell sh -c './mkversionhdr.sh')
+
+$(MMFS) : $(MMCC) iie/mm/fuse/mmfs_ll.c iie/mm/fuse/mmfs.c lib/libhvfs.a version_hdr
 	@$(ECHO) -e " " CC"\t" $@
 	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs.c -o build/mmfs.o
 	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_ll.c -o build/mmfs_ll.o
 	@$(GCC) -Llib -Lbuild build/mmfs.o build/mmfs_ll.o -shared -o $(MMFS) -Wl,-soname,libmmfs.so -lmmcc -lhiredis -lrt -lhvfs -lpthread
 
-$(MFS) : $(MMFS) iie/mm/fuse/mmfs_fuse0.c iie/mm/fuse/mmfs_fuse1.c iie/mm/fuse/mmfs_mkfs.c
+$(MFS) : $(MMFS) iie/mm/fuse/mmfs_fuse0.c iie/mm/fuse/mmfs_fuse1.c iie/mm/fuse/mmfs_mkfs.c lib/libhvfs.a iie/mm/fuse/version.h
 	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_mkfs.c -o build/mmfs_mkfs.o
 	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_fuse0.c -o build/mmfs_fuse0.o
 	@$(GCC) -fPIC $(CFLAGS) -D_FILE_OFFSET_BITS=64 -D_REENTRANT -Llib -Ihiredis -Ilib -Iiie/mm/fuse -Iiie/mm/cclient -c iie/mm/fuse/mmfs_fuse1.c -o build/mmfs_fuse1.o
