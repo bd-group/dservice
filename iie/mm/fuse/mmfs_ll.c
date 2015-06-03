@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-26 13:46:42 macan>
+ * Time-stamp: <2015-06-02 16:39:26 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,8 @@
  */
 
 #include "mmfs.h"
+
+u32 hvfs_mmll_tracing_flags = HVFS_DEFAULT_LEVEL;
 
 struct __mmfs_r_op
 {
@@ -66,27 +68,29 @@ int __mmfs_load_scripts()
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     for (i = 0; i < sizeof(g_ops) / sizeof(struct __mmfs_r_op); i++) {
         rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = -EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "script %d load failed w/ \n%s.\n", i, rpy->str);
+            hvfs_err(mmll, "script %d load failed w/ \n%s.\n", i, rpy->str);
             err = -EINVAL;
             goto out_free;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_info(lib, "Script %d %s \tloaded as '%s'.\n",
+            hvfs_info(mmll, "Script %d %s \tloaded as '%s'.\n",
                       i, g_ops[i].opname, rpy->str);
             g_ops[i].sha = strdup(rpy->str);
+        } else {
+            g_ops[i].sha = NULL;
         }
     out_free:
         freeReplyObject(rpy);
@@ -97,6 +101,15 @@ out:
     return err;
 }
 
+void __mmfs_unload_scripts()
+{
+    int i;
+
+    for (i = 0; i < sizeof(g_ops) / sizeof(struct __mmfs_r_op); i++) {
+        xfree(g_ops[i].sha);
+    }
+}
+
 int __mmfs_fill_root(struct mstat *ms)
 {
     int err = 0;
@@ -105,7 +118,7 @@ int __mmfs_fill_root(struct mstat *ms)
     ms->ino = g_msb.root_ino;
     err = __mmfs_stat(ms->ino, ms);
     if (err) {
-        hvfs_err(lib, "do internal ROOT stat failed w/ %d\n",
+        hvfs_err(mmll, "do internal ROOT stat failed w/ %d\n",
                  err);
     }
 
@@ -124,7 +137,7 @@ int __str2mdu(char *mstr, struct mdu *mdu)
         if (!p) {
             break;
         }
-        hvfs_verbose(lib, "token: %s\n", p);
+        hvfs_verbose(mmll, "token: %s\n", p);
         switch (i) {
         case 0:
             mdu->ino = (u64)atol(p);
@@ -246,7 +259,7 @@ void __update_msb(int flag, s64 delta)
 {
     if (delta == 0) return;
 
-    hvfs_debug(lib, "Update MSB:{0x%x -> %ld}\n", flag, delta);
+    hvfs_debug(mmll, "Update MSB:{0x%x -> %ld}\n", flag, delta);
     xlock_lock(&g_msb.lock);
     switch (flag) {
     case MMFS_SB_U_INR:
@@ -273,26 +286,26 @@ int __mmfs_stat(u64 pino, struct mstat *ms)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     if (ms->ino == 0) {
         if (!ms->name) {
-            hvfs_err(lib, "invalid argument for null name.\n");
+            hvfs_err(mmll, "invalid argument for null name.\n");
             err = -EINVAL;
             goto out;
         }
         /* stat by self name, use pino */
         rpy = redisCommand(rc->rc, "hget _IN_%ld %s", pino, ms->name);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_%ld / '%s' does not exist.\n",
+            hvfs_err(mmll, "_IN_%ld / '%s' does not exist.\n",
                      pino, ms->name);
             err = -ENOENT;
             goto out_free;
@@ -309,24 +322,24 @@ int __mmfs_stat(u64 pino, struct mstat *ms)
         /* stat by self ino, ignore pino */
         rpy = redisCommand(rc->rc, "hget _IN_%ld %s", ms->ino, MMFS_INODE_MD);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_%ld '_MD_' does not exist.\n", 
+            hvfs_err(mmll, "_IN_%ld '_MD_' does not exist.\n", 
                      ms->ino);
             err = -ENOENT;
             goto out_free2;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_debug(lib, "_IN_%ld mdu: %s\n", ms->ino, rpy->str);
+            hvfs_debug(mmll, "_IN_%ld mdu: %s\n", ms->ino, rpy->str);
             /* convert mdu_string to mdu */
             ms->pino = pino;
             err = __str2mdu(rpy->str, &ms->mdu);
             if (err) {
-                hvfs_err(lib, "Invalid MDU for %ld (%s)\n", ms->ino, rpy->str);
+                hvfs_err(mmll, "Invalid MDU for %ld (%s)\n", ms->ino, rpy->str);
             }
         }
     out_free2:
@@ -349,7 +362,7 @@ int __mmfs_readlink(u64 pino, struct mstat *ms)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
@@ -357,19 +370,19 @@ int __mmfs_readlink(u64 pino, struct mstat *ms)
         /* stat by self ino, ignore pino */
         rpy = redisCommand(rc->rc, "hget _IN_%ld %s", ms->ino, MMFS_INODE_SYMNAME);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_%ld '_SYMNAME_' does not exist.\n",
+            hvfs_err(mmll, "_IN_%ld '_SYMNAME_' does not exist.\n",
                      ms->ino);
             err = -ENOENT;
             goto out_free;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_debug(lib, "_IN_%ld metastore: %s\n", ms->ino, rpy->str);
+            hvfs_debug(mmll, "_IN_%ld metastore: %s\n", ms->ino, rpy->str);
             ms->arg = strdup(rpy->str);
         }
     out_free:
@@ -390,14 +403,14 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed \n");
+        hvfs_err(mmll, "getRC() failed \n");
         return -EINVAL;
     }
 
     __init_mdu(&ms->mdu, flags & __MMFS_CREATE_DIR);
     __pack_mdu(&ms->mdu, mu);
     __mdu2str(&ms->mdu, mstr, 1);
-    hvfs_debug(lib, "CREATE MDU: (pino %ld)/%s -> ?,%s\n",
+    hvfs_debug(mmll, "CREATE MDU: (pino %ld)/%s -> ?,%s\n",
                pino, ms->name, mstr);
 
     /* Step 1: create a new inode hash table for self */
@@ -409,13 +422,13 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
                            MMFS_INODE_VERSION,
                            0);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_* create for (pino %ld)/%s failed w/\n%s\n",
+            hvfs_err(mmll, "_IN_* create for (pino %ld)/%s failed w/\n%s\n",
                      pino, ms->name, rpy->str);
             err = -EINVAL;
             goto out_free;
@@ -424,12 +437,12 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
             /* parse the return mdu info */
             err = __str2mdu(rpy->str, &ms->mdu);
             if (err) {
-                hvfs_err(lib, "_IN_* create for (pino %ld)/%s failed.\n",
+                hvfs_err(mmll, "_IN_* create for (pino %ld)/%s failed.\n",
                          pino, ms->name);
                 err = -EINVAL;
                 goto out_free;
             }
-            hvfs_debug(lib, "_IN_%ld created ok (pino %ld)/%s.\n",
+            hvfs_debug(mmll, "_IN_%ld created ok (pino %ld)/%s.\n",
                        ms->mdu.ino, pino, ms->name);
             ms->ino = ms->mdu.ino;
             ms->pino = pino;
@@ -442,20 +455,20 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
         goto out;
 
     if (flags & __MMFS_CREATE_SYMLINK) {
-        hvfs_debug(lib, "CREATE SYMLINK from _IN_%ld to %s\n",
+        hvfs_debug(mmll, "CREATE SYMLINK from _IN_%ld to %s\n",
                    ms->ino, (char *)ms->arg);
         rpy = redisCommand(rc->rc, "hsetnx _IN_%ld %s %s",
                            ms->ino,
                            MMFS_INODE_SYMNAME,
                            (char *)ms->arg);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_%ld add SYMNAME %s failed w/ %s\n",
+            hvfs_err(mmll, "_IN_%ld add SYMNAME %s failed w/ %s\n",
                      ms->ino, (char *)ms->arg, rpy->str);
             err = -EINVAL;
             freeReplyObject(rpy);
@@ -476,14 +489,14 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
                            g_ops[__MMFS_R_OP_CREATE_DENTRY].sha,
                            pino, ms->name, ms->ino);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s (_IN_%ld leaks)\n", 
+            hvfs_err(mmll, "read from MM Meta failed: %s (_IN_%ld leaks)\n", 
                      rc->rc->errstr, ms->ino);
-            putRC(rc);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "create dentry for (pino %ld)/%s failed.\n",
+            hvfs_err(mmll, "create dentry for (pino %ld)/%s failed.\n",
                      pino, ms->name);
             err = -EINVAL;
             freeReplyObject(rpy);
@@ -508,20 +521,21 @@ out_clear:
     {
         rpy = redisCommand(rc->rc, "del _IN_%ld", ms->ino);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "del _IN_%ld failed w/ %s\n",
+            hvfs_err(mmll, "del _IN_%ld failed w/ %s\n",
                      ms->ino, rpy->str);
             freeReplyObject(rpy);
             goto out;
         }
         if (rpy->type == REDIS_REPLY_INTEGER) {
             if (rpy->integer == 1) {
-                hvfs_debug(lib, "del _IN_%ld ok.\n", ms->ino);
+                hvfs_debug(mmll, "del _IN_%ld ok.\n", ms->ino);
             } else {
-                hvfs_warning(lib, "del _IN_%ld failed, no exists?\n", ms->ino);
+                hvfs_warning(mmll, "del _IN_%ld failed, no exists?\n", ms->ino);
             }
         }
         freeReplyObject(rpy);
@@ -538,7 +552,7 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
@@ -546,7 +560,7 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
     __pack_mdu(&ms->mdu, mu);
     __mdu2str(&ms->mdu, mstr, 1);
 
-    hvfs_info(lib, "CREATE ROOT MDU: (pino %d)/%s -> ?,%s\n",
+    hvfs_info(mmll, "CREATE ROOT MDU: (pino %d)/%s -> ?,%s\n",
               MMFS_ROOT_INO, ms->name, mstr);
 
     {
@@ -557,13 +571,13 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
                            MMFS_INODE_VERSION,
                            0);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_* create for (pino %d)/%s failed w/\n%s\n",
+            hvfs_err(mmll, "_IN_* create for (pino %d)/%s failed w/\n%s\n",
                      MMFS_ROOT_INO, ms->name, rpy->str);
             err = -EINVAL;
             goto out_free;
@@ -572,12 +586,12 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
             /* parse the return mdu info */
             err = __str2mdu(rpy->str, &ms->mdu);
             if (err) {
-                hvfs_err(lib, "_IN_* create for (pino %d)/%s failed.\n",
+                hvfs_err(mmll, "_IN_* create for (pino %d)/%s failed.\n",
                          MMFS_ROOT_INO, ms->name);
                 err = -EINVAL;
                 goto out_free;
             }
-            hvfs_debug(lib, "_IN_%ld created ok (pino %d)/%s.\n",
+            hvfs_debug(mmll, "_IN_%ld created ok (pino %d)/%s.\n",
                        ms->mdu.ino, MMFS_ROOT_INO, ms->name);
             ms->ino = ms->mdu.ino;
             ms->pino = MMFS_ROOT_INO;
@@ -599,27 +613,27 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
     struct redisConnection *rc = getRC();
     
     if (!msb->name || strlen(msb->name) == 0) {
-        hvfs_err(lib, "Invalid file system name: null or empty string.\n");
+        hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
         return -EINVAL;
     }
     
-    hvfs_info(lib, "Begin create new file system named as '%s'.\n", 
+    hvfs_info(mmll, "Begin create new file system named as '%s'.\n", 
               msb->name);
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
     {
         rpy = redisCommand(rc->rc, "exists _MMFS_SB_%s", msb->name);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (!(rpy->type == REDIS_REPLY_INTEGER && rpy->integer == 0)) {
-            hvfs_err(lib, "ERROR STATE of key '_MMFS_SB_%s', reject "
+            hvfs_err(mmll, "ERROR STATE of key '_MMFS_SB_%s', reject "
                      "create file system superblock.\n", msb->name);
             err = -EEXIST;
             goto out_free1;
@@ -633,13 +647,13 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
         rpy = redisCommand(rc->rc, "hset _MMFS_SB_%s name %s", 
                            msb->name, msb->name);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (!(rpy->type == REDIS_REPLY_INTEGER && rpy->integer == 1)) {
-            hvfs_err(lib, "ERROR STATE of key '_MMFS_SB_%s', reject "
+            hvfs_err(mmll, "ERROR STATE of key '_MMFS_SB_%s', reject "
                      "create file system superblock.\n", msb->name);
             err = -EEXIST;
             goto out_free2;
@@ -659,8 +673,8 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
                            msb->space_quota, msb->space_used,
                            msb->inode_quota, msb->inode_used);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
@@ -686,12 +700,12 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
     struct redisConnection *rc = getRC();
 
     if (!msb->name || strlen(msb->name) == 0) {
-        hvfs_err(lib, "Invalid file system name: null or empty string.\n");
+        hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
         return -EINVAL;
     }
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
     {
@@ -706,13 +720,13 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
                            (s64)msb->d.inode_quota,
                            (s64)msb->d.inode_used);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
             err = EMMMETAERR;
-            putRC(rc);
+            freeRC(rc);
             goto out;
         }
         if (rpy->type == REDIS_REPLY_NIL) {
-            hvfs_err(lib, "invalid arguments or version for update_sb.\n");
+            hvfs_err(mmll, "invalid arguments or version for update_sb.\n");
             err = -EINVAL;
             freeReplyObject(rpy);
             goto out;
@@ -757,21 +771,21 @@ int __mmfs_get_sb(struct mmfs_sb *msb)
     struct redisConnection *rc = getRC();
 
     if (!msb->name || strlen(msb->name) == 0) {
-        hvfs_err(lib, "Invalid file system name: null or empty string.\n");
+        hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
         return -EINVAL;
     }
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
     {
         rpy = redisCommand(rc->rc, "hgetall _MMFS_SB_%s",
                            msb->name);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
             err = EMMMETAERR;
-            putRC(rc);
+            freeRC(rc);
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ARRAY) {
@@ -823,7 +837,7 @@ static inline int __update_inode(struct redisConnection *rc, redisReply *rpy,
     int err = 0;
     
     if (!ms->ino || ms->ino != ms->mdu.ino) {
-        hvfs_err(lib, "Invalid ino %ld (mdu %ld)\n",
+        hvfs_err(mmll, "Invalid ino %ld (mdu %ld)\n",
                  ms->ino, ms->mdu.ino);
         err = -EINVAL;
         goto out;
@@ -843,13 +857,13 @@ static inline int __update_inode(struct redisConnection *rc, redisReply *rpy,
                        MMFS_INODE_BLOCK,
                        (ms->arg ? ms->arg : "nil"));
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
         err = EMMMETAERR;
-        putRC(rc);
+        freeRC(rc);
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "find _IN_%ld failed w/ %s\n",
+        hvfs_err(mmll, "find _IN_%ld failed w/ %s\n",
                  ms->ino, rpy->str);
         err = -EINVAL;
         freeReplyObject(rpy);
@@ -859,20 +873,20 @@ static inline int __update_inode(struct redisConnection *rc, redisReply *rpy,
         switch (rpy->integer) {
         case 1:
             /* updated */
-            hvfs_debug(lib, "update inode _IN_%ld ok, version=%ld\n",
+            hvfs_debug(mmll, "update inode _IN_%ld ok, version=%ld\n",
                        ms->ino, (u64)s.version);
             ms->mdu.version = s.version;
             break;
         case 0:
             /* failed */
-            hvfs_warning(lib, "update inode _IN_%ld failed, "
+            hvfs_warning(mmll, "update inode _IN_%ld failed, "
                          "version mismatch (expect %ld).\n",
                          ms->ino, (u64)ms->mdu.version);
             err = -EAGAIN;
             break;
         default:
             /* failed */
-            hvfs_warning(lib, "update inode _IN_%ld failed, key not "
+            hvfs_warning(mmll, "update inode _IN_%ld failed, key not "
                          "exists.\n ", ms->ino);
             err = -EINVAL;
         }
@@ -891,11 +905,11 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed \n");
+        hvfs_err(mmll, "getRC() failed \n");
         return -EINVAL;
     }
 
-    hvfs_debug(lib, "DELETE dentry: (pino %ld)/%s\n",
+    hvfs_debug(mmll, "DELETE dentry: (pino %ld)/%s\n",
                pino, ms->name);
 
     /* Step 1: delete the dentry in parent ino's hash table */
@@ -905,13 +919,13 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
                            g_ops[__MMFS_R_OP_DELETE_DENTRY].sha,
                            pino, ms->name);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "delete dentry for (pino %ld)/%s failed w/ %s\n",
+            hvfs_err(mmll, "delete dentry for (pino %ld)/%s failed w/ %s\n",
                      pino, ms->name, rpy->str);
             freeReplyObject(rpy);
             err = -EINVAL;
@@ -920,12 +934,12 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
         if (rpy->type == REDIS_REPLY_INTEGER) {
             if (rpy->integer == 0) {
                 /* this means we can NOT find the dentry */
-                hvfs_err(lib, "find dentry for (pino %ld)/%s failed"
+                hvfs_err(mmll, "find dentry for (pino %ld)/%s failed"
                          " to unlink (not exist)\n",
                          pino, ms->name);
                 err = -ENOENT;
             } else {
-                hvfs_err(lib, "find dentry for (pino %ld)/%s failed"
+                hvfs_err(mmll, "find dentry for (pino %ld)/%s failed"
                          " to unlink (invalid reply %ld)\n",
                          pino, ms->name, (u64)rpy->integer);
                 err = -EINVAL;
@@ -934,7 +948,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
             goto out;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_debug(lib, "delete dentry for (pino %ld)/%s -> ino %s\n",
+            hvfs_debug(mmll, "delete dentry for (pino %ld)/%s -> ino %s\n",
                        pino, ms->name, rpy->str);
             ms->mdu.ino = atol(rpy->str);
         }
@@ -942,7 +956,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
         freeReplyObject(rpy);
 
         if (!ms->mdu.ino || ms->mdu.ino == 1) {
-            hvfs_err(lib, "invalid ino %ld for (pino %ld)/%s\n",
+            hvfs_err(mmll, "invalid ino %ld for (pino %ld)/%s\n",
                      ms->mdu.ino, pino, ms->name);
             err = -EINVAL;
             goto out;
@@ -955,25 +969,25 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
         rpy = redisCommand(rc->rc, "hget _IN_%ld %s",
                            ms->mdu.ino, MMFS_INODE_MD);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "_IN_%ld '_MD_' does not exist.\n",
+            hvfs_err(mmll, "_IN_%ld '_MD_' does not exist.\n",
                      ms->mdu.ino);
             err = -ENOENT;
             freeReplyObject(rpy);
             goto out;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_debug(lib, "_IN_%ld mdu: %s\n", ms->mdu.ino, rpy->str);
+            hvfs_debug(mmll, "_IN_%ld mdu: %s\n", ms->mdu.ino, rpy->str);
             /* convert mdu_string to mdu */
             ms->ino = ms->mdu.ino;
             err = __str2mdu(rpy->str, &ms->mdu);
             if (err || ms->ino != ms->mdu.ino) {
-                hvfs_err(lib, "Invalid MDU fro %ld (%s)\n", ms->ino, rpy->str);
+                hvfs_err(mmll, "Invalid MDU fro %ld (%s)\n", ms->ino, rpy->str);
                 err = -EINVAL;
                 freeReplyObject(rpy);
                 goto out;
@@ -986,44 +1000,48 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
             ms->mdu.nlink--;
             err = __update_inode(rc, rpy, ms);
             if (err) {
-                hvfs_err(lib, "call __update_inode _IN_%ld to nlink-- "
+                hvfs_err(mmll, "call __update_inode _IN_%ld to nlink-- "
                          "failed w/ %d\n",
                          ms->ino, err);
             }
         } else {
+            freeReplyObject(rpy);
+
             /* Step 2.2 do truely delete now */
             rpy = redisCommand(rc->rc, "del _IN_%ld",
                                ms->mdu.ino);
             if (rpy == NULL) {
-                hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
+                hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+                freeRC(rc);
                 goto out;
             }
             if (rpy->type == REDIS_REPLY_ERROR) {
-                hvfs_err(lib, "delete inode for (pino %ld)/%s _IN_%ld failed w/ %s\n",
+                hvfs_err(mmll, "delete inode for (pino %ld)/%s _IN_%ld failed w/ %s\n",
                          pino, ms->name, ms->mdu.ino, rpy->str);
                 freeReplyObject(rpy);
                 goto out;
             }
             if (rpy->type == REDIS_REPLY_INTEGER) {
                 if (rpy->integer == 1) {
-                    hvfs_debug(lib, "delete inode for (pino %ld)/%s _IN_%ld ok\n",
+                    hvfs_debug(mmll, "delete inode for (pino %ld)/%s _IN_%ld ok\n",
                                pino, ms->name, ms->mdu.ino);
                     __update_msb(MMFS_SB_U_INR, -1);
                 } else {
-                    hvfs_err(lib, "delete inode for (pino %ld)/%s _IN_%ld bad (ignore)\n",
+                    hvfs_err(mmll, "delete inode for (pino %ld)/%s _IN_%ld bad (ignore)\n",
                              pino, ms->name, ms->mdu.ino);
                 }
             }
-            freeReplyObject(rpy);
 
             /* Step 2.3 rename fix for non DIR */
             if (!S_ISDIR(ms->mdu.mode)) {
                 err = __mmfs_rename_fix(ms->mdu.ino);
                 if (err) {
-                    hvfs_err(lib, "rename fix: ino=%ld\n", ms->mdu.ino);
+                    hvfs_err(mmll, "rename fix: ino=%ld\n", ms->mdu.ino);
                 }
             }
         }
+
+        freeReplyObject(rpy);
     }
 out:
     putRC(rc);
@@ -1041,19 +1059,19 @@ int __mmfs_is_empty_dir(u64 dino)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed \n");
+        hvfs_err(mmll, "getRC() failed \n");
         return -EINVAL;
     }
 
     /* Step 1: find by ino to check any existing dentries */
     rpy = redisCommand(rc->rc, "hlen _IN_%ld", dino);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "find _IN_%ld failed w/ %s\n",
+        hvfs_err(mmll, "find _IN_%ld failed w/ %s\n",
                  dino, rpy->str);
         freeReplyObject(rpy);
         goto out;
@@ -1085,7 +1103,7 @@ int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
@@ -1108,7 +1126,7 @@ int __mmfs_linkadd(struct mstat *ms, s32 nlink)
 
     err = __mmfs_update_inode(ms, NULL);
     if (err) {
-        hvfs_err(lib, "call __mmfs_update_inode on _IN_%ld failed w/ %d\n",
+        hvfs_err(mmll, "call __mmfs_update_inode on _IN_%ld failed w/ %d\n",
                  ms->ino, err);
         goto out;
     }
@@ -1135,31 +1153,31 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
     chk_end = g_msb.chunk_size * (chkid + 1);
 
     if (!data) {
-        hvfs_err(lib, "NULL buffer to read in.\n");
+        hvfs_err(mmll, "NULL buffer to read in.\n");
         return -EINVAL;
     }
 
     rc = getRC();
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     if (ms->ino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided\n", ms->ino);
+        hvfs_err(mmll, "invalid ino %ld provided\n", ms->ino);
         err = -EINVAL;
         goto out;
     }
 
     if (S_ISDIR(ms->mdu.mode)) {
-        hvfs_err(lib, "directory (ino %ld) has no blocks to read\n", ms->ino);
+        hvfs_err(mmll, "directory (ino %ld) has no blocks to read\n", ms->ino);
         err = -EISDIR;
         goto out;
     }
 
     if (chk_begin + off + size > ms->mdu.size) {
         if (chk_begin + off > ms->mdu.size) {
-            hvfs_debug(lib, "Read offset across the boundary (%ld vs %ld)\n",
+            hvfs_debug(mmll, "Read offset across the boundary (%ld vs %ld)\n",
                        chk_begin + off, ms->mdu.size);
             err = -EFBIG;
             goto out;
@@ -1173,7 +1191,7 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
         }
     }
 
-    hvfs_debug(lib, "__mmfs_fread_chunk(%ld) off=%ld, size=%ld, mdu.size=%ld, "
+    hvfs_debug(mmll, "__mmfs_fread_chunk(%ld) off=%ld, size=%ld, mdu.size=%ld, "
                "chk(%ld)=[%ld,%ld)\n",
                ms->ino, (u64)off, (u64)size, ms->mdu.size,
                chkid, chk_begin, chk_end);
@@ -1186,13 +1204,13 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
                            ms->ino, MMFS_INODE_BLOCK, chkid);
     }
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_warning(lib, "_IN_%ld does not exist or MM error\n",
+        hvfs_warning(mmll, "_IN_%ld does not exist or MM error\n",
                      ms->ino);
         if (ms->mdu.size > 0) {
             err = EHOLE;
@@ -1204,20 +1222,20 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
     if (rpy->type == REDIS_REPLY_STRING) {
         void *buf = NULL;
         
-        hvfs_debug(lib, "Call mmcc_get to read _IN_%ld CHK=%ld %s\n", 
+        hvfs_debug(mmll, "Call mmcc_get to read _IN_%ld CHK=%ld %s\n", 
                    ms->ino, chkid, rpy->str);
         err = mmcc_get(rpy->str, &buf, &rlen);
         if (err) {
-            hvfs_err(lib, "_IN_%ld block get(%s) failed w/ %d\n",
+            hvfs_err(mmll, "_IN_%ld block get(%s) failed w/ %d\n",
                      ms->ino, rpy->str, err);
             goto out_free;
         }
         if (rlen - off < 0) {
-            hvfs_warning(lib, "_IN_%ld block size %ld - off %ld < 0\n",
+            hvfs_warning(mmll, "_IN_%ld block size %ld - off %ld < 0\n",
                          ms->ino, rlen, off);
             err = 0;
         } else if (off + size > rlen) {
-            hvfs_warning(lib, "_IN_%ld block size %ld < request size %ld\n",
+            hvfs_warning(mmll, "_IN_%ld block size %ld < request size %ld\n",
                          ms->ino, rlen, size);
             memcpy(data, buf + off, rlen - off);
             err = rlen - off;
@@ -1248,7 +1266,7 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
     endchk = (off + size) / g_msb.chunk_size;
     endchk -= (off + size) % g_msb.chunk_size == 0 ? 1 : 0;
 
-    hvfs_debug(lib, "__mmfs_fread(%ld) [%ld,%ld) CHK %ld to %ld.\n",
+    hvfs_debug(mmll, "__mmfs_fread(%ld) [%ld,%ld) CHK %ld to %ld.\n",
                ms->ino, off, off + size, chkid, endchk);
 
 
@@ -1261,7 +1279,7 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
         rsize = __mmfs_fread_chunk(ms, data + trsize, loff, lsize, chkid);
         if (rsize < 0) {
             /* chunk read failed */
-            hvfs_err(lib, "fread(%ld) chunk(%ld) faild w/ %ld\n",
+            hvfs_err(mmll, "fread(%ld) chunk(%ld) faild w/ %ld\n",
                      ms->ino, chkid, rsize);
             trsize = rsize;
             goto out;
@@ -1270,12 +1288,12 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
             break;
         } else if (rsize < lsize) {
             /* chunk read w/ partial region */
-            hvfs_debug(lib, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
+            hvfs_debug(mmll, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
             trsize += rsize;
             break;
         } else if (rsize > lsize) {
             /* chunk read beyond region? */
-            hvfs_err(lib, "fread(%ld) chunk(%ld) beyond region expect %ld, "
+            hvfs_err(mmll, "fread(%ld) chunk(%ld) beyond region expect %ld, "
                      "but got %ld.\n",
                      ms->ino, chkid, lsize, rsize);
             rsize = lsize;
@@ -1298,17 +1316,17 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     if (ms->ino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided\n", ms->ino);
+        hvfs_err(mmll, "invalid ino %ld provided\n", ms->ino);
         err = -EINVAL;
         goto out;
     }
     if (S_ISDIR(ms->mdu.mode)) {
-        hvfs_err(lib, "directory (ino %ld) has no blocks to write\n", ms->ino);
+        hvfs_err(mmll, "directory (ino %ld) has no blocks to write\n", ms->ino);
         err = -EISDIR;
         goto out;
     }
@@ -1330,11 +1348,11 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
 
     info = mmcc_put(key, data, size);
     if (!info) {
-        hvfs_err(lib, "_IN_%ld block put failed w/ %d\n",
+        hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         goto out_free;
     }
-    hvfs_debug(lib, "_IN_%ld block put key=%s info=%s\n",
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s\n",
                ms->ino, key, info);
 
     if (likely(chkid == 0)) {
@@ -1350,13 +1368,13 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
                            key);
     }
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld ('%s') does not exist or MM error\n",
+        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
                  ms->ino, ms->name);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1365,11 +1383,11 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     if (rpy->type == REDIS_REPLY_INTEGER) {
         if (rpy->integer == 1) {
             /* not exist yet */
-            hvfs_debug(lib, "_IN_%ld '%s' block set    to %s\n",
+            hvfs_debug(mmll, "_IN_%ld '%s' block set    to %s\n",
                        ms->ino, ms->name, key);
         } else {
             /* updated */
-            hvfs_debug(lib, "_IN_%ld '%s' block update to %s\n",
+            hvfs_debug(mmll, "_IN_%ld '%s' block update to %s\n",
                        ms->ino, ms->name, key);
         }
     }
@@ -1396,17 +1414,17 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     if (ms->ino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided\n", ms->ino);
+        hvfs_err(mmll, "invalid ino %ld provided\n", ms->ino);
         err = -EINVAL;
         goto out;
     }
     if (S_ISDIR(ms->mdu.mode)) {
-        hvfs_err(lib, "directory (ino %ld) has no blocks to write\n", ms->ino);
+        hvfs_err(mmll, "directory (ino %ld) has no blocks to write\n", ms->ino);
         err = -EISDIR;
         goto out;
     }
@@ -1430,11 +1448,11 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 
     info = mmcc_put_iov(key, iov, iovlen);
     if (!info) {
-        hvfs_err(lib, "_IN_%ld block put failed w/ %d\n",
+        hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         goto out_free;
     }
-    hvfs_debug(lib, "_IN_%ld block put key=%s info=%s\n",
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s\n",
                ms->ino, key, info);
 
     if (likely(chkid == 0)) {
@@ -1450,13 +1468,13 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
                            key);
     }
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld ('%s') does not exist or MM error\n",
+        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
                  ms->ino, ms->name);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1465,11 +1483,11 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     if (rpy->type == REDIS_REPLY_INTEGER) {
         if (rpy->integer == 1) {
             /* not exist yet */
-            hvfs_debug(lib, "_IN_%ld block set to %s\n",
+            hvfs_debug(mmll, "_IN_%ld block set to %s\n",
                        ms->ino, key);
         } else {
             /* updated */
-            hvfs_debug(lib, "_IN_%ld block update to %s\n",
+            hvfs_debug(mmll, "_IN_%ld block update to %s\n",
                        ms->ino, key);
         }
     }
@@ -1492,27 +1510,27 @@ int __mmfs_readdir(mmfs_dir_t *dir)
     int err = 0, idx;
 
     if (dir->dino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided\n", dir->dino);
+        hvfs_err(mmll, "invalid ino %ld provided\n", dir->dino);
         return -EINVAL;
     }
 
     ms.ino = dir->dino;
     err = __mmfs_stat(0, &ms);
     if (err) {
-        hvfs_err(lib, "__mmfs_stat(%ld) failed w/ %d\n",
+        hvfs_err(mmll, "__mmfs_stat(%ld) failed w/ %d\n",
                  dir->dino, err);
         return err;
     }
 
     if (!S_ISDIR(ms.mdu.mode)) {
-        hvfs_err(lib, "_IN_%ld is not a directory\n", dir->dino);
+        hvfs_err(mmll, "_IN_%ld is not a directory\n", dir->dino);
         return -ENOTDIR;
     }
 
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
@@ -1520,13 +1538,13 @@ int __mmfs_readdir(mmfs_dir_t *dir)
     rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 100",
                        dir->dino, dir->cursor == NULL ? "0" : dir->cursor);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld does not exist or MM error\n",
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error\n",
                  dir->dino);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1564,7 +1582,7 @@ int __mmfs_readdir(mmfs_dir_t *dir)
             clen = sizeof(struct dentry_info) + l;
             void *t = xrealloc(dir->di, tlen + clen);
             if (!t) {
-                hvfs_err(lib, "xrealloc(%d) failed\n", tlen + clen);
+                hvfs_err(mmll, "xrealloc(%d) failed\n", tlen + clen);
                 err = -ENOMEM;
                 freeReplyObject(rpy);
                 xfree(dir->di);
@@ -1594,7 +1612,7 @@ out:
         ms.ino = di->ino;
         err = __mmfs_stat(0, &ms);
         if (err) {
-            hvfs_err(lib, "__mmfs_stat() _IN_%ld to get mode failed w/ %d\n",
+            hvfs_err(mmll, "__mmfs_stat() _IN_%ld to get mode failed w/ %d\n",
                      ms.ino, err);
         } else
             di->mode = ms.mdu.mode;
@@ -1610,14 +1628,14 @@ int __mmfs_inc_shadow_dir(u64 dino)
     int err = 0;
 
     if (dino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        hvfs_err(mmll, "invalid ino %ld provided.\n", dino);
         return -EINVAL;
     }
 
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
@@ -1625,13 +1643,13 @@ int __mmfs_inc_shadow_dir(u64 dino)
     rpy = redisCommand(rc->rc, "hincrby _SD_%s %ld 1",
                        g_msb.name, dino);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n", 
                  dino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1650,30 +1668,30 @@ int __mmfs_dec_shadow_dir(u64 dino)
     int err = 0, deleted = 0;
 
     if (dino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        hvfs_err(mmll, "invalid ino %ld provided.\n", dino);
         return -EINVAL;
     }
 
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
-    hvfs_debug(lib, "dec shadow dino %ld\n", dino);
+    hvfs_debug(mmll, "dec shadow dino %ld\n", dino);
 
     /* dec the shadow dir count */
     rpy = redisCommand(rc->rc, "hincrby _SD_%s %ld -1",
                        g_msb.name, dino);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n", 
                  dino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1686,10 +1704,10 @@ int __mmfs_dec_shadow_dir(u64 dino)
             sprintf(set, "o%ld", dino);
             err = mmcc_del_set(set);
             if (err) {
-                hvfs_err(lib, "do MMCC set %s delete failed, manual delete.\n",
+                hvfs_err(mmll, "do MMCC set %s delete failed, manual delete.\n",
                          set);
             }
-            hvfs_debug(lib, "MMCC set %s deleted (not shadow).\n", set);
+            hvfs_debug(mmll, "MMCC set %s deleted (not shadow).\n", set);
             deleted = 1;
         }
     }
@@ -1699,13 +1717,13 @@ int __mmfs_dec_shadow_dir(u64 dino)
         rpy = redisCommand(rc->rc, "hdel _SD_%s %ld",
                            g_msb.name, dino);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "delete inode %ld in _SD_ failed w/ %s\n",
+            hvfs_err(mmll, "delete inode %ld in _SD_ failed w/ %s\n",
                      dino, rpy->str);
             err = -EINVAL;
             freeReplyObject(rpy);
@@ -1727,27 +1745,27 @@ int __mmfs_is_shadow_dir(u64 dino)
     int err = 0;
 
     if (dino <= 0) {
-        hvfs_err(lib, "invalid ino %ld provided.\n", dino);
+        hvfs_err(mmll, "invalid ino %ld provided.\n", dino);
         return -EINVAL;
     }
 
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
     /* check if it is a shadow dir */
     rpy = redisCommand(rc->rc, "hget _SD_%s %ld", g_msb.name, dino);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "_IN_%ld does not exist or MM error: %s\n", 
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n", 
                  dino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
@@ -1778,11 +1796,11 @@ int __mmfs_rename_log(u64 ino, u64 opino, u64 npino)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
-    hvfs_debug(lib, "rename log: ino %ld rename from P(%ld) to P(%ld).\n",
+    hvfs_debug(mmll, "rename log: ino %ld rename from P(%ld) to P(%ld).\n",
                ino, opino, npino);
 
     snprintf(entry, 256, "%ld|%ld|%ld|%ld", ino, (u64)ts, opino, npino);
@@ -1790,20 +1808,20 @@ int __mmfs_rename_log(u64 ino, u64 opino, u64 npino)
     rpy = redisCommand(rc->rc, "hset _RL_%s %s 1",
                        g_msb.name, entry);
     if (rpy == NULL) {
-        hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-        putRC(rc);
+        hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
         err = EMMMETAERR;
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(lib, "set rename log failed w %s\n", rpy->str);
+        hvfs_err(mmll, "set rename log failed w %s\n", rpy->str);
         err = -EINVAL;
         freeReplyObject(rpy);
         goto out;
     }
     if (rpy->type == REDIS_REPLY_INTEGER) {
         if (rpy->integer != 1) {
-            hvfs_err(lib, "deuplicate rename log entry?!\n");
+            hvfs_err(mmll, "deuplicate rename log entry?!\n");
         }
     }
     freeReplyObject(rpy);
@@ -1823,11 +1841,11 @@ int __mmfs_rename_fix(u64 ino)
     struct redisConnection *rc = getRC();
 
     if (!rc) {
-        hvfs_err(lib, "getRC() failed\n");
+        hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;
     }
 
-    hvfs_debug(lib, "rename fix: ino %ld.\n", ino);
+    hvfs_debug(mmll, "rename fix: ino %ld.\n", ino);
 
     snprintf(entry, 256, "%ld|*", ino);
 
@@ -1836,13 +1854,13 @@ int __mmfs_rename_fix(u64 ino)
                            g_msb.name, 
                            (cursor == NULL ? "0" : cursor), entry);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "scan rename fix failed w/ %s\n", rpy->str);
+            hvfs_err(mmll, "scan rename fix failed w/ %s\n", rpy->str);
             err = -EINVAL;
             freeReplyObject(rpy);
             goto out;
@@ -1858,7 +1876,7 @@ int __mmfs_rename_fix(u64 ino)
             __t = xrealloc(fields, sizeof(char *) * 
                            (rpy->element[1]->elements / 2 + nr));
             if (!__t) {
-                hvfs_err(lib, "xrealloc() fields' pointer array failed.\n");
+                hvfs_err(mmll, "xrealloc() fields' pointer array failed.\n");
                 alloc = 0;
             } else {
                 fields = __t;
@@ -1882,7 +1900,7 @@ int __mmfs_rename_fix(u64 ino)
                         /* old pino */
                         err = __mmfs_dec_shadow_dir(atol(p));
                         if (err) {
-                            hvfs_err(lib, "dec shadow dir %s faild w/ %d\n",
+                            hvfs_err(mmll, "dec shadow dir %s faild w/ %d\n",
                                      p, err);
                         }
                         break;
@@ -1899,17 +1917,17 @@ int __mmfs_rename_fix(u64 ino)
     } while (1);
 
     for (i = 0; i < nr; i++) {
-        hvfs_err(lib, "Try to del %s\n", fields[i]);
+        hvfs_err(mmll, "Try to del %s\n", fields[i]);
         rpy = redisCommand(rc->rc, "hdel _RL_%s %s",
                            g_msb.name, fields[i]);
         if (rpy == NULL) {
-            hvfs_err(lib, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            putRC(rc);
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
             err = EMMMETAERR;
             goto out_free;
         }
         if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(lib, "hdel _RL_ field %s failed: %s\n",
+            hvfs_err(mmll, "hdel _RL_ field %s failed: %s\n",
                      fields[i], rpy->str);
         }
         freeReplyObject(rpy);
@@ -1918,6 +1936,8 @@ int __mmfs_rename_fix(u64 ino)
         xfree(fields[i]);
     }
 out:
+    if (cursor)
+        xfree(cursor);
     putRC(rc);
 
     return err;
@@ -1926,4 +1946,229 @@ out_free:
         xfree(fields[i]);
     }
     goto out;
+}
+
+int __mmfs_ci_pack(struct __mmfs_client_info *ci, char *key, char *buf)
+{
+    int n = 0;
+
+    sprintf(key, "%s.%s", ci->hostname, ci->namespace);
+    
+    n += sprintf(buf + n, "%ld,%s,%s,%s,%s,%ld,",
+                 (u64)time(NULL),
+                 ci->hostname, ci->namespace,
+                 ci->ip, ci->md5, (u64)ci->born);
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.getattr));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.readlink));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.mknod));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.mkdir));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.unlink));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.rmdir));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.symlink));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.rename));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.link));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.chmod));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.chown));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.truncate));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.utime));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.open));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.read));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.write));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.statfs_plus));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.release));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.fsync));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.opendir));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.readdir_plus));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.release_dir));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.create_plus));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.ftruncate));
+
+    return n;
+}
+
+int __mmfs_client_info(struct __mmfs_client_info *ci)
+{
+    char key[256];
+    char buf[1024];
+    int err = 0;
+
+    err = __mmfs_ci_pack(ci, key, buf);
+    if (err < 0) {
+        hvfs_err(mmll, "pack client info failed w/ %d\n", err);
+        return err;
+    }
+    if (err > 0) {
+        redisReply *rpy = NULL;
+        struct redisConnection *rc = getRC();
+
+        if (!rc) {
+            hvfs_err(mmll, "getRC() failed\n");
+            return -EINVAL;
+        }
+
+        rpy = redisCommand(rc->rc, "hset mmfs.client.info %s %s",
+                           key, buf);
+        if (rpy == NULL) {
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
+            err = EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(mmll, "hset mmfs.client.info failed w/ %s\n", rpy->str);
+            err = -EINVAL;
+            freeReplyObject(rpy);
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_INTEGER) {
+            /* it is ok */
+        }
+        freeReplyObject(rpy);
+    out:
+        putRC(rc);
+        err = 0;
+    }
+
+    return err;
+}
+
+static void __convert_host_to_ip(char *host, char *ip)
+{
+    struct hostent *he;
+    int copied = 0, i;
+
+    he = gethostbyname(host);
+    if (!he) {
+        hvfs_err(mmll, "gethostbyname(%s) failed w/ %s(%d)\n",
+                 host, strerror(errno), errno);
+        goto out;
+    }
+    for (i = 0; i < he->h_length; i++) {
+        struct sockaddr_in sa;
+
+        sa.sin_addr.s_addr = *((unsigned long *)he->h_addr_list[i]);
+        inet_ntop(AF_INET, &(sa.sin_addr), ip, NI_MAXHOST);
+        if (strlen(ip) > 0) {
+            /* ok, use this IP */
+            copied = 1;
+            break;
+        }
+    }
+
+out:    
+    if (!copied) {
+        strcpy(ip, host);
+    }
+}
+
+int __mmfs_renew_ci(struct __mmfs_client_info *ci, int type)
+{
+    char hostname[128];
+    char ip[NI_MAXHOST];
+    char buildinfo[256];
+    int err = 0;
+    
+    if (!ci->hostname && !ci->namespace) {
+        memset(ci, 0, sizeof(*ci));
+
+        err = gethostname(hostname, 128);
+        if (err) {
+            hvfs_err(mmll, "gethostname() failed w/ %d(%s)\n", 
+                     errno, strerror(errno));
+            err = -errno;
+            goto out;
+        }
+        __convert_host_to_ip(hostname, ip);
+        sprintf(buildinfo, "SHA %s dirty %s build_id %s",
+                MMFS_GIT_SHA1,
+                MMFS_GIT_DIRTY,
+                MMFS_BUILD_ID);
+
+        ci->hostname = strdup(hostname);
+        ci->namespace = mmfs_fuse_mgr.namespace;
+        ci->ip = strdup(ip);
+        ci->md5 = strdup(buildinfo);
+        ci->born = time(NULL);
+    } else {
+        switch (type) {
+        case OP_NONE:
+        default:
+            break;
+        case OP_GETATTR:
+            atomic64_inc(&ci->os.getattr);
+            break;
+        case OP_READLINK:
+            atomic64_inc(&ci->os.readlink);
+            break;
+        case OP_MKNOD:
+            atomic64_inc(&ci->os.mknod);
+            break;
+        case OP_MKDIR:
+            atomic64_inc(&ci->os.mkdir);
+            break;
+        case OP_UNLINK:
+            atomic64_inc(&ci->os.unlink);
+            break;
+        case OP_RMDIR:
+            atomic64_inc(&ci->os.rmdir);
+            break;
+        case OP_SYMLINK:
+            atomic64_inc(&ci->os.symlink);
+            break;
+        case OP_RENAME:
+            atomic64_inc(&ci->os.rename);
+            break;
+        case OP_LINK:
+            atomic64_inc(&ci->os.link);
+            break;
+        case OP_CHMOD:
+            atomic64_inc(&ci->os.chmod);
+            break;
+        case OP_CHOWN:
+            atomic64_inc(&ci->os.chown);
+            break;
+        case OP_TRUNCATE:
+            atomic64_inc(&ci->os.truncate);
+            break;
+        case OP_UTIME:
+            atomic64_inc(&ci->os.utime);
+            break;
+        case OP_OPEN:
+            atomic64_inc(&ci->os.open);
+            break;
+        case OP_READ:
+            atomic64_inc(&ci->os.read);
+            break;
+        case OP_WRITE:
+            atomic64_inc(&ci->os.write);
+            break;
+        case OP_STATFS_PLUS:
+            atomic64_inc(&ci->os.statfs_plus);
+            break;
+        case OP_RELEASE:
+            atomic64_inc(&ci->os.release);
+            break;
+        case OP_FSYNC:
+            atomic64_inc(&ci->os.fsync);
+            break;
+        case OP_OPENDIR:
+            atomic64_inc(&ci->os.opendir);
+            break;
+        case OP_READDIR_PLUS:
+            atomic64_inc(&ci->os.readdir_plus);
+            break;
+        case OP_RELEASE_DIR:
+            atomic64_inc(&ci->os.release_dir);
+            break;
+        case OP_CREATE_PLUS:
+            atomic64_inc(&ci->os.create_plus);
+            break;
+        case OP_FTRUNCATE:
+            atomic64_inc(&ci->os.ftruncate);
+            break;
+        }
+    }
+    
+out:
+    return err;
 }

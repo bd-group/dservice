@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-26 13:53:31 macan>
+ * Time-stamp: <2015-06-02 17:01:56 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,10 @@
 
 #include "mmfs.h"
 
+#define RENEW_CI(op) do {                       \
+        __mmfs_renew_ci(&g_ci, op);             \
+    } while (0)
+
 struct __mmfs_fuse_mgr mmfs_fuse_mgr = {.inited = 0,
                                         .namespace = "default",
 };
@@ -30,6 +34,10 @@ struct mmfs_sb g_msb = {
     .name = "default",
     .root_ino = MMFS_ROOT_INO,
 };
+
+static u32 hvfs_mmfs_tracing_flags = HVFS_DEFAULT_LEVEL;
+
+static struct __mmfs_client_info g_ci;
 
 static void mmfs_update_sb(struct mmfs_sb *msb)
 {
@@ -51,7 +59,7 @@ static void mmfs_update_sb(struct mmfs_sb *msb)
                     
                     err = __mmfs_get_sb(msb);
                     if (err) {
-                        hvfs_err(lib, "Reget superblock failed w/ %d\n", err);
+                        hvfs_err(mmfs, "Reget superblock failed w/ %d\n", err);
                         goto out;
                     }
                     msb->d.space_used = space_used;
@@ -60,9 +68,9 @@ static void mmfs_update_sb(struct mmfs_sb *msb)
                     goto retry;
                 }
             }
-            hvfs_err(lib, "Update superblock failed w/ %d\n", err);
+            hvfs_err(mmfs, "Update superblock failed w/ %d\n", err);
         }
-        hvfs_debug(lib, "Write superblock: {IU=%ld, SU=%ld} done.\n",
+        hvfs_debug(mmfs, "Write superblock: {IU=%ld, SU=%ld} done.\n",
                    msb->inode_used, msb->space_used);
         msb->flags &= ~MMFS_SB_DIRTY;
     }
@@ -73,18 +81,70 @@ out:
 void mmfs_debug_mode(int enable)
 {
     switch (enable) {
+    case 30:
+        hvfs_mmfs_tracing_flags = 0xf0000000;
+        hvfs_mmll_tracing_flags = 0xffffffff;
+        break;
+    case 31:
+        hvfs_mmfs_tracing_flags = 0xf0000001;
+        hvfs_mmll_tracing_flags = 0xffffffff;
+        break;
+    case 32:
+        hvfs_mmfs_tracing_flags = 0xf0000004;
+        hvfs_mmll_tracing_flags = 0xffffffff;
+        break;
+    case 33:
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        hvfs_mmll_tracing_flags = 0xffffffff;
+        break;
+    case 20:
+        hvfs_mmfs_tracing_flags = 0xf0000000;
+        hvfs_mmll_tracing_flags = 0xf0000004;
+        break;
+    case 21:
+        hvfs_mmfs_tracing_flags = 0xf0000001;
+        hvfs_mmll_tracing_flags = 0xf0000004;
+        break;
+    case 22:
+        hvfs_mmfs_tracing_flags = 0xf0000004;
+        hvfs_mmll_tracing_flags = 0xf0000004;
+        break;
+    case 23:
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        hvfs_mmll_tracing_flags = 0xf0000004;
+        break;
+    case 10:
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        hvfs_mmll_tracing_flags = 0xf0000001;
+        break;
+    case 11:
+        hvfs_mmfs_tracing_flags = 0xf0000001;
+        hvfs_mmll_tracing_flags = 0xf0000001;
+        break;
+    case 12:
+        hvfs_mmfs_tracing_flags = 0xf0000004;
+        hvfs_mmll_tracing_flags = 0xf0000001;
+        break;
+    case 13:
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        hvfs_mmll_tracing_flags = 0xf0000001;
+        break;
     case 3:
-        hvfs_lib_tracing_flags = 0xffffffff;
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        hvfs_mmll_tracing_flags = 0xf0000000;
         break;
     case 2:
-        hvfs_lib_tracing_flags = 0xf0000004;
+        hvfs_mmfs_tracing_flags = 0xf0000004;
+        hvfs_mmll_tracing_flags = 0xf0000000;
         break;
     case 1:
-        hvfs_lib_tracing_flags = 0xf0000001;
+        hvfs_mmfs_tracing_flags = 0xf0000001;
+        hvfs_mmll_tracing_flags = 0xf0000000;
         break;
     case 0:
     default:
-        hvfs_lib_tracing_flags = 0xf0000000;
+        hvfs_mmfs_tracing_flags = 0xf0000000;
+        hvfs_mmll_tracing_flags = 0xf0000000;
         break;
     }
 }
@@ -151,7 +211,7 @@ static int __soc_init(int hsize)
 
     mmfs_soc_mgr.ht = xmalloc(mmfs_soc_mgr.hsize * sizeof(struct regular_hash));
     if (!mmfs_soc_mgr.ht) {
-        hvfs_err(lib, "Stat Oneshot Cache(SOC) hash table init failed\n");
+        hvfs_err(mmfs, "Stat Oneshot Cache(SOC) hash table init failed\n");
         return -ENOMEM;
     }
 
@@ -184,7 +244,7 @@ struct soc_entry *__se_alloc(const char *key, struct mstat *ms)
 
     se = xzalloc(sizeof(*se));
     if (!se) {
-        hvfs_err(lib, "xzalloc() soc_entry failed\n");
+        hvfs_err(mmfs, "xzalloc() soc_entry failed\n");
         return NULL;
     }
     se->key = strdup(key);
@@ -318,7 +378,7 @@ static int __odc_init(int hsize)
 
     mmfs_odc_mgr.ht = xmalloc(mmfs_odc_mgr.hsize * sizeof(struct regular_hash));
     if (!mmfs_odc_mgr.ht) {
-        hvfs_err(lib, "OpeneD Cache(ODC) hash table init failed\n");
+        hvfs_err(mmfs, "OpeneD Cache(ODC) hash table init failed\n");
         return -ENOMEM;
     }
 
@@ -530,7 +590,7 @@ static int __enlarge_chunk_table(struct bhhead *bhh, u64 chkid)
     }
     t = xrealloc(bhh->chunks, sizeof(struct chunk *) * nr);
     if (!t) {
-        hvfs_err(lib, "__enlarge_chunk_table() to NR %d failed.\n",
+        hvfs_err(mmfs, "__enlarge_chunk_table() to NR %d failed.\n",
                  nr);
         return -ENOMEM;
     }
@@ -570,7 +630,7 @@ static struct chunk *__lookup_chunk(struct bhhead *bhh, u64 chkid, int lock)
     if (chkid >= bhh->chknr) {
         err = __enlarge_chunk_table(bhh, chkid);
         if (err) {
-            hvfs_err(lib, "enlarge chunk table failed w/ %d\n",
+            hvfs_err(mmfs, "enlarge chunk table failed w/ %d\n",
                      err);
             return NULL;
         }
@@ -729,12 +789,12 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
 
     c = __lookup_chunk(bhh, chkid, 0);
     if (!c) {
-        hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
+        hvfs_err(mmfs, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  ms->ino, chkid);
         return -ENOMEM;
     }
     
-    hvfs_debug(lib, "__bh_fill_chunk(%ld) CHK=%ld offset=%ld size=%ld "
+    hvfs_debug(mmfs, "__bh_fill_chunk(%ld) CHK=%ld offset=%ld size=%ld "
                "c->size=%ld c->asize=%ld bhh->size=%ld bhh->asize=%ld bhh->chknr=%ld\n",
                ms->ino, chkid, (u64)offset, (u64)size,
                c->size, c->asize,
@@ -772,7 +832,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     /* it is ok, we just zero the page */
                     err = 0;
                 } else if (rlen < 0) {
-                    hvfs_err(lib, "bh_fill() read the file range [%ld, %ld] "
+                    hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
                              "failed w/ %ld\n",
                              c->size, c->size + g_pagesize, rlen);
                     err = rlen;
@@ -835,7 +895,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                         /* it is ok, we just zero the page */
                         err = 0;
                     } else if (rlen < 0) {
-                        hvfs_err(lib, "bh_fill() read the file range [%ld, %ld] "
+                        hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
                                  "failed w/ %ld",
                                  c->size, c->size + g_pagesize, rlen);
                         err = rlen;
@@ -878,7 +938,7 @@ static int __bh_fill(struct mstat *ms, struct bhhead *bhh,
     endchk = (offset + size) / g_msb.chunk_size;
     endchk -= (offset + size) % g_msb.chunk_size == 0 ? 1 : 0;
     
-    hvfs_debug(lib, "_bh_fill(%ld) offset=%ld size=%ld bhh->size=%ld "
+    hvfs_debug(mmfs, "_bh_fill(%ld) offset=%ld size=%ld bhh->size=%ld "
                "bhh->asize=%ld in CHK=[%ld,%ld]\n",
                ms->ino, (u64)offset, (u64)size, bhh->size, bhh->asize,
                chkid, endchk);
@@ -892,7 +952,7 @@ static int __bh_fill(struct mstat *ms, struct bhhead *bhh,
         err = __bh_fill_chunk(chkid, ms, bhh,
                               buf + bytes, loff, lsize, update);
         if (err) {
-            hvfs_err(lib, "_IN_%ld fill chunk %ld @ [%ld,%ld) faild w/ %d\n",
+            hvfs_err(mmfs, "_IN_%ld fill chunk %ld @ [%ld,%ld) faild w/ %d\n",
                      ms->ino, chkid, loff, lsize, err);
             goto out;
         }
@@ -918,7 +978,7 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
 
     c = __lookup_chunk(bhh, chkid, 1);
     if (!c) {
-        hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
+        hvfs_err(mmfs, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  bhh->ms.ino, chkid);
         return -ENOMEM;
     }
@@ -928,7 +988,7 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
         return -EFBIG;
     }
 
-    hvfs_debug(lib, "__bh_read_chunk() for _IN_%ld [%ld,%ld) CHK=%ld, "
+    hvfs_debug(mmfs, "__bh_read_chunk() for _IN_%ld [%ld,%ld) CHK=%ld, "
                "c->size=%ld c->asize=%ld\n",
                bhh->ms.ino, offset, offset + size, 
                chkid, c->size, c->asize);
@@ -975,7 +1035,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
     lastchk = bhh->asize / g_msb.chunk_size;
     lastchk -= bhh->asize % g_msb.chunk_size == 0 ? 1 : 0;
 
-    hvfs_debug(lib, "__bh_read(%ld) [%ld,%ld) in CHK[%ld,%ld]\n",
+    hvfs_debug(mmfs, "__bh_read(%ld) [%ld,%ld) in CHK[%ld,%ld]\n",
                bhh->ms.ino, offset, offset + size, chkid, endchk);
 
     for (j = 0; chkid <= endchk; chkid++, j++) {
@@ -985,7 +1045,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                     end - chkid * g_msb.chunk_size - loff);
 
         err = __bh_read_chunk(bhh, buf + bytes, loff, lsize, chkid);
-        hvfs_debug(lib, "__bh_read_chunk(%ld) CHK=%ld loff=%ld "
+        hvfs_debug(mmfs, "__bh_read_chunk(%ld) CHK=%ld loff=%ld "
                    "lsize=%ld return %d\n", 
                    bhh->ms.ino, chkid, loff, lsize, err);
         if (err == -EFBIG) {
@@ -996,7 +1056,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
             cdata = xmalloc(g_msb.chunk_size);
             if (!cdata) {
                 /* This SHOULD BE TEST: FIXME */
-                hvfs_warning(lib, "xmalloc() chunk buffer failed, slow mode.\n");
+                hvfs_warning(mmfs, "xmalloc() chunk buffer failed, slow mode.\n");
 
                 rlen = __mmfs_fread(&bhh->ms, buf + bytes, offset + bytes, lsize);
                 if (rlen < 0) {
@@ -1008,7 +1068,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                         err = 0;
                         rlen = 0;
                     } else {
-                        hvfs_err(lib, "do internal fread on _IN_%ld failed w/ %d\n",
+                        hvfs_err(mmfs, "do internal fread on _IN_%ld failed w/ %d\n",
                                  bhh->ms.ino, rlen);
                         err = rlen;
                         goto out;
@@ -1019,7 +1079,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                     err = __bh_fill(&bhh->ms, bhh, buf + bytes, 
                                     offset + bytes, lsize, 1);
                     if (err < 0) {
-                        hvfs_err(lib, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
+                        hvfs_err(mmfs, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
                                  (u64)offset + bytes, 
                                  (u64)offset + bytes + lsize, err);
                         goto out;
@@ -1028,7 +1088,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                 if (rlen < lsize) {
                     /* partial read: if it is the last chunk, break now;
                      * otherwise, zero the remain buffer */
-                    hvfs_warning(lib, "partial chunk read, expect %ld, get %d\n",
+                    hvfs_warning(mmfs, "partial chunk read, expect %ld, get %d\n",
                                  lsize, rlen);
                     bytes += rlen;
                     if (chkid < lastchk) {
@@ -1036,7 +1096,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                         bytes += lsize - rlen;
                     }
                 } else if (rlen > lsize) {
-                    hvfs_err(lib, "chunk read beyond range, expect %ld, get %d\n",
+                    hvfs_err(mmfs, "chunk read beyond range, expect %ld, get %d\n",
                              lsize, rlen);
                     bytes += lsize;
                 } else {
@@ -1061,7 +1121,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                         err = 0;
                         rlen = 0;
                     } else {
-                        hvfs_err(lib, "do internal fread on _IN_%ld failed w/ %d\n",
+                        hvfs_err(mmfs, "do internal fread on _IN_%ld failed w/ %d\n",
                                  bhh->ms.ino, rlen);
                         err = rlen;
                         xfree(cdata);
@@ -1074,7 +1134,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                     err = __bh_fill(&bhh->ms, bhh, cdata, chkid * g_msb.chunk_size,
                                     rlen, 1);
                     if (err < 0) {
-                        hvfs_err(lib, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
+                        hvfs_err(mmfs, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
                                  (chkid) * g_msb.chunk_size, 
                                  (chkid + 1) * g_msb.chunk_size,
                                  err);
@@ -1101,7 +1161,7 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                 xfree(cdata);
             }
         } else if (err < 0) {
-            hvfs_err(lib, "buffer cache read _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "buffer cache read _IN_%ld failed w/ %d\n",
                      bhh->ms.ino, err);
             goto out;
         } else {
@@ -1133,12 +1193,12 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
     
     c = __lookup_chunk(bhh, chkid, 1);
     if (!c) {
-        hvfs_err(lib, "__lookup_chunk(%ld) CHK=%ld failed.\n",
+        hvfs_err(mmfs, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  bhh->ms.ino, chkid);
         return -ENOMEM;
     }
 
-    hvfs_debug(lib, "__bh_sync_chunk(%ld) CHK=%ld c->size=%ld "
+    hvfs_debug(mmfs, "__bh_sync_chunk(%ld) CHK=%ld c->size=%ld "
                "c->asize=%ld\n",
                ms.ino, chkid, c->size, c->asize);
 
@@ -1157,7 +1217,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         /* sadly fallback to memcpy approach */
         data = xmalloc(c->asize);
         if (!data) {
-            hvfs_err(lib, "xmalloc(%ld) data buffer failed\n", 
+            hvfs_err(mmfs, "xmalloc(%ld) data buffer failed\n", 
                      c->asize);
             xrwlock_wunlock(&bhh->clock);
             __unlock_chunk(c);
@@ -1176,7 +1236,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
     } else {
         iov = xmalloc(sizeof(*iov) * i);
         if (!iov) {
-            hvfs_err(lib, "xmalloc() iov buffer failed\n");
+            hvfs_err(mmfs, "xmalloc() iov buffer failed\n");
             xrwlock_wunlock(&bhh->clock);
             __unlock_chunk(c);
             return -ENOMEM;
@@ -1203,14 +1263,14 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
     if (data) {
         err = __mmfs_fwrite(&ms, 0, data, c->asize, chkid);
         if (err) {
-            hvfs_err(lib, "do internal fwrite on ino'%lx' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
             goto out_free;
         }
     } else {
         err = __mmfs_fwritev(&ms, 0, iov, i, chkid);
         if (err) {
-            hvfs_err(lib, "do internal fwrite on ino'%lx' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
             goto out_free;
         }
@@ -1234,14 +1294,14 @@ static int __bh_sync(struct bhhead *bhh)
         /* oh, we have to fill the remain pages */
         err = __bh_fill(&ms, bhh, NULL, bhh->asize, 0, 1);
         if (err < 0) {
-            hvfs_err(lib, "fill the buffer cache failed w/ %d\n",
+            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
                      err);
             goto out;
         }
         ms.pino = bhh->ms.pino;
     }
 
-    hvfs_debug(lib, "__bh_sync(%ld) size=%ld asize %ld mdu.size %ld\n",
+    hvfs_debug(mmfs, "__bh_sync(%ld) size=%ld asize %ld mdu.size %ld\n",
                ms.ino, bhh->size, bhh->asize, bhh->ms.mdu.size);
 
     /* sync for each dirty chunk */
@@ -1251,7 +1311,7 @@ static int __bh_sync(struct bhhead *bhh)
         if (c && c->flag & CHUNK_DIRTY) {
             err = __bh_sync_chunk(bhh, c, i);
             if (err < 0) {
-                hvfs_err(lib, "__bh_sync_chunk(%d) failed w/ %d\n",
+                hvfs_err(mmfs, "__bh_sync_chunk(%d) failed w/ %d\n",
                          i, err);
             }
         }
@@ -1272,7 +1332,7 @@ static int __bh_sync(struct bhhead *bhh)
         __odc_update(&ms);
         err = __mmfs_update_inode_proxy(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on ino<%lx> failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on ino<%lx> failed w/ %d\n",
                      ms.ino, err);
             goto out;
         }
@@ -1329,7 +1389,7 @@ static int __ltc_init(int ttl, int hsize)
 
     mmfs_ltc_mgr.ht = xmalloc(mmfs_ltc_mgr.hsize * sizeof(struct regular_hash));
     if (!mmfs_ltc_mgr.ht) {
-        hvfs_err(lib, "LRU Translate Cache hash table init failed\n");
+        hvfs_err(mmfs, "LRU Translate Cache hash table init failed\n");
         return -ENOMEM;
     }
 
@@ -1346,6 +1406,22 @@ static int __ltc_init(int ttl, int hsize)
 
 static void __ltc_destroy(void)
 {
+    struct regular_hash *rh;
+    struct ltc_entry *le;
+    struct hlist_node *pos, *n;
+    int i;
+    
+    /* need to free every LTC entry */
+    for (i = 0; i < mmfs_ltc_mgr.hsize; i++) {
+        rh = mmfs_ltc_mgr.ht + i;
+        xlock_lock(&rh->lock);
+        hlist_for_each_entry_safe(le, pos, n, &rh->h, hlist) {
+            hlist_del(&le->hlist);
+            xfree(le->fullname);
+            xfree(le);
+        }
+        xlock_unlock(&rh->lock);
+    }
     xfree(mmfs_ltc_mgr.ht);
 }
 
@@ -1551,6 +1627,7 @@ int mmfs_getattr(const char *pathname, struct stat *stbuf)
 
         if (unlikely(se)) {
             ms = se->ms;
+            xfree(se->key);
             xfree(se);
             goto pack;
         }
@@ -1572,13 +1649,13 @@ int mmfs_getattr(const char *pathname, struct stat *stbuf)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -1597,7 +1674,7 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_debug(lib, "do internal file stat on '%s'"
+            hvfs_debug(mmfs, "do internal file stat on '%s'"
                        " failed w/ %d pino %ld (RT %ld)\n",
                        name, err, pino, g_msb.root_ino);
             goto out;
@@ -1608,7 +1685,7 @@ hit:
             /* stat root w/o any file name, it is ROOT we want to stat */
             err = __mmfs_fill_root(&ms);
             if (err) {
-                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                hvfs_err(mmfs, "fill root entry failed w/ %d\n", err);
                 goto out;
             }
         }
@@ -1619,7 +1696,7 @@ hit:
         struct bhhead *bhh = __odc_lookup(ms.ino);
 
         if (unlikely(bhh)) {
-            hvfs_debug(lib, "1. ODC update size? v%d,%d, bhh->asize=%ld, mdu.size=%ld\n",
+            hvfs_debug(mmfs, "1. ODC update size? v%d,%d, bhh->asize=%ld, mdu.size=%ld\n",
                        ms.mdu.version, bhh->ms.mdu.version, bhh->asize, ms.mdu.size);
             if (MDU_VERSION_COMPARE(ms.mdu.version, bhh->ms.mdu.version)) {
                 /* FIXME: this means that server's mdu has been updated. We
@@ -1631,7 +1708,7 @@ hit:
                 ms.mdu.size = bhh->asize;
             }
             __put_bhhead(bhh);
-            hvfs_debug(lib, "2. ODC update size? v%d,%d, bhh->asize=%ld, mdu.size=%ld\n",
+            hvfs_debug(mmfs, "2. ODC update size? v%d,%d, bhh->asize=%ld, mdu.size=%ld\n",
                        ms.mdu.version, bhh->ms.mdu.version, bhh->asize, ms.mdu.size);
         }
     }
@@ -1659,6 +1736,8 @@ pack:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_GETATTR);
     
     return err;
 }
@@ -1688,13 +1767,13 @@ static int mmfs_readlink(const char *pathname, char *buf, size_t size)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -1713,12 +1792,12 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
     } else {
-        hvfs_err(lib, "Readlink from a directory is not allowed.\n");
+        hvfs_err(mmfs, "Readlink from a directory is not allowed.\n");
         err = -EINVAL;
         goto out;
     }
@@ -1727,17 +1806,20 @@ hit:
     {
         err = __mmfs_readlink(pino, &ms);
         if (err) {
-            hvfs_err(lib, "readlink on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "readlink on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         memset(buf, 0, size);
         memcpy(buf, ms.arg, min(ms.mdu.size, size));
+        xfree(ms.arg);
     }
 
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_READLINK);
 
     return err;
 }
@@ -1768,13 +1850,13 @@ static int mmfs_mknod(const char *pathname, mode_t mode, dev_t rdev)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -1796,7 +1878,7 @@ hit:
     mu.dev = rdev;
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_ALL);
     if (err) {
-        hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -1804,6 +1886,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_MKNOD);
 
     return err;
 }
@@ -1834,13 +1918,13 @@ static int mmfs_mkdir(const char *pathname, mode_t mode)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -1865,7 +1949,7 @@ hit:
 
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_DIR | __MMFS_CREATE_ALL);
     if (err) {
-        hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -1879,14 +1963,14 @@ hit:
         pms.ino = pino;
         err = __mmfs_stat(0, &pms);
         if (err) {
-            hvfs_err(lib, "do internal stat on _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "do internal stat on _IN_%ld failed w/ %d\n",
                      pino, err);
             goto out;
         }
     }
     err = __mmfs_update_inode(&pms, &mu);
     if (err) {
-        hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
+        hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d\n",
                  pms.ino, err);
         goto out;
     }
@@ -1894,6 +1978,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_MKDIR);
 
     return err;
 }
@@ -1923,13 +2009,13 @@ static int mmfs_unlink(const char *pathname)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -1947,7 +2033,7 @@ hit:
     ms.ino = 0;
     err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
     if (err) {
-        hvfs_err(lib, "do internal delete on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal delete on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -1957,6 +2043,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_UNLINK);
 
     return err;
 }
@@ -1987,13 +2075,13 @@ static int mmfs_rmdir(const char *pathname)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2010,7 +2098,7 @@ hit:
     /* finally, do delete now */
     if (strlen(name) == 0 || strcmp(name, "/") == 0) {
         /* what we want to delete is the root directory, reject it */
-        hvfs_err(lib, "Reject root directory removal!\n");
+        hvfs_err(mmfs, "Reject root directory removal!\n");
         err = -ENOTEMPTY;
         goto out;
     } else {
@@ -2019,12 +2107,12 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         if (!S_ISDIR(ms.mdu.mode)) {
-            hvfs_err(lib, "not a directory, we expect dir here.\n");
+            hvfs_err(mmfs, "not a directory, we expect dir here.\n");
             err = -ENOTDIR;
             goto out;
         }
@@ -2038,7 +2126,7 @@ hit:
         ms.ino = 0;
         err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
         if (err) {
-            hvfs_err(lib, "do internal delete on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal delete on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
@@ -2051,14 +2139,14 @@ hit:
             pms.ino = pino;
             err = __mmfs_stat(0, &pms);
             if (err) {
-                hvfs_err(lib, "do internal stat on _IN_%ld failed w/ %d\n",
+                hvfs_err(mmfs, "do internal stat on _IN_%ld failed w/ %d\n",
                          pino, err);
                 goto out;
             }
         }
         err = __mmfs_update_inode(&pms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d\n",
                      pms.ino, err);
             goto out;
         }
@@ -2070,16 +2158,18 @@ hit:
             sprintf(set, "o%ld", ms.ino);
             err = mmcc_del_set(set);
             if (err) {
-                hvfs_err(lib, "do MMCC set %s delete failed, manual delete.\n",
+                hvfs_err(mmfs, "do MMCC set %s delete failed, manual delete.\n",
                          set);
                 goto out;
             }
-            hvfs_debug(lib, "MMCC set %s deleted (not shadow).\n", set);
+            hvfs_debug(mmfs, "MMCC set %s deleted (not shadow).\n", set);
         }
     }
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_RMDIR);
 
     return err;
 }
@@ -2110,13 +2200,13 @@ static int mmfs_symlink(const char *from, const char *to)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2131,7 +2221,7 @@ static int mmfs_symlink(const char *from, const char *to)
 hit:
     /* create the file or dir in the parent directory now */
     if (strlen(name) == 0 || strcmp(name, "/") == 0) {
-        hvfs_err(lib, "Create zero-length named file or root directory?\n");
+        hvfs_err(mmfs, "Create zero-length named file or root directory?\n");
         err = -EINVAL;
         goto out;
     }
@@ -2148,7 +2238,7 @@ hit:
     
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_SYMLINK | __MMFS_CREATE_ALL);
     if (err) {
-        hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -2156,6 +2246,8 @@ out:
     xfree(dup);
     xfree(spath);
     
+    RENEW_CI(OP_SYMLINK);
+
     return err;
 }
 
@@ -2194,13 +2286,13 @@ static int mmfs_rename(const char *from, const char *to)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2220,14 +2312,14 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         if (ms.mdu.flags & MMFS_MDU_SYMLINK) {
             err = __mmfs_readlink(ms.pino, &ms);
             if (err) {
-                hvfs_err(lib, "do internal stat(SYMLINK) on '%s' "
+                hvfs_err(mmfs, "do internal stat(SYMLINK) on '%s' "
                          "failed w/ %d\n",
                          name, err);
                 goto out;
@@ -2236,7 +2328,7 @@ hit:
     } else {
         /* rename directory, it is ok */
         if (!S_ISDIR(ms.mdu.mode) || ms.ino == g_msb.root_ino) {
-            hvfs_err(lib, "directory or not-directory, it is a question!\n");
+            hvfs_err(mmfs, "directory or not-directory, it is a question!\n");
             err = -EPERM;
             goto out;
         }
@@ -2290,13 +2382,13 @@ hit:
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2317,7 +2409,7 @@ hit2:
         if (err == -ENOENT) {
             /* it is ok to continue */
         } else if (err) {
-            hvfs_err(lib, "do internal stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         } else {
@@ -2334,7 +2426,7 @@ hit2:
                     deleted_ms = ms;
                     err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
                     if (err) {
-                        hvfs_err(lib, "do internal unlink on _IN_%ld "
+                        hvfs_err(mmfs, "do internal unlink on _IN_%ld "
                                  "failed w/ %d\n",
                                  ms.ino, err);
                         goto out;
@@ -2352,7 +2444,7 @@ hit2:
                 if (ms.mdu.flags & MMFS_MDU_SYMLINK) {
                     err = __mmfs_readlink(ms.pino, &ms);
                     if (err) {
-                        hvfs_err(lib, "do internal stat(SYMLINK) on '%s' "
+                        hvfs_err(mmfs, "do internal stat(SYMLINK) on '%s' "
                                  "failed w/ %d\n",
                                  name, err);
                         err = -EINVAL;
@@ -2362,7 +2454,7 @@ hit2:
                 deleted_ms = ms;
                 err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
                 if (err) {
-                    hvfs_err(lib, "do internal unlink on _IN_%ld "
+                    hvfs_err(mmfs, "do internal unlink on _IN_%ld "
                              "failed w/ %d\n",
                              ms.ino, err);
                     goto out;
@@ -2379,7 +2471,7 @@ hit2:
                 deleted_ms = ms;
                 err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
                 if (err) {
-                    hvfs_err(lib, "do internal unlink on "
+                    hvfs_err(mmfs, "do internal unlink on "
                              "_IN_%ld failed w/ %d\n",
                              pino, err);
                 }
@@ -2388,7 +2480,7 @@ hit2:
                 goto out;
             }
         } else {
-            hvfs_err(lib, "directory or not-directory, it is a question\n");
+            hvfs_err(mmfs, "directory or not-directory, it is a question\n");
             goto out;
         }
     }
@@ -2404,7 +2496,7 @@ hit2:
 
         err = __mmfs_create(pino, &ms, &mu, flags);
         if (err) {
-            hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                      name, err);
             goto out_rollback;
         }
@@ -2430,7 +2522,7 @@ hit2:
     /* unlink the old file or directory now (only dentry) */
     err = __mmfs_unlink(saved_ms.pino, &saved_ms, __MMFS_UNLINK_DENTRY);
     if (err) {
-        hvfs_err(lib, "do internal unlink on (pino %ld)/%s failed "
+        hvfs_err(mmfs, "do internal unlink on (pino %ld)/%s failed "
                  "w/ %d (ignore)\n",
                  saved_ms.pino, saved_ms.name, err);
         /* ignore this error */
@@ -2449,12 +2541,12 @@ hit2:
         __ms.ino = saved_ms.pino;
         err = __mmfs_stat(0, &__ms);
         if (err) {
-            hvfs_err(lib, "__mmfs_stat(%ld) failed w/ %d, nlink-- failed\n",
+            hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink-- failed\n",
                      __ms.ino, err);
         } else {
             err = __mmfs_linkadd(&__ms, -1);
             if (err) {
-                hvfs_err(lib, "__mmfs_linkadd(%ld) failed w/ %d, nlink-- failed\n",
+                hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink-- failed\n",
                          __ms.ino, err);
             }
         }
@@ -2462,22 +2554,22 @@ hit2:
         __ms.ino = pino;
         err = __mmfs_stat(0, &__ms);
         if (err) {
-            hvfs_err(lib, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
+            hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
                      __ms.ino, err);
         } else {
             err = __mmfs_linkadd(&__ms, 1);
             if (err) {
-                hvfs_err(lib, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
+                hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
                          __ms.ino, err);
             }
         }
         if (err) {
-            hvfs_err(lib, "rename success but nlink fix failed, ignore\n");
+            hvfs_err(mmfs, "rename success but nlink fix failed, ignore\n");
             err = 0;
         }
     }
 
-    hvfs_debug(lib, "rename from %s(ino %ld) to %s(ino %ld)\n",
+    hvfs_debug(mmfs, "rename from %s(ino %ld) to %s(ino %ld)\n",
                from, saved_ms.ino, to, ms.ino);
 out:
     if (isaved)
@@ -2486,6 +2578,8 @@ out:
     xfree(dup);
     xfree(dup2);
     xfree(spath);
+
+    RENEW_CI(OP_RENAME);
 
     return err;
 out_rollback:
@@ -2498,7 +2592,7 @@ out_rollback:
             flags |= __MMFS_CREATE_SYMLINK;
         err = __mmfs_create(deleted_ms.pino, &deleted_ms, &mu, flags);
         if (err) {
-            hvfs_err(lib, "do rollback create on (pino %ld)/%ld "
+            hvfs_err(mmfs, "do rollback create on (pino %ld)/%ld "
                      "failed w/ %d\n",
                      deleted_ms.pino, deleted_ms.ino, err);
         }
@@ -2534,13 +2628,13 @@ static int mmfs_link(const char *from, const char *to)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2560,23 +2654,23 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         if (S_ISDIR(ms.mdu.mode)) {
-            hvfs_err(lib, "hard link on directory is not allowed\n");
+            hvfs_err(mmfs, "hard link on directory is not allowed\n");
             err = -EPERM;
             goto out;
         }
         err = __mmfs_linkadd(&ms, 1);
         if (err) {
-            hvfs_err(lib, "do hard link on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do hard link on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
     } else {
-        hvfs_err(lib, "hard link on directory is not allowed\n");
+        hvfs_err(mmfs, "hard link on directory is not allowed\n");
         err = -EPERM;
         goto out;
     }
@@ -2610,13 +2704,13 @@ hit:
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2631,7 +2725,7 @@ hit:
 hit2:
     /* create the file in parent directory (only dentry) */
     if (strlen(name) == 0 || strcmp(name, "/") == 0) {
-        hvfs_err(lib, "Create zero-length named file or root directory?\n");
+        hvfs_err(mmfs, "Create zero-length named file or root directory?\n");
         err = -EINVAL;
         goto out_unlink;
     }
@@ -2643,7 +2737,7 @@ hit2:
 
         err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_DENTRY);
         if (err) {
-            hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                      name, err);
             goto out_unlink;
         }
@@ -2653,12 +2747,14 @@ out:
     xfree(dup2);
     xfree(spath);
 
+    RENEW_CI(OP_LINK);
+
     return err;
 out_unlink:
     {
         err = __mmfs_linkadd(&saved_ms, -1);
         if (err) {
-            hvfs_err(lib, "do linkadd(-1) on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do linkadd(-1) on '%s' failed w/ %d\n",
                      saved_ms.name, err);
         }
     }
@@ -2691,13 +2787,13 @@ static int mmfs_chmod(const char *pathname, mode_t mode)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2720,13 +2816,13 @@ hit:
         if (pino == g_msb.root_ino) {
             err = __mmfs_fill_root(&ms);
             if (err) {
-                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                hvfs_err(mmfs, "fill root entry failed w/ %d\n", err);
                 goto out;
             }
         }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d\n",
                      ms.ino, err);
             goto out;
         }
@@ -2736,14 +2832,14 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         __odc_update(&ms);
         err = __mmfs_update_inode_proxy(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on '%s'(_IN_%ld) "
+            hvfs_err(mmfs, "do internal update on '%s'(_IN_%ld) "
                      "failed w/ %d\n",
                      name, ms.ino, err);
             goto out;
@@ -2753,6 +2849,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_CHMOD);
 
     return err;
 }
@@ -2783,13 +2881,13 @@ static int mmfs_chown(const char *pathname, uid_t uid, gid_t gid)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2813,13 +2911,13 @@ hit:
         if (pino == g_msb.root_ino) {
             err = __mmfs_fill_root(&ms);
             if (err) {
-                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                hvfs_err(mmfs, "fill root entry failed w/ %d\n", err);
                 goto out;
             }
         }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d\n",
                      ms.ino, err);
             goto out;
         }
@@ -2829,14 +2927,14 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         __odc_update(&ms);
         err = __mmfs_update_inode_proxy(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on '%s'(_IN_%ld) "
+            hvfs_err(mmfs, "do internal update on '%s'(_IN_%ld) "
                      "failed w/ %d\n",
                      name, ms.ino, err);
             goto out;
@@ -2846,6 +2944,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_CHOWN);
 
     return err;
 }
@@ -2868,13 +2968,13 @@ static int mmfs_truncate(const char *pathname, off_t size)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -2893,17 +2993,17 @@ static int mmfs_truncate(const char *pathname, off_t size)
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
     } else {
-        hvfs_err(lib, "truncate directory is not allowed\n");
+        hvfs_err(mmfs, "truncate directory is not allowed\n");
         err = -EINVAL;
         goto out;
     }
     if (S_ISDIR(ms.mdu.mode)) {
-        hvfs_err(lib, "truncate directory is not allowed\n");
+        hvfs_err(mmfs, "truncate directory is not allowed\n");
         err = -EINVAL;
         goto out;
     }
@@ -2924,7 +3024,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
         bhh->asize = size;
         err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 0);
         if (err < 0) {
-            hvfs_err(lib, "fill the buffer cache failed w/ %d\n", err);
+            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n", err);
             bhh->asize = osize;
             goto out_put;
         }
@@ -2941,6 +3041,8 @@ out_put:
     __put_bhhead(bhh);
 out:
     xfree(dup);
+
+    RENEW_CI(OP_TRUNCATE);
 
     return err;
 }
@@ -2967,7 +3069,7 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
         bhh->asize = size;
         err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 0);
         if (err < 0) {
-            hvfs_err(lib, "fill the buffer cache failed w/ %d\n", err);
+            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n", err);
             bhh->asize = osize;
             goto out;
         }
@@ -2981,6 +3083,8 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
         __bh_sync(bhh);
 
 out:
+    RENEW_CI(OP_FTRUNCATE);
+
     return err;
 }
 
@@ -3010,13 +3114,13 @@ static int mmfs_utime(const char *pathname, struct utimbuf *buf)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -3039,13 +3143,13 @@ hit:
         if (pino == g_msb.root_ino) {
             err = __mmfs_fill_root(&ms);
             if (err) {
-                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                hvfs_err(mmfs, "fill root entry failed w/ %d\n", err);
                 goto out;
             }
         }
         err = __mmfs_update_inode(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on _IN_%ld failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d\n",
                      ms.ino, err);
             goto out;
         }
@@ -3055,14 +3159,14 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
         __odc_update(&ms);
         err = __mmfs_update_inode_proxy(&ms, &mu);
         if (err) {
-            hvfs_err(lib, "do internal update on '%s'(_IN_%ld) "
+            hvfs_err(mmfs, "do internal update on '%s'(_IN_%ld) "
                      "failed w/ %d\n",
                      name, ms.ino, err);
             goto out;
@@ -3072,6 +3176,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_UTIME);
 
     return err;
 }
@@ -3101,13 +3207,13 @@ static int mmfs_open(const char *pathname, struct fuse_file_info *fi)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -3126,7 +3232,7 @@ hit:
     ms.ino = 0;
     err = __mmfs_stat(pino, &ms);
     if (err) {
-        hvfs_err(lib, "do internal file stat on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal file stat on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -3150,7 +3256,7 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal file 2nd stat on '%s' "
+            hvfs_err(mmfs, "do internal file 2nd stat on '%s' "
                      "failed w/ %d\n",
                      name, err);
             goto out;
@@ -3158,7 +3264,7 @@ hit:
         if (MDU_VERSION_COMPARE(ms.mdu.version, bhh->ms.mdu.version)) {
             bhh->ms.mdu = ms.mdu;
         }
-        hvfs_warning(lib, "in open the file(%p, %ld)!\n",
+        hvfs_warning(mmfs, "in open the file(%p, %ld)!\n",
                      bhh, bhh->ms.mdu.size);
     }
 #endif
@@ -3166,6 +3272,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_OPEN);
 
     return err;
 }
@@ -3179,7 +3287,7 @@ static int mmfs_read(const char *pathname, char *buf, size_t size,
 
     ms = bhh->ms;
 
-    hvfs_debug(lib, "[%ld] 1. offset=%ld, size=%ld, bhh->size=%ld, bhh->asize=%ld\n",
+    hvfs_debug(mmfs, "[%ld] 1. offset=%ld, size=%ld, bhh->size=%ld, bhh->asize=%ld\n",
                ms.ino, (u64)offset, (u64)size, bhh->size, bhh->asize);
 
     /* if the buffer is larger than file size, truncate it to size */
@@ -3190,7 +3298,7 @@ static int mmfs_read(const char *pathname, char *buf, size_t size,
     if ((ssize_t)size <= 0) {
         return 0;
     }
-    hvfs_debug(lib, "[%ld] 2. offset=%ld, size=%ld, bhh->size=%ld, bhh->asize=%ld\n",
+    hvfs_debug(mmfs, "[%ld] 2. offset=%ld, size=%ld, bhh->size=%ld, bhh->asize=%ld\n",
                ms.ino, (u64)offset, (u64)size, bhh->size, bhh->asize);
 
 retry:
@@ -3198,7 +3306,7 @@ retry:
     if (err < 0) {
         if (err == -EAGAIN)
             goto retry;
-        hvfs_err(lib, "buffer cache read '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "buffer cache read '%s' failed w/ %d\n",
                  pathname, err);
         goto out;
     }
@@ -3215,13 +3323,15 @@ retry:
         mu.atime = tv.tv_sec;
         __err = __mmfs_update_inode_proxy(&ms, &mu);
         if (err < 0) {
-            hvfs_err(lib, "do internal update on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal update on '%s' failed w/ %d\n",
                      pathname, __err);
             goto out;
         }
     }
 
 out:
+    RENEW_CI(OP_READ);
+
     return err;
 }
 
@@ -3243,7 +3353,7 @@ static int mmfs_cached_write(const char *pathname, const char *buf,
 
     err = __bh_fill(&ms, bhh, (void *)buf, offset, size, 1);
     if (err < 0) {
-        hvfs_err(lib, "fill the buffer cache failed w/ %d\n",
+        hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
                  err);
         bhh->asize = osize;
         goto out;
@@ -3259,15 +3369,20 @@ static int mmfs_write(const char *pathname, const char *buf,
                       struct fuse_file_info *fi)
 {
     struct bhhead *bhh = (struct bhhead *)fi->fh;
+    int err = 0;
 
-    hvfs_debug(lib, "in write the file %s(%p, mdu.size=%ld) [%ld,%ld)!\n",
+    hvfs_debug(mmfs, "in write the file %s(%p, mdu.size=%ld) [%ld,%ld)!\n",
                pathname, bhh, bhh->ms.mdu.size,
                (u64)offset, (u64)offset + size);
 
     if (offset + size > g_msb.chunk_size)
         bhh->ms.mdu.flags |= MMFS_MDU_LARGE;
     
-    return mmfs_cached_write(pathname, buf, size, offset, fi);
+    err = mmfs_cached_write(pathname, buf, size, offset, fi);
+
+    RENEW_CI(OP_WRITE);
+
+    return err;
 }
 
 static int mmfs_statfs_plus(const char *pathname, struct statvfs *stbuf)
@@ -3289,6 +3404,8 @@ static int mmfs_statfs_plus(const char *pathname, struct statvfs *stbuf)
     stbuf->f_flag = ST_NOSUID;
     stbuf->f_namemax = 256;
 
+    RENEW_CI(OP_STATFS_PLUS);
+
     return err;
 }
 
@@ -3303,6 +3420,8 @@ static int mmfs_release(const char *pathname, struct fuse_file_info *fi)
     __put_bhhead(bhh);
 
     mmfs_update_sb(&g_msb);
+
+    RENEW_CI(OP_RELEASE);
 
     return 0;
 }
@@ -3322,6 +3441,8 @@ static int mmfs_fsync(const char *pathname, int datasync,
     } else if (bhh->ms.mdu.flags & MMFS_MDU_LARGE) {
     }
 
+    RENEW_CI(OP_FSYNC);
+
     return err;
 }
 
@@ -3337,7 +3458,7 @@ static int mmfs_opendir(const char *pathname, struct fuse_file_info *fi)
 
     dir = xzalloc(sizeof(*dir));
     if (!dir) {
-        hvfs_err(lib, "xzalloc() mmfs_dir_t failed\n");
+        hvfs_err(mmfs, "xzalloc() mmfs_dir_t failed\n");
         return -ENOMEM;
     }
 
@@ -3359,13 +3480,13 @@ static int mmfs_opendir(const char *pathname, struct fuse_file_info *fi)
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -3384,7 +3505,7 @@ hit:
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do last dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do last dir stat on '%s' failed w/ %d\n",
                      name, err);
             goto out;
         }
@@ -3393,7 +3514,7 @@ hit:
         if (pino == g_msb.root_ino) {
             err = __mmfs_fill_root(&ms);
             if (err) {
-                hvfs_err(lib, "fill root entry failed w/ %d\n", err);
+                hvfs_err(mmfs, "fill root entry failed w/ %d\n", err);
                 goto out;
             }
         }
@@ -3403,6 +3524,8 @@ hit:
 out:
     xfree(dup);
     xfree(spath);
+
+    RENEW_CI(OP_OPENDIR);
 
     return err;
 }
@@ -3426,7 +3549,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
         memset(dir, 0, sizeof(*dir));
         dir->dino = ino;
     }
-    hvfs_debug(lib, "readdir_plus ino %ld off %ld goff %ld csize %d\n",
+    hvfs_debug(mmfs, "readdir_plus ino %ld off %ld goff %ld csize %d\n",
                dir->dino, off, dir->goffset, dir->csize);
 
     if (dir->csize > 0 &&
@@ -3447,7 +3570,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
                 if (filler != NULL) {
                     res = filler(buf, name, &st, off + 1);
                 } else {
-                    hvfs_info(lib, "FILLER: buf %p name %s ino %ld "
+                    hvfs_info(mmfs, "FILLER: buf %p name %s ino %ld "
                               "mode %d(%o) off %ld\n",
                               buf, name, st.st_ino, st.st_mode,
                               st.st_mode, off + 1);
@@ -3482,7 +3605,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
     
         err = __mmfs_readdir(dir);
         if (err) {
-            hvfs_err(lib, "__mmfs_readdir() failed w/ %d\n", err);
+            hvfs_err(mmfs, "__mmfs_readdir() failed w/ %d\n", err);
             goto out;
         }
         /* check if we should stop */
@@ -3501,7 +3624,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
                     if (filler != NULL)
                         res = filler(buf, name, &st, off + 1);
                     else {
-                        hvfs_debug(lib, "FILLER: buf %p name %s ino %ld "
+                        hvfs_debug(mmfs, "FILLER: buf %p name %s ino %ld "
                                    "mode %d(%o) off %ld\n",
                                    buf, name, st.st_ino, st.st_mode, 
                                    st.st_mode, off + 1);
@@ -3535,7 +3658,7 @@ static int mmfs_readdir_plus(const char *pathname, void *buf,
     err = __mmfs_readdir_plus(buf, filler, off,
                               (mmfs_dir_t *)fi->fh);
     if (err < 0) {
-        hvfs_err(lib, "do internal readdir on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal readdir on '%s' failed w/ %d\n",
                  pathname, err);
         goto out;
     } else if (err == 1) {
@@ -3544,6 +3667,8 @@ static int mmfs_readdir_plus(const char *pathname, void *buf,
     }
 
 out:
+    RENEW_CI(OP_READDIR_PLUS);
+
     return err;
 }
 
@@ -3554,6 +3679,8 @@ static int mmfs_release_dir(const char *pathname, struct fuse_file_info *fi)
     xfree(dir->cursor);
     xfree(dir->di);
     xfree(dir);
+
+    RENEW_CI(OP_RELEASE_DIR);
 
     return 0;
 }
@@ -3588,13 +3715,13 @@ static int mmfs_create_plus(const char *pathname, mode_t mode,
             /* end */
             break;
         }
-        hvfs_debug(lib, "token: %s\n", p);
+        hvfs_debug(mmfs, "token: %s\n", p);
         /* Step 1: find inode info by call __mmfs_stat */
         ms.name = p;
         ms.ino = 0;
         err = __mmfs_stat(pino, &ms);
         if (err) {
-            hvfs_err(lib, "do internal dir stat on '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "do internal dir stat on '%s' failed w/ %d\n",
                      p, err);
             break;
         }
@@ -3617,7 +3744,7 @@ hit:
 
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_ALL);
     if (err) {
-        hvfs_err(lib, "do internal create on '%s' failed w/ %d\n",
+        hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
@@ -3630,7 +3757,7 @@ hit:
 
     {
         struct bhhead *bhh = (struct bhhead *)fi->fh;
-        hvfs_warning(lib, "in create the file _IN_%ld (size=%ld)!\n",
+        hvfs_warning(mmfs, "in create the file _IN_%ld (size=%ld)!\n",
                      bhh->ms.ino, bhh->ms.mdu.size);
     }
     /* Save the mstat in SOC cache */
@@ -3644,15 +3771,46 @@ out:
     xfree(dup);
     xfree(spath);
 
+    RENEW_CI(OP_CREATE_PLUS);
+
     return err;
+}
+
+static void *mmfs_timer_main(void *arg)
+{
+    static time_t last = -1;
+    time_t cur = *(time_t *)arg;
+    int err = 0;
+
+    if (last < 0)
+        last = cur;
+
+    if (cur - last >= 30) {
+        err = __mmfs_client_info(&g_ci);
+        if (err) {
+            hvfs_err(mmfs, "Update client info failed w/ %d\n", err);
+        }
+    }
+    last = cur;
+
+    return NULL;
 }
 
 static void *mmfs_init(struct fuse_conn_info *conn)
 {
+    mmcc_config_t mc = {
+        .tcb = mmfs_timer_main,
+    };
     int err = 0;
 
     if (!g_pagesize)
         g_pagesize = getpagesize();
+
+    err = __mmfs_renew_ci(&g_ci, OP_NONE);
+    if (err) {
+        hvfs_err(mmfs, "Init client info failed w/ %d, ignore it\n",
+                 err);
+    }
 
 realloc:
     err = posix_memalign(&zero_page, g_pagesize, g_pagesize);
@@ -3660,19 +3818,25 @@ realloc:
         goto realloc;
     }
     if (mprotect(zero_page, g_pagesize, PROT_READ) < 0) {
-        hvfs_err(lib, "mprotect ZERO page failed w/ %d\n", errno);
+        hvfs_err(mmfs, "mprotect ZERO page failed w/ %d\n", errno);
+    }
+
+    err = mmcc_config(&mc);
+    if (err) {
+        hvfs_err(mmfs, "MMCC config() failed w/ %d\n", err);
+        HVFS_BUGON("MMCC config failed!");
     }
 
     err = mmcc_init("STL://127.0.0.1:26379");
     if (err) {
-        hvfs_err(lib, "MMCC init() failed w/ %d\n", err);
+        hvfs_err(mmfs, "MMCC init() failed w/ %d\n", err);
         HVFS_BUGON("MMCC init failed!");
     }
 
     /* load create script now */
     err = __mmfs_load_scripts();
     if (err) {
-        hvfs_err(lib, "__mmfs_load_scripts() failed w/ %d\n",
+        hvfs_err(mmfs, "__mmfs_load_scripts() failed w/ %d\n",
                  err);
         HVFS_BUGON("Script load failed. FATAL ERROR!\n");
     }
@@ -3685,16 +3849,16 @@ realloc:
     }
     
     if (__ltc_init(mmfs_fuse_mgr.ttl, 0)) {
-        hvfs_err(lib, "LRU Translate Cache init failed. Cache DISABLED!\n");
+        hvfs_err(mmfs, "LRU Translate Cache init failed. Cache DISABLED!\n");
     }
 
     if (__odc_init(0)) {
-        hvfs_err(lib, "OpeneD Cache(ODC) init failed. FATAL ERROR!\n");
+        hvfs_err(mmfs, "OpeneD Cache(ODC) init failed. FATAL ERROR!\n");
         HVFS_BUGON("ODC init failed!");
     }
 
     if (__soc_init(0)) {
-        hvfs_err(lib, "Stat Oneshot Cache(SOC) init failed. FATAL ERROR!\n");
+        hvfs_err(mmfs, "Stat Oneshot Cache(SOC) init failed. FATAL ERROR!\n");
         HVFS_BUGON("SOC init failed!");
     }
 
@@ -3705,20 +3869,20 @@ realloc:
     err = __mmfs_get_sb(&g_msb);
     if (err) {
         if (err == -EINVAL && mmfs_fuse_mgr.ismkfs) {
-            hvfs_err(lib, "File System '%s' not exist, ok to create it.\n",
+            hvfs_err(mmfs, "File System '%s' not exist, ok to create it.\n",
                      g_msb.name);
         } else {
-            hvfs_err(lib, "Get superblock for file system '%s' failed w/ %d\n",
+            hvfs_err(mmfs, "Get superblock for file system '%s' failed w/ %d\n",
                      g_msb.name, err);
             HVFS_BUGON("Get superblock failed!");
         }
     } else {
         if (mmfs_fuse_mgr.ismkfs) {
-            hvfs_err(lib, "File System '%s' superblock has already existed.\n",
+            hvfs_err(mmfs, "File System '%s' superblock has already existed.\n",
                 g_msb.name);
             HVFS_BUGON("File System already exists!");
         } else {
-            hvfs_info(lib, "File System '%s' SB={root_ino=%ld,version=%ld,"
+            hvfs_info(mmfs, "File System '%s' SB={root_ino=%ld,version=%ld,"
                       "space(%ld,%ld),inode(%ld,%ld)}\n",
                       g_msb.name, g_msb.root_ino, g_msb.version,
                       g_msb.space_quota, g_msb.space_used,
@@ -3739,11 +3903,20 @@ static void mmfs_destroy(void *arg)
 
     mmfs_update_sb(&g_msb);
 
+    /* free any other resources */
+    xfree(zero_page);
+    __mmfs_unload_scripts();
+
     mmcc_debug_mode(1);
     mmcc_fina();
     mmcc_debug_mode(0);
-    
-    hvfs_info(lib, "Exit the MMFS fuse client now.\n");
+
+    /* free g_ci resources (must after mmcc_fina) */
+    xfree(g_ci.hostname);
+    xfree(g_ci.ip);
+    xfree(g_ci.md5);
+
+    hvfs_info(mmfs, "Exit the MMFS fuse client now.\n");
 }
 
 struct fuse_operations mmfs_ops = {

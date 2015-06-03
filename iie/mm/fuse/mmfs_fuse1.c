@@ -91,5 +91,9 @@ int main(int argc, char *argv[])
         goto out;
     }
 out:
+    xfree(uris);
+    xfree(namespace);
+    xfree(rootdir);
+    
     return err;
 }

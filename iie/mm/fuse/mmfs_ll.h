@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-25 17:18:34 macan>
+ * Time-stamp: <2015-06-02 16:27:57 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,6 +40,7 @@
 #include "xhash.h"
 #include "atomic.h"
 #include "md5.h"
+#include "version.h"
 
 #include "tracing.h"
 
@@ -228,10 +229,76 @@ struct __mmfs_fuse_mgr
     u64 chunk_size;
 };
 
+struct __mmfs_op_stat
+{
+#define OP_NONE         0
+#define OP_GETATTR      1
+#define OP_READLINK     2
+#define OP_MKNOD        3
+#define OP_MKDIR        4
+#define OP_UNLINK       5
+#define OP_RMDIR        6
+#define OP_SYMLINK      7
+#define OP_RENAME       8
+#define OP_LINK         9
+#define OP_CHMOD        10
+#define OP_CHOWN        11
+#define OP_TRUNCATE     12
+#define OP_UTIME        13
+#define OP_OPEN         14
+#define OP_READ         15
+#define OP_WRITE        16
+#define OP_STATFS_PLUS  17
+#define OP_RELEASE      18
+#define OP_FSYNC        19
+#define OP_OPENDIR      20
+#define OP_READDIR_PLUS 21
+#define OP_RELEASE_DIR  22
+#define OP_CREATE_PLUS  23
+#define OP_FTRUNCATE    24
+
+    atomic64_t getattr;
+    atomic64_t readlink;
+    atomic64_t mknod;
+    atomic64_t mkdir;
+    atomic64_t unlink;
+    atomic64_t rmdir;
+    atomic64_t symlink;
+    atomic64_t rename;
+    atomic64_t link;
+    atomic64_t chmod;
+    atomic64_t chown;
+    atomic64_t truncate;
+    atomic64_t utime;
+    atomic64_t open;
+    atomic64_t read;
+    atomic64_t write;
+    atomic64_t statfs_plus;
+    atomic64_t release;
+    atomic64_t fsync;
+    atomic64_t opendir;
+    atomic64_t readdir_plus;
+    atomic64_t release_dir;
+    atomic64_t create_plus;
+    atomic64_t ftruncate;
+};
+
+struct __mmfs_client_info
+{
+    char *hostname;
+    char *namespace;
+    char *ip;
+    char *md5;                  /* self client binary md5sum */
+    time_t born;                /* mount time */
+    struct __mmfs_op_stat os;
+};
+
 /* Regin for Internal APIs */
+extern u32 hvfs_mmll_tracing_flags;
 struct redisConnection
 {
-    time_t ttl;
+    time_t born;                /* born time */
+    time_t ttl;                 /* this connection used last time */
     pid_t tid;
     struct hlist_node hlist;
     atomic_t ref;
@@ -242,6 +309,14 @@ struct redisConnection
 
 struct redisConnection *getRC();
 void putRC(struct redisConnection *rc);
+
+static inline void freeRC(struct redisConnection *rc)
+{
+    if (rc->rc) {
+        redisFree(rc->rc);
+        rc->rc = NULL;
+    }
+}
 
 static inline int __mmfs_gset(u64 ino, char **out)
 {
@@ -258,6 +333,8 @@ static inline int __mmfs_gset(u64 ino, char **out)
 int __mmfs_fill_root(struct mstat *ms);
 
 int __mmfs_load_scripts();
+
+void __mmfs_unload_scripts();
 
 int __mmfs_stat(u64 pino, struct mstat *ms);
 
@@ -309,5 +386,9 @@ int __mmfs_is_shadow_dir(u64 dino);
 int __mmfs_rename_log(u64 ino, u64 opino, u64 npino);
 
 int __mmfs_rename_fix(u64 ino);
+
+int __mmfs_renew_ci(struct __mmfs_client_info *ci, int type);
+
+int __mmfs_client_info(struct __mmfs_client_info *ci);
 
 #endif
