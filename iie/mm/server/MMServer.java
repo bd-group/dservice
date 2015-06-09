@@ -94,6 +94,8 @@ public class MMServer {
 		int wto = -1, rto = -1;
 		boolean isSSMaster = false;
 		String lmdb_prefix = ".";
+		long memorySize = 32 * 1024; //set memory size
+		boolean enableMig = false;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -119,6 +121,7 @@ public class MMServer {
 				System.out.println("-ssm  : enable secondary server master.");
 				System.out.println("-lmdb : set lmdb prefix path.");
 				System.out.println("-uip  : use IP as hostname.");
+				System.out.println("-msize: set max memory size(in MB).");
 				
 				System.exit(0);
 			}
@@ -254,6 +257,16 @@ public class MMServer {
 				}
 				lmdb_prefix = o.opt;
 			}
+			if (o.flag.equals("-msize")) {
+				if (o.opt == null) {
+					System.out.println("-msize MEMORY_SIZE");
+					System.exit(0);
+				}
+				memorySize = Long.parseLong(o.opt);
+			}
+			if (o.flag.equals("-mig")) {
+				enableMig = true;
+			}
 		}
 		
 		for (Option o : optsList) {
@@ -321,6 +334,8 @@ public class MMServer {
 			conf.setFaceDetectorXML(faceDetectorXML);
 			conf.setSSMaster(isSSMaster);
 			conf.setLmdb_prefix(lmdb_prefix);
+			conf.setMemorySize(memorySize);
+			conf.setEnableSSMig(enableMig);
 			System.out.println((isSSMaster ? "Enable" : "Disable") + " Secondary Server on current MMServer.");
 			if (conf.getStoreArray().size() > 0) {
 				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);

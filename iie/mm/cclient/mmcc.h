@@ -53,6 +53,7 @@ int mmcc_del_set(char *set);
 #define EMMCONNERR              -1027
 #define EMMINVAL                -1028
 #define EMMNOMEM                -1029
+#define EREDIRECT               -1030
 
 /* Advanced Using, use only if you know it
  */
@@ -73,6 +74,7 @@ typedef void *(*__timer_cb)(void *);
 typedef struct
 {
     __timer_cb tcb;
+    int ti;
 } mmcc_config_t;
 
 int mmcc_config(mmcc_config_t *);

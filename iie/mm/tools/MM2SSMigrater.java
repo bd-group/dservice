@@ -313,7 +313,7 @@ public class MM2SSMigrater {
 		int err = 0, nr = 0;
 		
 		if (jedis == null) {
-			throw new Exception("Cound not get avaliable Jedis instance.");
+			throw new Exception("Could not get avaliable Jedis instance.");
 		}
 
 		try {

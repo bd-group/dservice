@@ -78,6 +78,8 @@ public class ServerConf {
 	
 	private boolean isSSMaster = false;
 	
+	private boolean enableSSMig = false;
+	
 	private static long ss_id = -1L;
 	
 	private static long ckpt_ts = -1L;
@@ -88,7 +90,11 @@ public class ServerConf {
 	// redis' used_memory * memfull_ratio
 	private double memFullRatio = 0.6;
 	
-	private long memorySize = 32; // in GB
+	private long memorySize = 32 * 1024; // in MB
+	
+	private long memCheckInterval = 60 * 1000; // 60 seconds
+	
+	private int di_keep_days = 3; // default only keep dupinfo for 3 days
 
 	public ServerConf(int httpPort) throws Exception {
 		this.nodeName = InetAddress.getLocalHost().getHostName();
@@ -422,5 +428,48 @@ public class ServerConf {
 	
 	public void setLmdb_prefix(String lmdb_prefix) {
 		this.lmdb_prefix = lmdb_prefix;
+	}
+
+	public double getMemFullRatio() {
+		return memFullRatio;
+	}
+
+	public void setMemFullRatio(double memFullRatio) {
+		this.memFullRatio = memFullRatio;
+	}
+
+	public long getMemorySize() {
+		return memorySize * 1024 * 1024;
+	}
+
+	/**
+	 * @param memorySize is in MB
+	 */
+	public void setMemorySize(long memorySize) {
+		this.memorySize = memorySize;
+	}
+
+	public long getMemCheckInterval() {
+		return memCheckInterval;
+	}
+
+	public void setMemCheckInterval(long memCheckInterval) {
+		this.memCheckInterval = memCheckInterval;
+	}
+
+	public int getDi_keep_days() {
+		return di_keep_days;
+	}
+
+	public void setDi_keep_days(int di_keep_days) {
+		this.di_keep_days = di_keep_days;
+	}
+
+	public boolean isEnableSSMig() {
+		return enableSSMig;
+	}
+
+	public void setEnableSSMig(boolean enableSSMig) {
+		this.enableSSMig = enableSSMig;
 	}
 }

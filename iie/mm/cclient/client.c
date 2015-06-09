@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <limits.h>
 #include "hvfs_u.h"
 #include "xlist.h"
 #include "xlock.h"
@@ -30,10 +31,13 @@ unsigned int hvfs_mmcc_tracing_flags = HVFS_DEFAULT_LEVEL;
 #define DELSET          3
 #define ASYNCSTORE      4
 #define SERVERINFO      5
+#define XSEARCH         9
 
 char *g_uris = NULL;
 char *redisHost = NULL;
 int redisPort = -1;
+long g_ckpt_ts = -1;
+long g_ssid = -1;
 
 struct MMSConf
 {
@@ -104,6 +108,7 @@ static int g_sid_max = 0;
 static sem_t g_timer_sem;
 static pthread_t g_timer_thread = 0;
 static int g_timer_thread_stop = 0;
+static int g_timer_interval = 30;
 
 time_t g_client_tick = 0;
 
@@ -229,6 +234,8 @@ int client_config(mmcc_config_t *mc)
 
     if (mc->tcb)
         g_conf.tcb = mc->tcb;
+    if (mc->ti > 0)
+        g_timer_interval = mc->ti;
 
     return err;
 }
@@ -261,7 +268,7 @@ int client_init()
         INIT_HLIST_HEAD(&g_rcrh[i].h);
     }
 
-    err = setup_timers(30);
+    err = setup_timers(g_timer_interval);
     if (err) {
         hvfs_err(mmcc, "setup_timers() failed w/ %d\n", err);
         goto out_free2;
@@ -778,10 +785,58 @@ void update_mmserver2(struct redisConnection *rc)
     }
 }
 
+void update_g_info(struct redisConnection *rc)
+{
+    redisReply *rpy = NULL;
+
+    /* Step 1: get ssid */
+    rpy = redisCMD(rc->rc, "get mm.ss.id");
+    if (rpy == NULL) {
+        hvfs_err(mmcc, "invalid redis status, connection broken?\n");
+        redisFree(rc->rc);
+        rc->rc = NULL;
+        return;
+    }
+    if (rpy->type == REDIS_REPLY_STRING) {
+        long _ssid = atol(rpy->str);
+
+        if (_ssid != g_ssid) {
+            hvfs_info(mmcc, "MM SS Server change from %ld to %ld.\n",
+                      g_ssid, _ssid);
+            g_ssid = _ssid;
+        }
+    }
+    freeReplyObject(rpy);
+
+    /* Step 2: get ckpt_ts */
+    rpy = redisCMD(rc->rc, "get mm.ckpt.ts");
+    if (rpy == NULL) {
+        hvfs_err(mmcc, "invalid redis status, connection broken?\n");
+        redisFree(rc->rc);
+        rc->rc = NULL;
+        return;
+    }
+    if (rpy->type == REDIS_REPLY_STRING) {
+        long _ckpt = atol(rpy->str);
+
+        if (_ckpt > g_ckpt_ts) {
+            hvfs_info(mmcc, "MM CKPT TS change from %ld to %ld\n",
+                      g_ckpt_ts, _ckpt);
+            g_ckpt_ts = _ckpt;
+        } else if (_ckpt < g_ckpt_ts) {
+            hvfs_warning(mmcc, "Detect MM CKPT TS change backwards"
+                         "(cur %ld, got %ld).\n",
+                         g_ckpt_ts, _ckpt);
+        }
+    }
+    freeReplyObject(rpy);
+}
+
 void do_update()
 {
     struct redisConnection *rc = NULL;
     static time_t last_check = 0;
+    static time_t last_fetch = 0;
     time_t cur;
 
     rc = getRC();
@@ -791,6 +846,11 @@ void do_update()
     if (cur >= last_check + 30) {
         update_mmserver2(rc);
         last_check = cur;
+    }
+
+    if (cur >= last_fetch + 10) {
+        update_g_info(rc);
+        last_fetch = cur;
     }
 
     putRC(rc);
@@ -1289,7 +1349,7 @@ int search_mm_object(char *infos, void **buf, size_t *length)
         return 0;
 }
 
-int get_mm_object(char* set, char* md5, void **buf, size_t* length)
+int get_mm_object(char *set, char *md5, void **buf, size_t *length)
 {
 	redisReply* reply = NULL;
     int err = 0;
@@ -2311,3 +2371,117 @@ int del_mm_set(char *set)
 out:
     return err;
 }
+
+/*
+ * Return value: 0 -> not in; >0 -> is in; <0 -> error
+ */
+int __is_in_redis(char *set)
+{
+    long this_ts = LONG_MAX;
+    char *t = set;
+
+    if (!isdigit(set[0]))
+        t = set + 1;
+    this_ts = atol(t);
+
+    if (this_ts > g_ckpt_ts)
+        return 1;
+    else
+        return 0;
+}
+
+int get_ss_object(char *set, char *md5, void **buf, size_t *length)
+{
+    struct MMSConnection *c ;
+    struct MMSCSock *s;
+    int err = 0;
+
+    if (!set || !md5 || !buf || !length)
+        return EMMINVAL;
+
+    if (g_ssid < 0)
+        return EMMINVAL;
+
+    c = __mmsc_lookup(g_ssid);
+    if (!c) {
+        hvfs_err(mmcc, "lookup SS Server ID=%ld failed.\n", g_ssid);
+        err = EMMINVAL;
+        goto out;
+    }
+    if (c->ttl <= 0) {
+        err = EMMCONNERR;
+        goto out;
+    }
+    s = __get_free_sock(c);
+    if (!s) {
+        hvfs_err(mmcc, "get free socket failed.\n");
+        err = EMMCONNERR;
+        goto out;
+    }
+
+    {
+        char setlen = (char)strlen(set);
+        char md5len = (char)strlen(md5);
+        char header[4] = {
+            (char)XSEARCH,
+            (char)setlen,
+            (char)md5len,
+        };
+        int count, xerr = 0;
+
+        err = send_bytes(s->sock, header, 4);
+        if (err) {
+            hvfs_err(mmcc, "send header failed.\n");
+            goto out_disconn;
+        }
+
+        err = send_bytes(s->sock, set, setlen);
+        if (err) {
+            hvfs_err(mmcc, "send set failed.\n");
+            goto out_disconn;
+        }
+        err = send_bytes(s->sock, md5, md5len);
+        if (err) {
+            hvfs_err(mmcc, "send md5 failed.\n");
+            goto out_disconn;
+        }
+
+        count = recv_int(s->sock);
+        if (count == -1) {
+            err = EMMNOTFOUND;
+            goto out_put;
+        } else if (count < 0) {
+            /* oo, we got redirect_info */
+            count = -count;
+            xerr = EREDIRECT;
+        }
+
+        *buf = xmalloc(count);
+        if (!*buf) {
+            hvfs_err(mmcc, "xmalloc() buffer %dB failed.\n", count);
+            err = EMMNOMEM;
+            goto out_disconn;
+        }
+        *length = (size_t)count;
+
+        err = recv_bytes(s->sock, *buf, count);
+        if (err) {
+            hvfs_err(mmcc, "recv_bytes data content %dB failed.\n", count);
+            xfree(*buf);
+            goto out_disconn;
+        }
+        if (xerr) err = xerr;
+    }
+
+out_put:
+    __put_inuse_sock(c, s);
+
+out:
+    return err;
+out_disconn:
+    __del_from_mmsc(c, s);
+    __free_mmscsock(s);
+    err = EMMCONNERR;
+    goto out;
+}
+

@@ -50,6 +50,7 @@ void do_help()
                "Arguments:\n"
                "-h, -? --help           print this help.\n"
                "-n, --name              Set file system name.\n"
+               "-T, --tune              Set tune flag.\n"
                "-S, --space_quota       Set file system space quota, in bytes.\n"
                "-I, --inode_quota       Set file system inode quota, in #.\n"
         );

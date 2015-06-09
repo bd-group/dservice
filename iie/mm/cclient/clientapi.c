@@ -29,6 +29,9 @@ int client_config(mmcc_config_t *);
 int client_init();
 int client_fina();
 int update_mmserver();
+void update_g_info(struct redisConnection *rc);
+int get_ss_object(char *set, char *md5, void **buf, size_t *length);
+int __is_in_redis(char *set);
 int get_mm_object(char* set, char* md5, void **buf, size_t* length);
 int search_mm_object(char *infos, void **buf, size_t *length);
 struct redisConnection *getRC();
@@ -229,6 +232,7 @@ int mmcc_init(char *uris)
         }
 
         /* FIXME: do auto config */
+        update_g_info(rc);
         putRC(rc);
 
         return err;
@@ -280,7 +284,20 @@ int mmcc_get(char *key, void **buffer, size_t *len)
         char *set = strtok_r(p, "@", &n);
         char *md5 = strtok_r(NULL, "@", &n);
 
-        err = get_mm_object(set, md5, buffer, len);
+        if (__is_in_redis(set)) {
+            err = get_mm_object(set, md5, buffer, len);
+        } else {
+            err = get_ss_object(set, md5, buffer, len);
+            if (err == EREDIRECT) {
+                char infos[*len + 1];
+
+                memcpy(infos, *buffer, *len);
+                infos[*len] = '\0';
+                xfree(*buffer);
+                *buffer = NULL;
+                err = search_mm_object(infos, buffer, len);
+            }
+        }
     } else {
         err = search_mm_object(dup, buffer, len);
     }

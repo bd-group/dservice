@@ -68,16 +68,20 @@ public class PhotoServer {
 		//服务端每隔一段时间进行一次读写速率统计,1秒后开始统计，每10秒输出一次平均信息
 		Timer t = new Timer("ProfileTimer");
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
-		
+
+		// Server Health timer trigger every half interval seconds
+		Timer t2 = new Timer("ServerHealth");
+		t2.schedule(new ServerHealth(conf), 2 * 1000, conf.getMemCheckInterval() / 2);
+
 		//启动http服务
 		Server server = new Server(conf.getHttpPort());
 		server.setHandler(new HTTPHandler(conf));
 		server.start();
-		
+
 		//计算图片hash值的线程
 		FeatureSearch im = new FeatureSearch(conf);
 		im.startWork(4);
-		
+
 		// shutdown hook
 		Runtime.getRuntime().addShutdownHook(new Thread() {
 			@Override
@@ -91,9 +95,9 @@ public class PhotoServer {
 		//启动监听写请求的服务,它使用junixsocket,所以需要用一个新的线程
 		if (conf.isUse_junixsocket())
 			new Thread(new WriteServer()).start();
-		
+
 		li = new LMDBInterface(conf);
-		
+
 		while(true) {
 			try {
 				// 接收tcp请求,来自tcp的请求是读取请求或者写请求

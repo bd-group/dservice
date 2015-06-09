@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-02 17:01:56 macan>
+ * Time-stamp: <2015-06-09 16:36:45 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3800,6 +3800,7 @@ static void *mmfs_init(struct fuse_conn_info *conn)
 {
     mmcc_config_t mc = {
         .tcb = mmfs_timer_main,
+        .ti = 10,
     };
     int err = 0;
 
@@ -3904,6 +3905,7 @@ static void mmfs_destroy(void *arg)
     mmfs_update_sb(&g_msb);
 
     /* free any other resources */
+    mprotect(zero_page, g_pagesize, PROT_WRITE);
     xfree(zero_page);
     __mmfs_unload_scripts();
 

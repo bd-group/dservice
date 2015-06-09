@@ -27,6 +27,10 @@ public class LMDBInterface {
 			return r;
 		}
 		
+		public void write(String key, String value) {
+			db.put(bytes(key), bytes(value));
+		}
+
 		public String read(String key) {
 			return string(db.get(bytes(key)));
 		}
