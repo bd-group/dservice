@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-02 16:39:26 macan>
+ * Time-stamp: <2015-06-10 20:59:54 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1176,7 +1176,7 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
     }
 
     if (chk_begin + off + size > ms->mdu.size) {
-        if (chk_begin + off > ms->mdu.size) {
+        if (chk_begin + off >= ms->mdu.size) {
             hvfs_debug(mmll, "Read offset across the boundary (%ld vs %ld)\n",
                        chk_begin + off, ms->mdu.size);
             err = -EFBIG;
@@ -1406,13 +1406,15 @@ out:
 int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
                    u64 chkid)
 {
+    struct redisConnection *rc = NULL;
     redisReply *rpy = NULL;
     char *set = NULL, *p, name[64], key[256], *info = NULL;
     MD5_CTX mdContext;
     int err = 0, i;
 
-    struct redisConnection *rc = getRC();
+    if (iovlen <= 0) return 0;
 
+    rc = getRC();
     if (!rc) {
         hvfs_err(mmll, "getRC() failed\n");
         return -EINVAL;

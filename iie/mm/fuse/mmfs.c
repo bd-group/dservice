@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-09 16:36:45 macan>
+ * Time-stamp: <2015-06-12 15:09:34 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -342,6 +342,7 @@ struct bhhead
 
 #define BHH_CLEAN       0x00
 #define BHH_DIRTY       0x01
+#define BHH_SYNCING     0x80
     u32 flag;
     atomic_t ref;
 };
@@ -365,6 +366,10 @@ struct bh
     struct list_head list;
     off_t offset;               /* buffer offset */
     void *data;                 /* this is always a page */
+#define BH_INIT         0x00
+#define BH_UP2DATE      0x01
+#define BH_DIRTY        0x02
+    u32 flag;
 };
 
 static int __odc_init(int hsize)
@@ -541,6 +546,28 @@ struct bhhead* __get_bhhead(struct mstat *ms)
     return bhh;
 }
 
+static inline void __set_bhh_syncing(struct bhhead *bhh)
+{
+retry:
+    xrwlock_wlock(&bhh->clock);
+    if (bhh->flag & BHH_SYNCING) {
+        /* another sync is doing now, just wait */
+        xrwlock_wunlock(&bhh->clock);
+        pthread_yield();
+        goto retry;
+    } else {
+        bhh->flag |= BHH_SYNCING;
+    }
+    xrwlock_wunlock(&bhh->clock);
+}
+
+static inline void __clr_bhh_syncing(struct bhhead *bhh)
+{
+    xrwlock_wlock(&bhh->clock);
+    bhh->flag &= ~BHH_SYNCING;
+    xrwlock_wunlock(&bhh->clock);
+}
+
 static inline void __set_bhh_dirty(struct bhhead *bhh)
 {
     bhh->flag |= BHH_DIRTY;
@@ -548,6 +575,41 @@ static inline void __set_bhh_dirty(struct bhhead *bhh)
 static inline void __clr_bhh_dirty(struct bhhead *bhh)
 {
     bhh->flag &= ~BHH_DIRTY;
+}
+
+static inline int __is_bh_dirty(struct bh *bh)
+{
+    return bh->flag & BH_DIRTY;
+}
+
+static inline void __set_bh_dirty(struct bh *bh)
+{
+    bh->flag |= BH_DIRTY;
+}
+
+static inline void __clr_bh_dirty(struct bh *bh)
+{
+    bh->flag &= ~BH_DIRTY;
+}
+
+static inline int __is_bh_up2date(struct bh *bh)
+{
+    return bh->flag & BH_UP2DATE;
+}
+
+static inline void __set_bh_up2date(struct bh *bh)
+{
+    bh->flag |= BH_UP2DATE;
+}
+
+static inline void __clr_bhh_up2date(struct bh *bh)
+{
+    bh->flag &= ~BH_UP2DATE;
+}
+
+static inline int __is_chunk_dirty(struct chunk *c)
+{
+    return c->flag & CHUNK_DIRTY;
 }
 
 static inline void __set_chunk_dirty(struct chunk *c)
@@ -616,6 +678,12 @@ static void __put_chunk(struct chunk *c)
 
     list_for_each_entry_safe(bh, n, &c->bh, list) {
         list_del(&bh->list);
+        if (__is_bh_dirty(bh)) {
+            hvfs_err(mmfs, "FATAL dirty BH offset %ld in CHK %ld "
+                     "(size %ld, asize %ld flag %d)\n",
+                     (u64)bh->offset, 
+                     c->chkid, c->size, c->asize, c->flag);
+        }
         __put_bh(bh);
     }
     
@@ -720,6 +788,27 @@ static void __put_bhhead(struct bhhead *bhh)
     }
 }
 
+void __odc_update(struct mstat *ms)
+{
+    struct bhhead *bhh = __odc_lookup(ms->ino);
+
+    if (bhh) {
+        if (MDU_VERSION_COMPARE(ms->mdu.version, bhh->ms.mdu.version)) {
+            /* FIXME: this means that server's mdu has been updated. We
+             * should clean up the bh cache here! */
+            bhh->ms.mdu = ms->mdu;
+            __odc_lock(bhh);
+            if (!(bhh->flag & BHH_DIRTY))
+                bhh->asize = ms->mdu.size;
+            __odc_unlock(bhh);
+        } else {
+            ms->mdu = bhh->ms.mdu;
+            ms->mdu.size = bhh->asize;
+        }
+        __put_bhhead(bhh);
+    }
+}
+
 static inline
 int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
 {
@@ -734,35 +823,28 @@ int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
         err = __mmfs_update_inode(ms, mu);
         __odc_unlock(bhh);
         if (err == -EAGAIN) {
+            /* restat the mdu */
+            struct mstat xms = {0,};
+
+            xms.ino = ms->ino;
+            err = __mmfs_stat(0, &xms);
+            if (err) {
+                goto out_put;
+            }
+            __odc_update(&xms);
+
             __odc_lock(bhh);
             ms->mdu = bhh->ms.mdu;
             err = __mmfs_update_inode(ms, mu);
             __odc_unlock(bhh);
         }
+    out_put:
         __put_bhhead(bhh);
     } else {
         err = __mmfs_update_inode(ms, mu);
     }
 
     return err;
-}
-
-void __odc_update(struct mstat *ms)
-{
-    struct bhhead *bhh = __odc_lookup(ms->ino);
-
-    if (bhh) {
-        if (MDU_VERSION_COMPARE(ms->mdu.version, bhh->ms.mdu.version)) {
-            /* FIXME: this means that server's mdu has been updated. We
-             * should clean up the bh cache here! */
-            bhh->ms.mdu = ms->mdu;
-            bhh->asize = ms->mdu.size;
-        } else {
-            ms->mdu = bhh->ms.mdu;
-            ms->mdu.size = bhh->asize;
-        }
-        __put_bhhead(bhh);
-    }
 }
 
 static void __set_chunk_size(struct bhhead *bhh, u64 chkid)
@@ -793,17 +875,26 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                  ms->ino, chkid);
         return -ENOMEM;
     }
-    
-    hvfs_debug(mmfs, "__bh_fill_chunk(%ld) CHK=%ld offset=%ld size=%ld "
-               "c->size=%ld c->asize=%ld bhh->size=%ld bhh->asize=%ld bhh->chknr=%ld\n",
-               ms->ino, chkid, (u64)offset, (u64)size,
-               c->size, c->asize,
-               bhh->size, bhh->asize, bhh->chknr);
 
     xrwlock_wlock(&bhh->clock);
+    hvfs_debug(mmfs, "__bh_fill_chunk(%ld) CHK=%ld offset=%ld size=%ld "
+               "c->size=%ld c->asize=%ld bhh->size=%ld bhh->asize=%ld bhh->chknr=%ld"
+               " bhh %p chunk %p update=%d\n",
+               ms->ino, chkid, (u64)offset, (u64)size,
+               c->size, c->asize,
+               bhh->size, bhh->asize, bhh->chknr, bhh, c, update);
+
+    if (update == 2) {
+        u64 asize = offset + size + chkid * g_msb.chunk_size;
+
+        __set_chunk_dirty(c);
+        __set_bhh_dirty(bhh);
+        if (asize > bhh->asize) {
+            bhh->asize = asize;
+        }
+    }
     __set_chunk_size(bhh, chkid);
-    __set_chunk_dirty(c);
-    
+
     if (offset >= c->size) {
         while (c->size < off_end) {
             bh = __get_bh(c->size, 0);
@@ -815,36 +906,45 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                 /* just copy the buffer, prepare true page */
                 alloced = __prepare_bh(bh, 1);
                 _size = min(size, bh->offset + g_pagesize - offset);
-                if (buf && (alloced | update))
+                if (buf && (alloced | update)) {
                     memcpy(bh->data + offset - bh->offset,
                            buf + loff, _size);
+                    if (update == 2) __set_bh_dirty(bh);
+                }
                 size -= _size;
                 loff += _size;
                 offset = bh->offset + g_pagesize;
             } else {
-                /* read in the page now */
+                /* read in the page if the bh is in BH_INIT; otherwise just
+                 * copy data */
                 if (c->size <= ms->mdu.size) {
                     __prepare_bh(bh, 1);
                 }
-                rlen = __mmfs_fread(ms, bh->data, 
-                                    chkid * g_msb.chunk_size + c->size, g_pagesize);
-                if (rlen == -EFBIG) {
-                    /* it is ok, we just zero the page */
-                    err = 0;
-                } else if (rlen < 0) {
-                    hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
-                             "failed w/ %ld\n",
-                             c->size, c->size + g_pagesize, rlen);
-                    err = rlen;
-                    goto out_unlock;
+                if (!__is_bh_up2date(bh)) {
+                    rlen = __mmfs_fread(ms, bh->data, 
+                                        chkid * g_msb.chunk_size + c->size, 
+                                        g_pagesize);
+                    if (rlen == -EFBIG) {
+                        /* it is ok, we just zero the page */
+                        err = 0;
+                    } else if (rlen < 0) {
+                        hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
+                                 "failed w/ %ld\n",
+                                 c->size, c->size + g_pagesize, rlen);
+                        err = rlen;
+                        goto out_unlock;
+                    }
+                    __set_bh_up2date(bh);
                 }
                 /* should we fill with buf? */
                 if (size && offset < bh->offset + g_pagesize) {
                     __prepare_bh(bh, 1);
                     _size = min(size, bh->offset + g_pagesize - offset);
-                    if (buf)
+                    if (buf) {
                         memcpy(bh->data + offset - bh->offset,
                                buf + loff, _size);
+                        if (update == 2) __set_bh_dirty(bh);
+                    }
                     size -= _size;
                     loff += _size;
                     offset = bh->offset + g_pagesize;
@@ -859,9 +959,11 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
             if (offset >= bh->offset && offset < bh->offset + g_pagesize) {
                 alloced = __prepare_bh(bh, 1);
                 _size = min(size, bh->offset + g_pagesize - offset);
-                if (buf && (alloced | update))
+                if (buf && (alloced | update)) {
                     memcpy(bh->data + offset - bh->offset,
                            buf + loff, _size);
+                    if (update == 2) __set_bh_dirty(bh);
+                }
                 size -= _size;
                 loff += _size;
                 offset = bh->offset + g_pagesize;
@@ -880,33 +982,41 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                 if (offset == c->size && size >= g_pagesize) {
                     /* just copy the buffer */
                     _size = min(size, bh->offset + g_pagesize - offset);
-                    if (buf)
+                    if (buf) {
                         memcpy(bh->data + offset - bh->offset,
                                buf + loff, _size);
+                        if (update == 2) __set_bh_dirty(bh);
+                    }
                     size -= _size;
                     loff += _size;
                     offset = bh->offset + g_pagesize;
                 } else {
-                    /* read in the page now */
-                    rlen = __mmfs_fread(ms, bh->data, 
-                                        chkid * g_msb.chunk_size + c->size, 
-                                        g_pagesize);
-                    if (rlen == -EFBIG) {
-                        /* it is ok, we just zero the page */
-                        err = 0;
-                    } else if (rlen < 0) {
-                        hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
-                                 "failed w/ %ld",
-                                 c->size, c->size + g_pagesize, rlen);
-                        err = rlen;
-                        goto out_unlock;
+                    /* read in the page if the bh is clean; otherwise just
+                     * copy the data */
+                    if (!__is_bh_up2date(bh)) {
+                        rlen = __mmfs_fread(ms, bh->data, 
+                                            chkid * g_msb.chunk_size + c->size, 
+                                            g_pagesize);
+                        if (rlen == -EFBIG) {
+                            /* it is ok, we just zero the page */
+                            err = 0;
+                        } else if (rlen < 0) {
+                            hvfs_err(mmfs, "bh_fill() read the file range [%ld, %ld] "
+                                     "failed w/ %ld",
+                                     c->size, c->size + g_pagesize, rlen);
+                            err = rlen;
+                            goto out_unlock;
+                        }
+                        __set_bh_up2date(bh);
                     }
                     /* should we fill with buf? */
                     if (size && offset < bh->offset + g_pagesize) {
                         _size = min(size, bh->offset + g_pagesize - offset);
-                        if (buf)
+                        if (buf) {
                             memcpy(bh->data + offset - bh->offset,
                                    buf + loff, _size);
+                            if (update == 2) __set_bh_dirty(bh);
+                        }
                         size -= _size;
                         loff += _size;
                         offset = bh->offset + g_pagesize;
@@ -1187,7 +1297,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
     off_t offset = 0;
     void *data = NULL;
     size_t size, _size;
-    int err = 0, i;
+    int err = 0, i = 0;
 
     ms = bhh->ms;
     
@@ -1203,8 +1313,11 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
                ms.ino, chkid, c->size, c->asize);
 
     xrwlock_wlock(&bhh->clock);
+    if (!__is_chunk_dirty(c)) {
+        goto out_unlock;
+    }
+
     size = c->asize;
-    i = 0;
     list_for_each_entry(bh, &c->bh, list) {
         _size = min(size, g_pagesize);
         i++;
@@ -1228,6 +1341,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         list_for_each_entry(bh, &c->bh, list) {
             _size = min(size, g_pagesize);
             memcpy(data + offset, bh->data, _size);
+            __clr_bh_dirty(bh);
             offset += _size;
             size -= _size;
             if (size <= 0)
@@ -1247,6 +1361,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         list_for_each_entry(bh, &c->bh, list) {
             _size = min(size, g_pagesize);
             
+            __clr_bh_dirty(bh);
             (iov + i)->iov_base = bh->data;
             (iov + i)->iov_len = _size;
             i++;
@@ -1256,6 +1371,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         }
     }
     __clr_chunk_dirty(c);
+out_unlock:
     xrwlock_wunlock(&bhh->clock);
     __unlock_chunk(c);
 
@@ -1283,10 +1399,15 @@ out_free:
     return err;
 }
 
-static int __bh_sync(struct bhhead *bhh)
+static int __bh_sync_(struct bhhead *bhh, u32 valid)
 {
     struct mstat ms;
     int err = 0, i;
+
+    __clr_bhh_dirty(bhh);
+
+    /* set bhh syncing, and wait for other syncs if needed */
+    __set_bhh_syncing(bhh);
 
     ms = bhh->ms;
 
@@ -1317,8 +1438,6 @@ static int __bh_sync(struct bhhead *bhh)
         }
     }
 
-    __clr_bhh_dirty(bhh);
-
     /* update the file attributes */
     {
         struct mdu_update mu = {0,};
@@ -1328,6 +1447,10 @@ static int __bh_sync(struct bhhead *bhh)
         mu.mtime = time(NULL);
         mu.blknr = mu.size / g_msb.chunk_size + 1;
         mu.blknr -= mu.size % g_msb.chunk_size == 0 ? 1 : 0;
+        if (valid & MU_CTIME) {
+            mu.ctime = time(NULL);
+            mu.valid |= MU_CTIME;
+        }
 
         __odc_update(&ms);
         err = __mmfs_update_inode_proxy(&ms, &mu);
@@ -1336,6 +1459,7 @@ static int __bh_sync(struct bhhead *bhh)
                      ms.ino, err);
             goto out;
         }
+
         __odc_update(&ms);
         __update_msb(MMFS_SB_U_SPACE, mu.size - bhh->osize);
         bhh->osize = mu.size;
@@ -1344,7 +1468,14 @@ static int __bh_sync(struct bhhead *bhh)
     }
 
 out:
+    __clr_bhh_syncing(bhh);
+
     return err;
+}
+
+static inline int __bh_sync(struct bhhead *bhh)
+{
+    return __bh_sync_(bhh, 0);
 }
 
 /* We have a LRU translate cache to resolve file system pathname(only
@@ -1702,7 +1833,10 @@ hit:
                 /* FIXME: this means that server's mdu has been updated. We
                  * should clean up the bh cache here! */
                 bhh->ms.mdu = ms.mdu;
-                bhh->asize = ms.mdu.size;
+                __odc_lock(bhh);
+                if (!(bhh->flag & BHH_DIRTY))
+                    bhh->asize = ms.mdu.size;
+                __odc_unlock(bhh);
             } else {
                 ms.mdu = bhh->ms.mdu;
                 ms.mdu.size = bhh->asize;
@@ -3022,7 +3156,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
     } else if (size > bhh->asize) {
         __set_bhh_dirty(bhh);
         bhh->asize = size;
-        err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 0);
+        err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 2);
         if (err < 0) {
             hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n", err);
             bhh->asize = osize;
@@ -3035,7 +3169,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
 
     /* finally update the metadata */
     if (bhh->flag & BHH_DIRTY)
-        __bh_sync(bhh);
+        __bh_sync_(bhh, MU_CTIME);
 
 out_put:
     __put_bhhead(bhh);
@@ -3080,7 +3214,7 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
 
     /* finally update the metadata */
     if (bhh->flag & BHH_DIRTY)
-        __bh_sync(bhh);
+        __bh_sync_(bhh, MU_CTIME);
 
 out:
     RENEW_CI(OP_FTRUNCATE);
@@ -3345,13 +3479,15 @@ static int mmfs_cached_write(const char *pathname, const char *buf,
     int err = 0;
 
     ms = bhh->ms;
+    __odc_lock(bhh);
     __set_bhh_dirty(bhh);
     osize = bhh->asize;
     if (offset + size > bhh->asize) {
         bhh->asize = offset + size;
     }
+    __odc_unlock(bhh);
 
-    err = __bh_fill(&ms, bhh, (void *)buf, offset, size, 1);
+    err = __bh_fill(&ms, bhh, (void *)buf, offset, size, 2);
     if (err < 0) {
         hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
                  err);
@@ -3371,8 +3507,8 @@ static int mmfs_write(const char *pathname, const char *buf,
     struct bhhead *bhh = (struct bhhead *)fi->fh;
     int err = 0;
 
-    hvfs_debug(mmfs, "in write the file %s(%p, mdu.size=%ld) [%ld,%ld)!\n",
-               pathname, bhh, bhh->ms.mdu.size,
+    hvfs_debug(mmfs, "in write the file %s(%p, ino=%ld, mdu.size=%ld) [%ld,%ld)!\n",
+               pathname, bhh, bhh->ms.ino, bhh->ms.mdu.size,
                (u64)offset, (u64)offset + size);
 
     if (offset + size > g_msb.chunk_size)
@@ -3790,8 +3926,8 @@ static void *mmfs_timer_main(void *arg)
         if (err) {
             hvfs_err(mmfs, "Update client info failed w/ %d\n", err);
         }
+        last = cur;
     }
-    last = cur;
 
     return NULL;
 }
@@ -3801,6 +3937,7 @@ static void *mmfs_init(struct fuse_conn_info *conn)
     mmcc_config_t mc = {
         .tcb = mmfs_timer_main,
         .ti = 10,
+        .rcc = 300,
     };
     int err = 0;
 
@@ -3828,7 +3965,10 @@ realloc:
         HVFS_BUGON("MMCC config failed!");
     }
 
-    err = mmcc_init("STL://127.0.0.1:26379");
+    if (mmfs_fuse_mgr.uris)
+        err = mmcc_init(mmfs_fuse_mgr.uris);
+    else
+        err = mmcc_init("STL://127.0.0.1:26379");
     if (err) {
         hvfs_err(mmfs, "MMCC init() failed w/ %d\n", err);
         HVFS_BUGON("MMCC init failed!");

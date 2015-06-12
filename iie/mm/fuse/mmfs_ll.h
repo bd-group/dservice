@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-02 16:27:57 macan>
+ * Time-stamp: <2015-06-11 12:28:46 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,10 +33,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/syscall.h>
-#include "hvfs_u.h"
 #include "xlist.h"
-#include "xlock.h"
-#include "memory.h"
 #include "xhash.h"
 #include "atomic.h"
 #include "md5.h"
