@@ -24,6 +24,9 @@
 #ifndef __HVFS_U_H__
 #define __HVFS_U_H__
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <pthread.h>
 #include <unistd.h>
 #include <stdio.h>

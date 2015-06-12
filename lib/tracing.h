@@ -3,7 +3,7 @@
  *                           <macan@ncic.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-02 12:25:51 macan>
+ * Time-stamp: <2015-06-10 17:37:38 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -91,10 +91,11 @@ extern atomic_t g_env_prot;
             strftime(__ct, 64, "%G-%m-%d %H:%M:%S", &__tmp);            \
             atomic_dec(&g_env_prot);                                    \
             if (mask & HVFS_PRECISE) {                                  \
-                PRINTK("%s.%03ld " lvl # module " (%16s, %5d): %s[%lx]: " f, \
+                PRINTK("%s.%03ld " lvl "[%lx] " # module " (%16s, %5d): %s: " f, \
                        __ct, (long)(__cur.tv_usec / 1000),              \
+                       pthread_self(),                                  \
                        __FILE__, __LINE__, __func__,                    \
-                       pthread_self(), ## a);                           \
+                       ## a);                                           \
                 FFLUSH(stdout);                                         \
             } else if (mask & HVFS_PLAIN) {                             \
                 PRINTK(lvl f, ## a);                                    \
