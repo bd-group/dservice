@@ -75,6 +75,7 @@ typedef struct
 {
     __timer_cb tcb;
     int ti;
+    int rcc;
 } mmcc_config_t;
 
 int mmcc_config(mmcc_config_t *);

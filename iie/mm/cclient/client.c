@@ -109,6 +109,7 @@ static sem_t g_timer_sem;
 static pthread_t g_timer_thread = 0;
 static int g_timer_thread_stop = 0;
 static int g_timer_interval = 30;
+static int g_clean_rcs = 3600;
 
 time_t g_client_tick = 0;
 
@@ -236,6 +237,8 @@ int client_config(mmcc_config_t *mc)
         g_conf.tcb = mc->tcb;
     if (mc->ti > 0)
         g_timer_interval = mc->ti;
+    if (mc->rcc > 0)
+        g_clean_rcs = mc->rcc;
 
     return err;
 }
@@ -399,11 +402,12 @@ void __clean_rcs(time_t cur)
         xlock_lock(&rh->lock);
         hlist_for_each_entry_safe(tpos, pos, n, &rh->h, hlist) {
             hvfs_debug(mmcc, "check TID %ld %ld %ld %d\n", (long)tpos->tid,
-                       (tpos->ttl + 3600), cur, atomic_read(&tpos->ref));
-            if ((tpos->ttl + 3600 < cur) && atomic_read(&tpos->ref) == 0) {
+                       (tpos->ttl + g_clean_rcs), cur, atomic_read(&tpos->ref));
+            if ((tpos->ttl + g_clean_rcs < cur) && atomic_read(&tpos->ref) == 0) {
                 hlist_del_init(&tpos->hlist);
                 hvfs_debug(mmcc, "Clean long living RC for TID %ld\n", 
                            (long)tpos->tid);
+                freeRC(tpos);
                 __put_rc(tpos);
             }
         }
