@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-15 14:09:33 macan>
+ * Time-stamp: <2015-06-15 15:44:31 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3716,7 +3716,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
                dir->dino, off, dir->goffset, dir->csize);
 
     if (dir->csize > 0 &&
-        off <= dir->goffset + dir->csize) {
+        off < dir->goffset + dir->csize) {
         /* ok, easy to fill the dentry */
         struct stat st;
         int idx;
@@ -3772,7 +3772,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
             goto out;
         }
         /* check if we should stop */
-        if (off <= dir->goffset + dir->csize) {
+        if (off < dir->goffset + dir->csize) {
             struct stat st;
             int idx;
 
@@ -3803,7 +3803,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
         break;
     } while (1);
         
-    if (off > saved_offset)
+    if (off >= saved_offset)
         err = 0;
     else
         err = 1;
