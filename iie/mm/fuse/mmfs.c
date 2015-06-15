@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-12 15:09:34 macan>
+ * Time-stamp: <2015-06-15 14:09:33 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2399,7 +2399,7 @@ static int mmfs_rename(const char *from, const char *to)
     char *p = NULL, *n, *s = NULL;
     u64 pino = g_msb.root_ino;
     u32 mdu_flags;
-    int err = 0, isaved = 0;
+    int err = 0, isaved = 0, deleted_file = 0;
 
     /* Step 1: get the stat info of 'from' file */
     path = dirname(dup);
@@ -2593,6 +2593,9 @@ hit2:
                              ms.ino, err);
                     goto out;
                 }
+                /* BUG-XXX: xfstest-generic-309: should update mtime and ctime
+                 * of target directory mtime and ctime */
+                deleted_file = 1;
             }
         }
     } else {
@@ -2633,6 +2636,30 @@ hit2:
             hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                      name, err);
             goto out_rollback;
+        }
+    }
+
+    /* mtime/ctime fix */
+    if (deleted_file) {
+        struct mstat xms = {0,};
+        struct mdu_update xmu = {.valid = 0,};
+
+        xmu.valid = MU_MTIME | MU_CTIME;
+        xmu.mtime = xmu.ctime = time(NULL);
+
+        xms.ino = pino;
+        err = __mmfs_stat(pino, &xms);
+        if (err) {
+            hvfs_err(mmfs, "do internal file stat on target parent _IN_%ld "
+                     "failed w/ %d, missing mtime/ctime update on this DIR.\n",
+                     xms.ino, err);
+        } else {
+            err = __mmfs_update_inode_proxy(&xms, &xmu);
+            if (err) {
+                hvfs_err(mmfs, "do internal update on _IN_%ld failed w/ %d "
+                         ", missing mtime/ctime update on this DIR.\n",
+                         xms.ino, err);
+            }
         }
     }
 
