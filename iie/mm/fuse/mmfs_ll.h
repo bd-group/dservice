@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-11 12:28:46 macan>
+ * Time-stamp: <2015-06-17 18:49:51 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -350,7 +350,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags);
 
 int __mmfs_is_empty_dir(u64 dino);
 
-int __mmfs_linkadd(struct mstat *ms, s32 nlink);
+int __mmfs_linkadd(struct mstat *ms, s32 nlink, u32 flags);
 
 int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu);
 

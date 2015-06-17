@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-17 18:20:34 macan>
+ * Time-stamp: <2015-06-17 18:50:41 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2722,7 +2722,7 @@ hit2:
             hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink-- failed\n",
                      __ms.ino, err);
         } else {
-            err = __mmfs_linkadd(&__ms, -1);
+            err = __mmfs_linkadd(&__ms, -1, 0);
             if (err) {
                 hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink-- failed\n",
                          __ms.ino, err);
@@ -2736,7 +2736,7 @@ hit2:
                 hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
                          __ms.ino, err);
             } else {
-                err = __mmfs_linkadd(&__ms, 1);
+                err = __mmfs_linkadd(&__ms, 1, 0);
                 if (err) {
                     hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
                              __ms.ino, err);
@@ -2843,7 +2843,7 @@ hit:
             err = -EPERM;
             goto out;
         }
-        err = __mmfs_linkadd(&ms, 1);
+        err = __mmfs_linkadd(&ms, 1, MU_CTIME);
         if (err) {
             hvfs_err(mmfs, "do hard link on '%s' failed w/ %d\n",
                      name, err);
@@ -2932,7 +2932,7 @@ out:
     return err;
 out_unlink:
     {
-        err = __mmfs_linkadd(&saved_ms, -1);
+        err = __mmfs_linkadd(&saved_ms, -1, 0);
         if (err) {
             hvfs_err(mmfs, "do linkadd(-1) on '%s' failed w/ %d\n",
                      saved_ms.name, err);

@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-17 18:32:56 macan>
+ * Time-stamp: <2015-06-17 18:50:01 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1183,13 +1183,20 @@ int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu)
     return err;
 }
 
-int __mmfs_linkadd(struct mstat *ms, s32 nlink)
+int __mmfs_linkadd(struct mstat *ms, s32 nlink, u32 flags)
 {
+    struct mdu_update mu = {.valid = 0,};
     int err = 0;
 
     ms->mdu.nlink += nlink;
+    if (flags > 0) {
+        if (flags & MU_CTIME) {
+            mu.valid |= MU_CTIME;
+            mu.ctime = time(NULL);
+        }
+    }
 
-    err = __mmfs_update_inode(ms, NULL);
+    err = __mmfs_update_inode(ms, &mu);
     if (err) {
         hvfs_err(mmll, "call __mmfs_update_inode on _IN_%ld failed w/ %d\n",
                  ms->ino, err);
