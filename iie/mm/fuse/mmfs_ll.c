@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-10 20:59:54 macan>
+ * Time-stamp: <2015-06-17 18:32:56 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1077,13 +1077,78 @@ int __mmfs_is_empty_dir(u64 dino)
         goto out;
     }
     if (rpy->type == REDIS_REPLY_INTEGER) {
-        if (rpy->integer == 2 || rpy->integer == 1) {
-            /* ok, do NOT test further more */
-            err = 1;
-        } else if (rpy->integer == 0) {
+        if (rpy->integer == 0) {
             /* invalid INODE or not exist INODE */
-        } else if (rpy->integer > 2) {
-            /* not empty dir */
+        } else if (rpy->integer == 1) {
+            /* this must be MMFS_MDU */
+            err = 1;
+        } else if (rpy->integer > 1) {
+            /* not empty dir? need recheck */
+            char *cursor = strdup("0");
+            int xnr = 0, stop = 0;
+
+            do {
+                freeReplyObject(rpy);
+                rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 100",
+                                   dino, cursor);
+                if (rpy == NULL) {
+                    hvfs_err(mmll, "read from MM Meta failed: %s\n",
+                             rc->rc->errstr);
+                    freeRC(rc);
+                    xfree(cursor);
+                    goto out;
+                }
+                if (rpy->type == REDIS_REPLY_ERROR) {
+                    hvfs_err(mmll, "find _IN_%ld failed w/ %s\n",
+                             dino, rpy->str);
+                    freeReplyObject(rpy);
+                    xfree(cursor);
+                    goto out;
+                }
+                if (rpy->type == REDIS_REPLY_ARRAY && rpy->elements == 2 &&
+                    rpy->element[1]->type == REDIS_REPLY_ARRAY) {
+                    int i = 0;
+
+                    xfree(cursor);
+                    cursor = strdup(rpy->element[0]->str);
+                    if (strcmp(cursor, "0") == 0) {
+                        stop = 1;
+                    }
+
+                    for (i = 0; i < rpy->element[1]->elements; i+= 2) {
+                        char *f = rpy->element[1]->element[i]->str;
+                        int l = strlen(f);
+
+                        if (l == MMFS_I_XSIZE && strncmp(f, "__", 2) == 0) {
+                            /* do more check */
+                            if (strncmp(f, MMFS_INODE_NAME, l) == 0) {
+                                continue;
+                            } else if (strncmp(f, MMFS_INODE_MD, l) == 0) {
+                                continue;
+                            } else if (strncmp(f, MMFS_INODE_SYMNAME, l) == 0) {
+                                continue;
+                            } else if (strncmp(f, MMFS_INODE_VERSION, l) == 0) {
+                                continue;
+                            } else if (strncmp(f, MMFS_INODE_BLOCK, l) == 0) {
+                                continue;
+                            } else if (strncmp(f, MMFS_INODE_CHUNKNR, l) == 0) {
+                                continue;
+                            } else {
+                                xnr++;
+                            }
+                        } else
+                            xnr++;
+                    }
+                }
+                if (xnr || stop)
+                    break;
+            } while (1);
+
+            xfree(cursor);
+            if (!xnr) {
+                /* is empty */
+                err = 1;
+            }
         } else {
             /* invalid reply */
         }

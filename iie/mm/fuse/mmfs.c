@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-15 15:44:31 macan>
+ * Time-stamp: <2015-06-17 18:20:34 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2393,13 +2393,17 @@ out:
  */
 static int mmfs_rename(const char *from, const char *to)
 {
-    struct mstat ms, saved_ms, deleted_ms = {.ino = 0, .mdu.mode = 0,};
+    struct mstat ms, saved_ms, deleted_ms;
     char *dup = strdup(from), *dup2 = strdup(from),
         *path, *name, *spath = NULL, *sname;
     char *p = NULL, *n, *s = NULL;
     u64 pino = g_msb.root_ino;
     u32 mdu_flags;
-    int err = 0, isaved = 0, deleted_file = 0;
+    int err = 0, isaved = 0, deleted_file = 0, deleted_dir = 0;
+
+    memset(&ms, 0, sizeof(ms));
+    memset(&saved_ms, 0, sizeof(saved_ms));
+    memset(&deleted_ms, 0, sizeof(deleted_ms));
 
     /* Step 1: get the stat info of 'from' file */
     path = dirname(dup);
@@ -2565,6 +2569,7 @@ hit2:
                                  ms.ino, err);
                         goto out;
                     }
+                    deleted_dir = 1;
                 } else {
                     err = -ENOTEMPTY;
                     goto out;
@@ -2600,6 +2605,15 @@ hit2:
         }
     } else {
         /* this means the target is a directory and do exist */
+        /* BUG-XXX: if we do NOT restat the pino dir, we might get out-of-date
+         * entry */
+        ms.ino = pino;
+        err = __mmfs_stat(pino, &ms);
+        if (err) {
+            hvfs_err(mmfs, "do internal stat on _IN_%ld failed w/ %d\n",
+                     pino, err);
+            goto out;
+        }
         if (S_ISDIR(ms.mdu.mode)) {
             /* check if it is empty */
             if (__mmfs_is_empty_dir(pino)) {
@@ -2641,9 +2655,10 @@ hit2:
 
     /* mtime/ctime fix */
     if (deleted_file) {
-        struct mstat xms = {0,};
+        struct mstat xms;
         struct mdu_update xmu = {.valid = 0,};
 
+        memset(&xms, 0, sizeof(xms));
         xmu.valid = MU_MTIME | MU_CTIME;
         xmu.mtime = xmu.ctime = time(NULL);
 
@@ -2698,6 +2713,8 @@ hit2:
     if (S_ISDIR(saved_ms.mdu.mode)) {
         struct mstat __ms;
 
+        memset(&__ms, 0, sizeof(__ms));
+
         /* src parent dir nlink-- */
         __ms.ino = saved_ms.pino;
         err = __mmfs_stat(0, &__ms);
@@ -2712,21 +2729,23 @@ hit2:
             }
         }
         /* dst parent dir nlink++ */
-        __ms.ino = pino;
-        err = __mmfs_stat(0, &__ms);
-        if (err) {
-            hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
-                     __ms.ino, err);
-        } else {
-            err = __mmfs_linkadd(&__ms, 1);
+        if (!deleted_dir) {
+            __ms.ino = pino;
+            err = __mmfs_stat(0, &__ms);
             if (err) {
-                hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
+                hvfs_err(mmfs, "__mmfs_stat(%ld) failed w/ %d, nlink++ failed\n",
                          __ms.ino, err);
+            } else {
+                err = __mmfs_linkadd(&__ms, 1);
+                if (err) {
+                    hvfs_err(mmfs, "__mmfs_linkadd(%ld) failed w/ %d, nlink++ failed\n",
+                             __ms.ino, err);
+                }
             }
-        }
-        if (err) {
-            hvfs_err(mmfs, "rename success but nlink fix failed, ignore\n");
-            err = 0;
+            if (err) {
+                hvfs_err(mmfs, "rename success but nlink fix failed, ignore\n");
+                err = 0;
+            }
         }
     }
 
@@ -3694,7 +3713,7 @@ out:
 }
 
 /* If we have read some dirents, we return 0; otherwise, we should return 1 to
- * indicate a error.
+ * indicate a NULL read.
  */
 static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler, 
                                off_t off, mmfs_dir_t *dir)
@@ -3707,6 +3726,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
     /* check if the cached entries can serve the request */
     if (off < dir->goffset) {
         /* seek backward, just zero out our brain */
+        hvfs_debug(mmfs, "seek backwards (%ld <- %ld)\n", off, dir->goffset);
         xfree(dir->di);
         u64 ino = dir->dino;
         memset(dir, 0, sizeof(*dir));
@@ -3803,7 +3823,7 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
         break;
     } while (1);
         
-    if (off >= saved_offset)
+    if (off > saved_offset)
         err = 0;
     else
         err = 1;
@@ -3825,7 +3845,7 @@ static int mmfs_readdir_plus(const char *pathname, void *buf,
                  pathname, err);
         goto out;
     } else if (err == 1) {
-        /* stop loudly */
+        /* BUG-XXX: xfstest generic 257 failed. should change to readdir */
         err = -ENOENT;
     }
 
