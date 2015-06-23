@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
     {
         struct fuse_file_info fi = {0,};
         struct stat stbuf;
-        struct utimbuf utb;
+        struct timespec tv[2];
         char buf[1024];
         size_t size = 10;
         off_t offset = 0;
@@ -187,9 +187,9 @@ int main(int argc, char *argv[])
             goto out;
         }
 
-        utb.actime = time(NULL);
-        utb.modtime = time(NULL);
-        err = mmfs_utime("/rename_source", &utb);
+        tv[0].tv_sec = time(NULL);
+        tv[1].tv_sec = time(NULL);
+        err = mmfs_utimens("/rename_source", tv);
         if (err) {
             hvfs_err(lib, "mmfs_utime() failed w/ %d\n", err);
             goto out;

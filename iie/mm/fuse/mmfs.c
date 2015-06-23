@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-17 18:50:41 macan>
+ * Time-stamp: <2015-06-23 16:20:44 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3268,15 +3268,23 @@ out:
     return err;
 }
 
-static int mmfs_utime(const char *pathname, struct utimbuf *buf)
+static int mmfs_utimens(const char *pathname, const struct timespec ctv[2])
 {
     struct mstat ms = {0,};
     struct mdu_update mu = {0,};
+    struct timespec tv[2];
     char *dup = strdup(pathname), *path, *name, *spath = NULL;
     char *p = NULL, *n, *s = NULL;
     u64 pino = g_msb.root_ino;
     u32 mdu_flags = 0;
     int err = 0;
+
+    if (ctv) {
+        tv[0] = ctv[0];
+        tv[1] = ctv[1];
+    } else {
+        goto out;
+    }
 
     SPLIT_PATHNAME(dup, path, name);
     n = path;
@@ -3313,9 +3321,19 @@ static int mmfs_utime(const char *pathname, struct utimbuf *buf)
 
     __ltc_update(spath, (void *)pino, (void *)(u64)ms.mdu.flags);
 hit:
-    mu.valid = MU_ATIME | MU_MTIME;
-    mu.atime = buf->actime;
-    mu.mtime = buf->modtime;
+    if (tv[0].tv_nsec == UTIME_NOW)
+        tv[0].tv_sec = time(NULL);
+    if (tv[1].tv_nsec == UTIME_NOW)
+        tv[1].tv_sec = time(NULL);
+
+    if (!(tv[0].tv_nsec == UTIME_OMIT)) {
+        mu.valid |= MU_ATIME;
+        mu.atime = tv[0].tv_sec;
+    }
+    if (!(tv[1].tv_nsec == UTIME_OMIT)) {
+        mu.valid |= MU_MTIME;
+        mu.mtime = tv[1].tv_sec;
+    }
 
     /* finally, do update now */
     if (!name || strlen(name) == 0 || strcmp(name, "/") == 0) {
@@ -4122,7 +4140,7 @@ struct fuse_operations mmfs_ops = {
     .chmod = mmfs_chmod,
     .chown = mmfs_chown,
     .truncate = mmfs_truncate,
-    .utime = mmfs_utime,
+    .utimens = mmfs_utimens,
     .open = mmfs_open,
     .read = mmfs_read,
     .write = mmfs_write,

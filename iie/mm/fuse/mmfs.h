@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-11 18:10:40 macan>
+ * Time-stamp: <2015-06-19 13:45:37 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,8 +26,8 @@
 #include "mmfs_ll.h"
 
 /* which fuse version should we use? */
-#warning "We need FUSE version 2.6"
-#define FUSE_USE_VERSION 26
+#warning "We need FUSE version 2.8"
+#define FUSE_USE_VERSION 28
 #include <fuse.h>
 #include <fuse/fuse_lowlevel.h>
 
