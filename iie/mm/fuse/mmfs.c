@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-23 16:20:44 macan>
+ * Time-stamp: <2015-06-23 18:39:32 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1442,14 +1442,17 @@ static int __bh_sync_(struct bhhead *bhh, u32 valid)
     {
         struct mdu_update mu = {0,};
 
-        mu.valid = MU_SIZE | MU_MTIME | MU_BLKNR;
+        mu.valid = MU_SIZE | MU_BLKNR;
         mu.size = bhh->asize;
-        mu.mtime = time(NULL);
         mu.blknr = mu.size / g_msb.chunk_size + 1;
         mu.blknr -= mu.size % g_msb.chunk_size == 0 ? 1 : 0;
         if (valid & MU_CTIME) {
             mu.ctime = time(NULL);
             mu.valid |= MU_CTIME;
+        }
+        if (valid & MU_MTIME) {
+            mu.mtime = time(NULL);
+            mu.valid |= MU_MTIME;
         }
 
         __odc_update(&ms);
@@ -3215,7 +3218,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
 
     /* finally update the metadata */
     if (bhh->flag & BHH_DIRTY)
-        __bh_sync_(bhh, MU_CTIME);
+        __bh_sync_(bhh, MU_CTIME | MU_MTIME);
 
 out_put:
     __put_bhhead(bhh);
@@ -3260,7 +3263,7 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
 
     /* finally update the metadata */
     if (bhh->flag & BHH_DIRTY)
-        __bh_sync_(bhh, MU_CTIME);
+        __bh_sync_(bhh, MU_CTIME | MU_MTIME);
 
 out:
     RENEW_CI(OP_FTRUNCATE);
@@ -3557,6 +3560,11 @@ static int mmfs_cached_write(const char *pathname, const char *buf,
                  err);
         bhh->asize = osize;
         goto out;
+    }
+
+    /* update mtime now, only in cached mdu */
+    if (size > 0) {
+        bhh->ms.mdu.mtime = time(NULL);
     }
     err = size;
 
