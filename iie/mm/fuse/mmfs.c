@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-23 18:39:32 macan>
+ * Time-stamp: <2015-06-24 17:10:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -340,10 +340,13 @@ struct bhhead
     u64 chknr;                  /* allocated chunks */
     void *ptr;                  /* private pointer */
 
-#define BHH_CLEAN       0x00
-#define BHH_DIRTY       0x01
-#define BHH_SYNCING     0x80
-    u32 flag;
+#define BHH_CLEAN       0x0000
+#define BHH_DIRTY       0x0001
+#define BHH_SYNCING     0x0080
+#define BHH_INODE_DIRTY 0x8000
+    u16 flag;
+    /* NOTE: if mu.valid has more than 16 flags, change mu_valid */
+    u16 mu_valid;
     atomic_t ref;
 };
 
@@ -575,6 +578,18 @@ static inline void __set_bhh_dirty(struct bhhead *bhh)
 static inline void __clr_bhh_dirty(struct bhhead *bhh)
 {
     bhh->flag &= ~BHH_DIRTY;
+}
+
+static inline void __set_bhh_inode_dirty(struct bhhead *bhh, u16 flag)
+{
+    bhh->flag |= BHH_INODE_DIRTY;
+    bhh->mu_valid |= flag;
+}
+
+static inline void __clr_bhh_inode_dirty(struct bhhead *bhh)
+{
+    bhh->flag &= ~BHH_INODE_DIRTY;
+    bhh->mu_valid = 0;
 }
 
 static inline int __is_bh_dirty(struct bh *bh)
@@ -1422,8 +1437,10 @@ static int __bh_sync_(struct bhhead *bhh, u32 valid)
         ms.pino = bhh->ms.pino;
     }
 
-    hvfs_debug(mmfs, "__bh_sync(%ld) size=%ld asize %ld mdu.size %ld\n",
-               ms.ino, bhh->size, bhh->asize, bhh->ms.mdu.size);
+    hvfs_debug(mmfs, "_IN_%ld size=%ld asize %ld mdu.size %ld"
+               " dirty=%s\n",
+               ms.ino, bhh->size, bhh->asize, bhh->ms.mdu.size,
+               ((bhh->flag & BHH_INODE_DIRTY) ? "inode|data" : "data"));
 
     /* sync for each dirty chunk */
     for (i = 0; i < bhh->chknr; i++) {
@@ -1453,6 +1470,12 @@ static int __bh_sync_(struct bhhead *bhh, u32 valid)
         if (valid & MU_MTIME) {
             mu.mtime = time(NULL);
             mu.valid |= MU_MTIME;
+        }
+        if (bhh->flag & BHH_INODE_DIRTY) {
+            if (bhh->mu_valid & MU_ATIME) {
+                ms.mdu.atime = bhh->ms.mdu.atime;
+            }
+            __clr_bhh_inode_dirty(bhh);
         }
 
         __odc_update(&ms);
@@ -3513,21 +3536,9 @@ retry:
     }
 
     if (!mmfs_fuse_mgr.noatime && err > 0) {
-        /* update the atime now */
-        struct mdu_update mu;
-        struct timeval tv;
-        int __err;
-
-        gettimeofday(&tv, NULL);
-
-        mu.valid = MU_ATIME;
-        mu.atime = tv.tv_sec;
-        __err = __mmfs_update_inode_proxy(&ms, &mu);
-        if (err < 0) {
-            hvfs_err(mmfs, "do internal update on '%s' failed w/ %d\n",
-                     pathname, __err);
-            goto out;
-        }
+        /* update the atime now, only in cached mdu */
+        bhh->ms.mdu.atime = time(NULL);
+        __set_bhh_inode_dirty(bhh, MU_ATIME);
     }
 
 out:
@@ -3621,7 +3632,8 @@ static int mmfs_release(const char *pathname, struct fuse_file_info *fi)
 {
     struct bhhead *bhh = (struct bhhead *)fi->fh;
 
-    if (bhh->flag & BHH_DIRTY) {
+    if (bhh->flag & BHH_DIRTY ||
+        bhh->flag & BHH_INODE_DIRTY) {
         __bh_sync(bhh);
     }
     
@@ -3752,7 +3764,8 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
     /* check if the cached entries can serve the request */
     if (off < dir->goffset) {
         /* seek backward, just zero out our brain */
-        hvfs_debug(mmfs, "seek backwards (%ld <- %ld)\n", off, dir->goffset);
+        hvfs_debug(mmfs, "seek backwards offset (%ld <- %ld)\n", 
+                   off, dir->goffset);
         xfree(dir->di);
         u64 ino = dir->dino;
         memset(dir, 0, sizeof(*dir));

@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-17 18:49:51 macan>
+ * Time-stamp: <2015-06-24 16:19:18 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -131,6 +131,7 @@ struct mdu_update
     u64 ctime;
     u64 size;
 
+    /* NOTE: refer to struct bhhead mu_valid */
     u32 valid;
 
     u32 uid;
