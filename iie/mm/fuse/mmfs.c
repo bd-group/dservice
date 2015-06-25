@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-24 17:10:48 macan>
+ * Time-stamp: <2015-06-25 14:03:47 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2032,10 +2032,11 @@ hit:
     /* create the file or dir in the parent directory now */
     ms.name = name;
     ms.ino = 0;
-
-    mu.valid = MU_MODE | MU_DEV;
-    mu.mode = mode | S_IFBLK;
+    mu.valid = MU_MODE | MU_DEV | MU_CTIME | MU_ATIME | MU_MTIME;
+    mu.mode = mode;
     mu.dev = rdev;
+    mu.atime = mu.mtime = mu.ctime = time(NULL);
+
     err = __mmfs_create(pino, &ms, &mu, __MMFS_CREATE_ALL);
     if (err) {
         hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
