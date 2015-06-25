@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-17 18:50:01 macan>
+ * Time-stamp: <2015-06-25 17:41:13 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -872,11 +872,16 @@ static inline int __update_inode(struct redisConnection *rc, redisReply *rpy,
     if (rpy->type == REDIS_REPLY_INTEGER) {
         switch (rpy->integer) {
         case 1:
+        {
             /* updated */
-            hvfs_debug(mmll, "update inode _IN_%ld ok, version=%ld\n",
-                       ms->ino, (u64)s.version);
+            char mstr[512];
+
+            __mdu2str(&ms->mdu, mstr, 0);
+            hvfs_debug(mmll, "update inode _IN_%ld ok, version=%ld, %s\n",
+                       ms->ino, (u64)s.version, mstr);
             ms->mdu.version = s.version;
             break;
+        }
         case 0:
             /* failed */
             hvfs_warning(mmll, "update inode _IN_%ld failed, "
@@ -1360,7 +1365,8 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size)
             break;
         } else if (rsize < lsize) {
             /* chunk read w/ partial region */
-            hvfs_debug(mmll, "fread(P) rsize=%ld lsize=%ld\n", rsize, lsize);
+            hvfs_debug(mmll, "fread(%ld) chunk(%ld) partial rsize=%ld lsize=%ld\n",
+                       ms->ino, chkid, rsize, lsize);
             trsize += rsize;
             break;
         } else if (rsize > lsize) {
