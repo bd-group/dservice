@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-25 14:03:47 macan>
+ * Time-stamp: <2015-06-25 15:48:44 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -871,6 +871,12 @@ static void __set_chunk_size(struct bhhead *bhh, u64 chkid)
 }
 
 /* Note that, offset should be in-chunk offset
+ *
+ *
+ * Arg update: == 0, preload data actually
+ *             == 1, do update as needed (called by read fill?)
+ *             == 2, truly write some data, check and update bhh->asize
+ *             == 3, zero the range, arg buf must be NULL
  */
 static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                            void *buf, off_t offset, size_t size, int update)
@@ -899,14 +905,19 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                c->size, c->asize,
                bhh->size, bhh->asize, bhh->chknr, bhh, c, update);
 
-    if (update == 2) {
+    switch (update) {
+    case 2:
+    {
         u64 asize = offset + size + chkid * g_msb.chunk_size;
 
-        __set_chunk_dirty(c);
-        __set_bhh_dirty(bhh);
         if (asize > bhh->asize) {
             bhh->asize = asize;
         }
+    }
+    case 3:
+        __set_bhh_dirty(bhh);
+        __set_chunk_dirty(c);
+        break;
     }
     __set_chunk_size(bhh, chkid);
 
@@ -925,6 +936,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     memcpy(bh->data + offset - bh->offset,
                            buf + loff, _size);
                     if (update == 2) __set_bh_dirty(bh);
+                } else if (update == 3) {
+                    memset(bh->data + offset - bh->offset,
+                           0, _size);
                 }
                 size -= _size;
                 loff += _size;
@@ -959,6 +973,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                         memcpy(bh->data + offset - bh->offset,
                                buf + loff, _size);
                         if (update == 2) __set_bh_dirty(bh);
+                    } else if (update == 3) {
+                        memset(bh->data + offset - bh->offset,
+                               0, _size);
                     }
                     size -= _size;
                     loff += _size;
@@ -978,6 +995,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     memcpy(bh->data + offset - bh->offset,
                            buf + loff, _size);
                     if (update == 2) __set_bh_dirty(bh);
+                } else if (update == 3) {
+                    memset(bh->data + offset - bh->offset,
+                           0, _size);
                 }
                 size -= _size;
                 loff += _size;
@@ -1001,6 +1021,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                         memcpy(bh->data + offset - bh->offset,
                                buf + loff, _size);
                         if (update == 2) __set_bh_dirty(bh);
+                    } else if (update == 3) {
+                        memset(bh->data + offset - bh->offset,
+                               0, _size);
                     }
                     size -= _size;
                     loff += _size;
@@ -1031,6 +1054,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                             memcpy(bh->data + offset - bh->offset,
                                    buf + loff, _size);
                             if (update == 2) __set_bh_dirty(bh);
+                        } else if (update == 3) {
+                            memset(bh->data + offset - bh->offset,
+                                   0, _size);
                         }
                         size -= _size;
                         loff += _size;
@@ -3227,17 +3253,25 @@ static int mmfs_truncate(const char *pathname, off_t size)
     if (size == bhh->asize) {
         goto out_put;
     } else if (size > bhh->asize) {
-        __set_bhh_dirty(bhh);
+        /* truncate up */
         bhh->asize = size;
-        err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 2);
+        err = __bh_fill(&ms, bhh, NULL, osize, (size - osize), 2);
         if (err < 0) {
-            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n", err);
+            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+                     osize, size - osize, err);
             bhh->asize = osize;
             goto out_put;
         }
     } else {
-        __set_bhh_dirty(bhh);
+        /* truncate down */
         bhh->asize = size;
+        err = __bh_fill(&ms, bhh, NULL, size, osize - size, 3);
+        if (err < 0) {
+            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+                     size, osize - size, err);
+            bhh->asize = osize;
+            goto out;
+        }
     }
 
     /* finally update the metadata */
@@ -3259,7 +3293,7 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
 {
     struct mstat ms = {0,};
     struct bhhead *bhh = (struct bhhead *)fi->fh;
-    u64 osize;
+    size_t osize;
     int err = 0;
 
     if (unlikely(!bhh))
@@ -3272,17 +3306,25 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
     if (size == bhh->asize) {
         goto out;
     } else if (size > bhh->asize) {
-        __set_bhh_dirty(bhh);
+        /* truncate up */
         bhh->asize = size;
-        err = __bh_fill(&ms, bhh, NULL, bhh->asize, (size - bhh->asize), 0);
+        err = __bh_fill(&ms, bhh, NULL, osize, (size - osize), 2);
         if (err < 0) {
-            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n", err);
+            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+                     osize, size - osize, err);
             bhh->asize = osize;
             goto out;
         }
     } else {
-        __set_bhh_dirty(bhh);
+        /* truncate down */
         bhh->asize = size;
+        err = __bh_fill(&ms, bhh, NULL, size, osize - size, 3);
+        if (err < 0) {
+            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+                     size, osize - size, err);
+            bhh->asize = osize;
+            goto out;
+        }
     }
 
     /* finally update the metadata */

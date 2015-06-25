@@ -1378,7 +1378,7 @@ int get_mm_object(char *set, char *md5, void **buf, size_t *length)
 	}
 
 	if (reply->type == REDIS_REPLY_NIL) {
-        hvfs_err(mmcc, "%s.%s does not exist on MM Meta server.\n", set, md5);
+        hvfs_err(mmcc, "%s@%s does not exist on MM Meta server.\n", set, md5);
         err = EMMNOTFOUND;
         goto out_free;
 	}
