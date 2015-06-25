@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-25 15:48:44 macan>
+ * Time-stamp: <2015-06-25 18:07:56 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3616,9 +3616,9 @@ static int mmfs_cached_write(const char *pathname, const char *buf,
         goto out;
     }
 
-    /* update mtime now, only in cached mdu */
+    /* update mtime/ctime now, only in cached mdu */
     if (size > 0) {
-        bhh->ms.mdu.mtime = time(NULL);
+        bhh->ms.mdu.ctime = bhh->ms.mdu.mtime = time(NULL);
     }
     err = size;
 
