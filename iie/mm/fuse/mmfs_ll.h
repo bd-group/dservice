@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-24 16:19:18 macan>
+ * Time-stamp: <2015-06-26 11:50:34 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -360,6 +360,8 @@ int __mmfs_fread(struct mstat *ms, void *data, u64 off, u64 size);
 int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid);
 
 int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen, u64 chkid);
+
+int __mmfs_clr_block(struct mstat *ms, u64 chkid);
 
 int __mmfs_readdir(mmfs_dir_t *dir);
 

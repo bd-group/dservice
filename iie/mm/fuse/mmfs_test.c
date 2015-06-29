@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-21 16:48:49 macan>
+ * Time-stamp: <2015-06-26 18:35:57 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -225,10 +225,20 @@ int main(int argc, char *argv[])
         err = EFAULT;
     }
 
-    close(fd);
-
 out_unlink:
     unlink("./MMFS_TEST");
+
+    sleep(10);
+    {
+        struct stat buf;
+
+        printf("wait 10 seconds ... then do fstat\n");
+        err = fstat(fd, &buf);
+        if (err) {
+            perror("fstat");
+        }
+        close(fd);
+    }
 
 out:
     return err;

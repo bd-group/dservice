@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-25 17:41:13 macan>
+ * Time-stamp: <2015-06-26 16:14:08 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1577,6 +1577,74 @@ out_free2:
     xfree(info);
 out_free:
     xfree(set);
+out:
+    putRC(rc);
+
+    return err;
+}
+
+int __mmfs_clr_block(struct mstat *ms, u64 chkid)
+{
+    struct redisConnection *rc = NULL;
+    redisReply *rpy = NULL;
+    int err = 0;
+
+    rc = getRC();
+    if (!rc) {
+        hvfs_err(mmll, "getRC() failed\n");
+        return -EINVAL;
+    }
+
+    if (ms->ino <= 0) {
+        hvfs_err(mmll, "invalid ino %ld provided\n", ms->ino);
+        err = -EINVAL;
+        goto out;
+    }
+    if (S_ISDIR(ms->mdu.mode)) {
+        hvfs_err(mmll, "directory (ino %ld) has no blocks to write\n", ms->ino);
+        err = -EISDIR;
+        goto out;
+    }
+
+    hvfs_debug(mmll, "_IN_%ld block clear for CHK=%ld\n",
+               ms->ino, chkid);
+
+    if (likely(chkid == 0)) {
+        rpy = redisCommand(rc->rc, "hdel _IN_%ld %s", 
+                           ms->ino,
+                           MMFS_INODE_BLOCK);
+    } else {
+        rpy = redisCommand(rc->rc, "hdel _IN_%ld %s_%ld",
+                           ms->ino,
+                           MMFS_INODE_BLOCK,
+                           chkid);
+    }
+    if (rpy == NULL) {
+        hvfs_err(mmll, "HDEL from MM Meta failed: %s\n", rc->rc->errstr);
+        freeRC(rc);
+        err = EMMMETAERR;
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
+                 ms->ino, ms->name);
+        err = -ENOENT;
+        freeReplyObject(rpy);
+        goto out;
+    }
+    if (rpy->type == REDIS_REPLY_INTEGER) {
+        if (rpy->integer == 1) {
+            /* deleted */
+            hvfs_debug(mmll, "_IN_%ld '%s' block CHK=%ld deleted\n",
+                       ms->ino, ms->name, chkid);
+        } else {
+            /* not exist */
+            hvfs_debug(mmll, "_IN_%ld '%s' block CHK=%ld not exist to deleted\n",
+                       ms->ino, ms->name, chkid);
+        }
+    }
+    freeReplyObject(rpy);
+    
 out:
     putRC(rc);
 

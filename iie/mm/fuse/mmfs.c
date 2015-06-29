@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-25 18:07:56 macan>
+ * Time-stamp: <2015-06-29 13:55:06 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -694,10 +694,10 @@ static void __put_chunk(struct chunk *c)
     list_for_each_entry_safe(bh, n, &c->bh, list) {
         list_del(&bh->list);
         if (__is_bh_dirty(bh)) {
-            hvfs_err(mmfs, "FATAL dirty BH offset %ld in CHK %ld "
-                     "(size %ld, asize %ld flag %d)\n",
-                     (u64)bh->offset, 
-                     c->chkid, c->size, c->asize, c->flag);
+            hvfs_warning(mmfs, "FATAL dirty BH offset %ld in CHK %ld "
+                         "(size %ld, asize %ld flag %d)\n",
+                         (u64)bh->offset, 
+                         c->chkid, c->size, c->asize, c->flag);
         }
         __put_bh(bh);
     }
@@ -876,7 +876,8 @@ static void __set_chunk_size(struct bhhead *bhh, u64 chkid)
  * Arg update: == 0, preload data actually
  *             == 1, do update as needed (called by read fill?)
  *             == 2, truly write some data, check and update bhh->asize
- *             == 3, zero the range, arg buf must be NULL
+ *             == 3, zero the range, arg buf must be NULL; if [offset->size] is
+ *                   this chunk, free it now.
  */
 static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                            void *buf, off_t offset, size_t size, int update)
@@ -913,9 +914,29 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
         if (asize > bhh->asize) {
             bhh->asize = asize;
         }
+        __set_bhh_dirty(bhh);
+        __set_chunk_dirty(c);
+        break;
     }
     case 3:
         __set_bhh_dirty(bhh);
+        if (offset == chkid * g_msb.chunk_size &&
+            size == g_msb.chunk_size) {
+            bhh->chunks[chkid] = NULL;
+
+            err = __mmfs_clr_block(ms, chkid);
+            if (err) {
+                hvfs_err(mmfs, "clear block for _IN_%ld CHK=%ld failed w/ %d\n",
+                         ms->ino, chkid, err);
+            }
+            xrwlock_wunlock(&bhh->clock);
+
+            hvfs_warning(mmfs, "put _IN_%ld CHK %ld, might contains dirty BHs.\n",
+                         ms->ino, chkid);
+            __put_chunk(c);
+
+            return err;
+        }
         __set_chunk_dirty(c);
         break;
     }
@@ -1100,8 +1121,12 @@ static int __bh_fill(struct mstat *ms, struct bhhead *bhh,
         lsize = min(g_msb.chunk_size - loff, 
                     end - chkid * g_msb.chunk_size - loff);
 
-        err = __bh_fill_chunk(chkid, ms, bhh,
-                              buf + bytes, loff, lsize, update);
+        if (buf != NULL)
+            err = __bh_fill_chunk(chkid, ms, bhh,
+                                  buf + bytes, loff, lsize, update);
+        else
+            err = __bh_fill_chunk(chkid, ms, bhh,
+                                  NULL, loff, lsize, update);
         if (err) {
             hvfs_err(mmfs, "_IN_%ld fill chunk %ld @ [%ld,%ld) faild w/ %d\n",
                      ms->ino, chkid, loff, lsize, err);
@@ -1354,6 +1379,10 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
                ms.ino, chkid, c->size, c->asize);
 
     xrwlock_wlock(&bhh->clock);
+    /* check if we should delete this chunk */
+    if (bhh->asize <= chkid * g_msb.chunk_size) {
+        goto del_chunk;
+    }
     if (!__is_chunk_dirty(c)) {
         goto out_unlock;
     }
@@ -1412,9 +1441,6 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         }
     }
     __clr_chunk_dirty(c);
-out_unlock:
-    xrwlock_wunlock(&bhh->clock);
-    __unlock_chunk(c);
 
     /* write out the data now */
     if (data) {
@@ -1422,22 +1448,42 @@ out_unlock:
         if (err) {
             hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
-            goto out_free;
+            goto out_unlock;
         }
     } else {
         err = __mmfs_fwritev(&ms, 0, iov, i, chkid);
         if (err) {
             hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
-            goto out_free;
+            goto out_unlock;
         }
     }
+
+out_unlock:
+    xrwlock_wunlock(&bhh->clock);
+    __unlock_chunk(c);
 
 out_free:
     xfree(data);
     xfree(iov);
 
     return err;
+del_chunk:
+    bhh->chunks[chkid] = NULL;
+
+    err = __mmfs_clr_block(&ms, chkid);
+    if (err) {
+        hvfs_err(mmfs, "clear block for _IN_%ld CHK=%ld failed w/ %d\n",
+                 ms.ino, chkid, err);
+    }
+
+    xrwlock_wunlock(&bhh->clock);
+    __unlock_chunk(c);
+    hvfs_warning(mmfs, "put _IN_%ld CHK %ld, might contains dirty BHs.\n",
+                 ms.ino, chkid);
+    __put_chunk(c);
+
+    goto out_free;
 }
 
 static int __bh_sync_(struct bhhead *bhh, u32 valid)
@@ -4192,6 +4238,7 @@ static void mmfs_destroy(void *arg)
 
 struct fuse_operations mmfs_ops = {
     .getattr = mmfs_getattr,
+    .fgetattr = NULL,
     .readlink = mmfs_readlink,
     .getdir = NULL,
     .mknod = mmfs_mknod,
