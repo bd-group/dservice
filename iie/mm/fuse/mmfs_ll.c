@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-26 16:14:08 macan>
+ * Time-stamp: <2015-07-02 18:20:21 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -387,6 +387,11 @@ int __mmfs_readlink(u64 pino, struct mstat *ms)
         }
     out_free:
         freeReplyObject(rpy);
+    } else {
+        hvfs_err(mmll, "read link from %ld(%s) is not allowed, please convert "
+                 " it to ms->ino.\n",
+                 pino, ms->name);
+        err = -EINVAL;
     }
 out:
     putRC(rc);
@@ -1041,7 +1046,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
             if (!S_ISDIR(ms->mdu.mode)) {
                 err = __mmfs_rename_fix(ms->mdu.ino);
                 if (err) {
-                    hvfs_err(mmll, "rename fix: ino=%ld\n", ms->mdu.ino);
+                    hvfs_err(mmll, "rename/link fix: ino=%ld\n", ms->mdu.ino);
                 }
             }
         }
@@ -1307,13 +1312,13 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
                      ms->ino, rpy->str, err);
             goto out_free;
         }
-        if (rlen - off < 0) {
-            hvfs_warning(mmll, "_IN_%ld block size %ld - off %ld < 0\n",
+        if (rlen < off) {
+            hvfs_warning(mmll, "_IN_%ld block size %ld < off %ld\n",
                          ms->ino, rlen, off);
             err = 0;
         } else if (off + size > rlen) {
             hvfs_warning(mmll, "_IN_%ld block size %ld < request size %ld\n",
-                         ms->ino, rlen, size);
+                         ms->ino, rlen, size + off);
             memcpy(data, buf + off, rlen - off);
             err = rlen - off;
         } else {
@@ -1847,15 +1852,6 @@ int __mmfs_dec_shadow_dir(u64 dino)
     }
     if (rpy->type == REDIS_REPLY_INTEGER) {
         if (rpy->integer <= 0) {
-            char set[256];
-
-            sprintf(set, "o%ld", dino);
-            err = mmcc_del_set(set);
-            if (err) {
-                hvfs_err(mmll, "do MMCC set %s delete failed, manual delete.\n",
-                         set);
-            }
-            hvfs_debug(mmll, "MMCC set %s deleted (not shadow).\n", set);
             deleted = 1;
         }
     }
@@ -1876,6 +1872,41 @@ int __mmfs_dec_shadow_dir(u64 dino)
             err = -EINVAL;
             freeReplyObject(rpy);
             goto out;
+        }
+        freeReplyObject(rpy);
+        
+        /* BUG-XXX: check if this inode exists, otherwise delete set.
+         *
+         * Detected by xfstests generic 013, fsstress.2, data missing and
+         * system locked up.
+         */
+        rpy = redisCommand(rc->rc, "exists _IN_%ld", dino);
+        if (rpy == NULL) {
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
+            err = EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(mmll, "check inode %ld exists failed w/ %s\n",
+                     dino, rpy->str);
+            err = -EINVAL;
+            freeReplyObject(rpy);
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_INTEGER) {
+            if (rpy->integer == 0) {
+                /* ok, free to recycle space now */
+                char set[256];
+                
+                sprintf(set, "o%ld", dino);
+                err = mmcc_del_set(set);
+                if (err) {
+                    hvfs_err(mmll, "do MMCC set %s delete failed, manual delete.\n",
+                             set);
+                }
+                hvfs_debug(mmll, "MMCC set %s deleted (not shadow).\n", set);
+            }
         }
         freeReplyObject(rpy);
     }
@@ -2021,10 +2052,15 @@ int __mmfs_rename_fix(u64 ino)
             xfree(cursor);
             cursor = strdup(rpy->element[0]->str);
 
+            if (rpy->element[1]->elements < 2) {
+                goto free;
+            }
             __t = xrealloc(fields, sizeof(char *) * 
                            (rpy->element[1]->elements / 2 + nr));
             if (!__t) {
-                hvfs_err(mmll, "xrealloc() fields' pointer array failed.\n");
+                hvfs_err(mmll, "xrealloc() fields' pointer array failed, "
+                         "elems=%ld, nr=%d.\n",
+                         rpy->element[1]->elements / 2, nr);
                 alloc = 0;
             } else {
                 fields = __t;
@@ -2059,6 +2095,7 @@ int __mmfs_rename_fix(u64 ino)
                 xfree(q);
             }
         }
+    free:
         freeReplyObject(rpy);
         if (cursor == NULL || strcmp(cursor, "0") == 0)
             break;

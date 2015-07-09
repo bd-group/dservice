@@ -4,12 +4,16 @@
 int main(int argc, char *argv[])
 {
     char *value, *uris = NULL, *namespace = NULL, *rootdir = NULL;
-    int noatime = -1, ttl = -1, debug = 0, perm = -1;
+    int noatime = -1, nodiratime = -1, ttl = -1, debug = 0, perm = -1;
     int err = 0;
 
     value = getenv("noatime");
     if (value) {
         noatime = atoi(value);
+    }
+    value = getenv("nodiratime");
+    if (value) {
+        nodiratime = atoi(value);
     }
     value = getenv("uris");
     if (value) {
@@ -37,10 +41,14 @@ int main(int argc, char *argv[])
         mmfs_debug_mode(debug);
     }
 
-    if (noatime >= 0 || ttl >= 0 || perm >= 0 || uris || namespace) {
+    if (noatime >= 0 ||
+        nodiratime >= 0 ||
+        ttl >= 0 || perm >= 0 || uris || namespace) {
         /* reset minor value to default value */
         if (noatime < 0)
             noatime = 1;
+        if (nodiratime < 0)
+            nodiratime = 1;
         if (ttl < 0)
             ttl = 5;
         if (perm < 0)
@@ -55,7 +63,7 @@ int main(int argc, char *argv[])
         mmfs_fuse_mgr.inited = 1;
         mmfs_fuse_mgr.sync_write = 0;
         mmfs_fuse_mgr.noatime = (noatime > 0 ? 1 : 0);
-        mmfs_fuse_mgr.nodiratime = 1;
+        mmfs_fuse_mgr.nodiratime = (nodiratime > 0 ? 1 : 0);
         mmfs_fuse_mgr.perm = (perm > 0 ? 1 : 0);
         mmfs_fuse_mgr.ttl = ttl;
         mmfs_fuse_mgr.uris = uris;

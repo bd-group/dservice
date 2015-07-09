@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-29 13:55:06 macan>
+ * Time-stamp: <2015-07-07 10:47:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -297,7 +297,7 @@ struct soc_entry *__soc_lookup(const char *key)
     xlock_lock(&rh->lock);
     hlist_for_each_entry_safe(se, pos, n, &rh->h, hlist) {
         if (strcmp(se->key, key) == 0) {
-            hlist_del(&se->hlist);
+            hlist_del_init(&se->hlist);
             atomic_dec(&mmfs_soc_mgr.nr);
             found = 1;
             break;
@@ -334,6 +334,8 @@ struct bhhead
     size_t size;                /* total buffer size */
     size_t asize;               /* actually size for release use */
     size_t osize;               /* old size for last update */
+    size_t ssize;               /* synced size, update to mdu.size for each
+                                 * SYNC */
     struct mstat ms;
     xrwlock_t clock;
     u64 ino;                    /* who am i? */
@@ -430,7 +432,7 @@ int __odc_remove(struct bhhead *del)
         if (del == bhh && del->ino == bhh->ino) {
             if (atomic_dec_return(&bhh->ref) <= 0) {
                 idx = 1;
-                hlist_del(&bhh->hlist);
+                hlist_del_init(&bhh->hlist);
             }
             break;
         }
@@ -549,7 +551,7 @@ struct bhhead* __get_bhhead(struct mstat *ms)
     return bhh;
 }
 
-static inline void __set_bhh_syncing(struct bhhead *bhh)
+static inline void __set_bhh_syncing(struct bhhead *bhh, int onlysync)
 {
 retry:
     xrwlock_wlock(&bhh->clock);
@@ -560,6 +562,8 @@ retry:
         goto retry;
     } else {
         bhh->flag |= BHH_SYNCING;
+        if (!onlysync)
+            bhh->flag &= ~BHH_DIRTY;
     }
     xrwlock_wunlock(&bhh->clock);
 }
@@ -569,6 +573,12 @@ static inline void __clr_bhh_syncing(struct bhhead *bhh)
     xrwlock_wlock(&bhh->clock);
     bhh->flag &= ~BHH_SYNCING;
     xrwlock_wunlock(&bhh->clock);
+}
+
+static inline void __bhh_sync_barrier(struct bhhead *bhh, int onlysync)
+{
+    __set_bhh_syncing(bhh, onlysync);
+    __clr_bhh_syncing(bhh);
 }
 
 static inline void __set_bhh_dirty(struct bhhead *bhh)
@@ -694,6 +704,8 @@ static void __put_chunk(struct chunk *c)
     list_for_each_entry_safe(bh, n, &c->bh, list) {
         list_del(&bh->list);
         if (__is_bh_dirty(bh)) {
+            /* NOTE-XXX: in clr_block() we might put a dirty chunk that cached
+             * in memory, thus in put_chunk() we might contains dirty BHs. */
             hvfs_warning(mmfs, "FATAL dirty BH offset %ld in CHK %ld "
                          "(size %ld, asize %ld flag %d)\n",
                          (u64)bh->offset, 
@@ -974,7 +986,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     rlen = __mmfs_fread(ms, bh->data, 
                                         chkid * g_msb.chunk_size + c->size, 
                                         g_pagesize);
-                    if (rlen == -EFBIG) {
+                    if (rlen == -EFBIG || rlen == EHOLE) {
                         /* it is ok, we just zero the page */
                         err = 0;
                     } else if (rlen < 0) {
@@ -1056,7 +1068,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                         rlen = __mmfs_fread(ms, bh->data, 
                                             chkid * g_msb.chunk_size + c->size, 
                                             g_pagesize);
-                        if (rlen == -EFBIG) {
+                        if (rlen == -EFBIG || rlen == EHOLE) {
                             /* it is ok, we just zero the page */
                             err = 0;
                         } else if (rlen < 0) {
@@ -1283,6 +1295,8 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
 
                 if (c->size > 0) {
                     xfree(cdata);
+                    hvfs_err(lib, "CHUNK %p size=%ld BH_LIST_EMPTY=%d\n",
+                             c, c->size, list_empty(&c->bh));
                     __unlock_chunk(c);
                     return -EAGAIN;
                 }
@@ -1355,6 +1369,15 @@ out:
     return err;
 }
 
+static inline void __bhh_sync_size(struct bhhead *bhh, size_t size)
+{
+    if ((ssize_t)size < 0) {
+        bhh->ssize = 0;
+        return;
+    }
+    if (bhh->ssize < size) bhh->ssize = size;
+}
+
 static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
 {
     struct mstat ms;
@@ -1372,6 +1395,18 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         hvfs_err(mmfs, "__lookup_chunk(%ld) CHK=%ld failed.\n",
                  bhh->ms.ino, chkid);
         return -ENOMEM;
+    }
+
+    /* try to fill the not filled in pages in this chunk */
+    if (c->asize > c->size) {
+        err = __bh_fill_chunk(chkid, &ms, bhh, NULL, c->asize, 0, 1);
+        if (err < 0) {
+            hvfs_err(mmfs, "fill _IN_%ld buffer cache failed w/ %d "
+                     "for CHK=%ld\n",
+                     ms.ino, err, chkid);
+            goto out_unlock;
+        }
+        ms.pino = bhh->ms.pino;
     }
 
     hvfs_debug(mmfs, "__bh_sync_chunk(%ld) CHK=%ld c->size=%ld "
@@ -1458,6 +1493,7 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
             goto out_unlock;
         }
     }
+    __bhh_sync_size(bhh, chkid * g_msb.chunk_size + c->asize);
 
 out_unlock:
     xrwlock_wunlock(&bhh->clock);
@@ -1491,28 +1527,17 @@ static int __bh_sync_(struct bhhead *bhh, u32 valid)
     struct mstat ms;
     int err = 0, i;
 
-    __clr_bhh_dirty(bhh);
-
     /* set bhh syncing, and wait for other syncs if needed */
-    __set_bhh_syncing(bhh);
+    __set_bhh_syncing(bhh, 0);
 
     ms = bhh->ms;
-
-    if (bhh->asize > bhh->size) {
-        /* oh, we have to fill the remain pages */
-        err = __bh_fill(&ms, bhh, NULL, bhh->asize, 0, 1);
-        if (err < 0) {
-            hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
-                     err);
-            goto out;
-        }
-        ms.pino = bhh->ms.pino;
-    }
 
     hvfs_debug(mmfs, "_IN_%ld size=%ld asize %ld mdu.size %ld"
                " dirty=%s\n",
                ms.ino, bhh->size, bhh->asize, bhh->ms.mdu.size,
                ((bhh->flag & BHH_INODE_DIRTY) ? "inode|data" : "data"));
+
+    __bhh_sync_size(bhh, -1);
 
     /* sync for each dirty chunk */
     for (i = 0; i < bhh->chknr; i++) {
@@ -1526,13 +1551,17 @@ static int __bh_sync_(struct bhhead *bhh, u32 valid)
             }
         }
     }
+    if (bhh->asize != bhh->ssize) {
+        hvfs_err(mmfs, "COOL, detect unmatched data sync, synced=%ld, mdued=%ld\n",
+                 bhh->ssize, bhh->asize);
+    }
 
     /* update the file attributes */
     {
         struct mdu_update mu = {0,};
 
         mu.valid = MU_SIZE | MU_BLKNR;
-        mu.size = bhh->asize;
+        mu.size = bhh->ssize;
         mu.blknr = mu.size / g_msb.chunk_size + 1;
         mu.blknr -= mu.size % g_msb.chunk_size == 0 ? 1 : 0;
         if (valid & MU_CTIME) {
@@ -1668,28 +1697,30 @@ int __ltc_hash(const char *key)
         mmfs_ltc_mgr.hsize;
 }
 
-static void __ltc_remove(struct ltc_entry *del)
+/* Must be locked in caller
+ */
+static int __UNUSED__ __ltc_remove(struct regular_hash *rh, struct ltc_entry *del)
 {
-    struct regular_hash *rh;
     struct ltc_entry *le;
     struct hlist_node *pos, *n;
-    int idx;
+    int removed = 0;
 
-    idx = __ltc_hash(del->fullname);
-    rh = mmfs_ltc_mgr.ht + idx;
-
-    xlock_lock(&rh->lock);
     hlist_for_each_entry_safe(le, pos, n, &rh->h, hlist) {
         if (del == le && strcmp(del->fullname, le->fullname) == 0) {
-            hlist_del(&le->hlist);
+            hlist_del_init(&le->hlist);
+            removed = 1;
             break;
         }
     }
-    xlock_unlock(&rh->lock);
+
+    return removed;
 }
 
+/* Must be locked in caller
+ */
 static struct ltc_entry *
-__ltc_new_entry(char *pathname, void *arg0, void *arg1)
+__ltc_new_entry(struct regular_hash *rh, char *pathname, 
+                void *arg0, void *arg1)
 {
     struct ltc_entry *le = NULL;
 
@@ -1704,7 +1735,7 @@ __ltc_new_entry(char *pathname, void *arg0, void *arg1)
 
             xlock_unlock(&mmfs_ltc_mgr.lru_lock);
             /* remove from the hash table */
-            __ltc_remove(le);
+            hlist_del_init(&le->hlist);
 
             /* install new values */
             xfree(le->fullname);
@@ -1774,16 +1805,16 @@ static int __ltc_update(char *pathname, void *arg0, void *arg1)
         }
     }
     if (unlikely(!found)) {
-        le = __ltc_new_entry(pathname, arg0, arg1);
+        le = __ltc_new_entry(rh, pathname, arg0, arg1);
         if (likely(le)) {
             found = 2;
+            /* insert to this hash list */
+            hlist_add_head(&le->hlist, &rh->h);
+            /* insert to the lru list */
+            xlock_lock(&mmfs_ltc_mgr.lru_lock);
+            list_add(&le->list, &mmfs_ltc_mgr.lru);
+            xlock_unlock(&mmfs_ltc_mgr.lru_lock);
         }
-        /* insert to this hash list */
-        hlist_add_head(&le->hlist, &rh->h);
-        /* insert to the lru list */
-        xlock_lock(&mmfs_ltc_mgr.lru_lock);
-        list_add(&le->list, &mmfs_ltc_mgr.lru);
-        xlock_unlock(&mmfs_ltc_mgr.lru_lock);
     }
     xlock_unlock(&rh->lock);
     
@@ -1817,6 +1848,49 @@ int __ltc_lookup(char *pathname, void *arg0, void *arg1)
     xlock_unlock(&rh->lock);
 
     return found;
+}
+
+static inline
+void __ltc_lock(const char *pathname)
+{
+    struct regular_hash *rh;
+    int idx;
+
+    idx = __ltc_hash(pathname);
+    rh = mmfs_ltc_mgr.ht + idx;
+
+    xlock_lock(&rh->lock);
+}
+
+static inline
+void __ltc_unlock(const char *pathname)
+{
+    struct regular_hash *rh;
+    int idx;
+
+    idx = __ltc_hash(pathname);
+    rh = mmfs_ltc_mgr.ht + idx;
+
+    xlock_unlock(&rh->lock);
+}
+
+static inline
+void __ltc_invalid_locked(const char *pathname)
+{
+    struct regular_hash *rh;
+    struct ltc_entry *le;
+    struct hlist_node *pos, *n;
+    int idx;
+
+    idx = __ltc_hash(pathname);
+    rh = mmfs_ltc_mgr.ht + idx;
+
+    hlist_for_each_entry_safe(le, pos, n, &rh->h, hlist) {
+        if (strcmp(pathname, le->fullname) == 0) {
+            le->born -= mmfs_ltc_mgr.ttl;
+            break;
+        }
+    }
 }
 
 static inline
@@ -2357,13 +2431,16 @@ hit:
         /* delete a normal file or dir, it is easy */
         ms.name = name;
         ms.ino = 0;
+        __ltc_lock(pathname);
         err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
         if (err) {
             hvfs_err(mmfs, "do internal delete on '%s' failed w/ %d\n",
                      name, err);
+            __ltc_unlock(pathname);
             goto out;
         }
-        __ltc_invalid(pathname);
+        __ltc_invalid_locked(pathname);
+        __ltc_unlock(pathname);
         /* revert parent directory's nlink */
         mu.valid = MU_NLINK_DELTA;
         mu.nlink = -1;
@@ -2571,13 +2648,19 @@ hit:
         }
     }
 
-    /* if the source file has been opened, we should use the latest mstat info
-     * cached on it */
+    /* If the source file has been opened, we should use the latest mstat info
+     * cached on it.
+     *
+     * Note: only use new mdu, other info might be wrong (e.x. hard link file
+     * that opened by another pathname.
+     */
     {
         struct bhhead *bhh = __odc_lookup(ms.ino);
 
         if (bhh) {
-            ms = bhh->ms;
+            hvfs_debug(mmfs, "_IN_%ld openned in rename, update mdu info.\n",
+                       ms.ino);
+            ms.mdu = bhh->ms.mdu;
             ms.name = name;
             /* if the 'from' file is dirty, we should sync it */
             if (bhh->flag & BHH_DIRTY) {
@@ -2661,14 +2744,19 @@ hit2:
                     /* FIXME: delete the directory now, SAVED it to
                      * deleted_ms */
                     deleted_ms = ms;
+                    __ltc_lock(to);
                     err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
                     if (err) {
                         hvfs_err(mmfs, "do internal unlink on _IN_%ld "
                                  "failed w/ %d\n",
                                  ms.ino, err);
+                        __ltc_unlock(to);
                         goto out;
                     }
                     deleted_dir = 1;
+                    /* invalid target directory if it is unlinked (dentry) */
+                    __ltc_invalid_locked(to);
+                    __ltc_unlock(to);
                 } else {
                     err = -ENOTEMPTY;
                     goto out;
@@ -2719,12 +2807,17 @@ hit2:
                 /* FIXME: delete the directory now, SAVED it to
                  * deleted_ms */
                 deleted_ms = ms;
+                __ltc_lock(to);
                 err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
                 if (err) {
                     hvfs_err(mmfs, "do internal unlink on "
                              "_IN_%ld failed w/ %d\n",
                              pino, err);
                 }
+                deleted_dir = 1;
+                /* invalid target directory if it is unlinked (dentry) */
+                __ltc_invalid_locked(to);
+                __ltc_unlock(to);
             } else {
                 err = -ENOTEMPTY;
                 goto out;
@@ -2779,8 +2872,8 @@ hit2:
 
     /* check if file's parent directory changes */
     if (S_ISREG(saved_ms.mdu.mode) && pino != saved_ms.pino) {
-        __mmfs_rename_log(saved_ms.ino, saved_ms.pino, pino);
         __mmfs_inc_shadow_dir(saved_ms.pino);
+        __mmfs_rename_log(saved_ms.ino, saved_ms.pino, pino);
     }
 
     /* if the target file has been opened, we should update the ODC cached
@@ -2795,17 +2888,23 @@ hit2:
     }
 
     /* unlink the old file or directory now (only dentry) */
+    if (S_ISDIR(saved_ms.mdu.mode)) {
+        __ltc_lock(from);
+    }
+        
     err = __mmfs_unlink(saved_ms.pino, &saved_ms, __MMFS_UNLINK_DENTRY);
     if (err) {
         hvfs_err(mmfs, "do internal unlink on (pino %ld)/%s failed "
                  "w/ %d (ignore)\n",
                  saved_ms.pino, saved_ms.name, err);
         /* ignore this error */
+        err = 0;
     }
 
     /* invalid the ltc entry if source is a directory */
     if (S_ISDIR(saved_ms.mdu.mode)) {
-        __ltc_invalid(from);
+        __ltc_invalid_locked(from);
+        __ltc_unlock(from);
     }
 
     /* nlink fix */
@@ -3021,6 +3120,15 @@ hit2:
             goto out_unlink;
         }
     }
+
+    /* check if file's parent directory changes */
+    if (S_ISREG(saved_ms.mdu.mode) && pino != saved_ms.pino) {
+        __mmfs_inc_shadow_dir(saved_ms.pino);
+        __mmfs_inc_shadow_dir(pino);
+        __mmfs_rename_log(saved_ms.ino, saved_ms.pino, 0);
+        __mmfs_rename_log(saved_ms.ino, pino, 0);
+    }
+
 out:
     xfree(dup);
     xfree(dup2);
@@ -3642,23 +3750,13 @@ static int mmfs_cached_write(const char *pathname, const char *buf,
 {
     struct mstat ms;
     struct bhhead *bhh = (struct bhhead *)fi->fh;
-    u64 osize;
     int err = 0;
 
     ms = bhh->ms;
-    __odc_lock(bhh);
-    __set_bhh_dirty(bhh);
-    osize = bhh->asize;
-    if (offset + size > bhh->asize) {
-        bhh->asize = offset + size;
-    }
-    __odc_unlock(bhh);
-
     err = __bh_fill(&ms, bhh, (void *)buf, offset, size, 2);
     if (err < 0) {
         hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
                  err);
-        bhh->asize = osize;
         goto out;
     }
 
@@ -3721,6 +3819,8 @@ static int mmfs_release(const char *pathname, struct fuse_file_info *fi)
 {
     struct bhhead *bhh = (struct bhhead *)fi->fh;
 
+    __bhh_sync_barrier(bhh, 1);
+
     if (bhh->flag & BHH_DIRTY ||
         bhh->flag & BHH_INODE_DIRTY) {
         __bh_sync(bhh);
@@ -3745,9 +3845,11 @@ static int mmfs_fsync(const char *pathname, int datasync,
     struct bhhead *bhh = (struct bhhead *)fi->fh;
     int err = 0;
 
-    if (bhh->flag & BHH_DIRTY) {
+    __bhh_sync_barrier(bhh, 1);
+
+    if (bhh->flag & BHH_DIRTY ||
+        ((bhh->flag & BHH_INODE_DIRTY) && !datasync)) {
         __bh_sync(bhh);
-    } else if (bhh->ms.mdu.flags & MMFS_MDU_LARGE) {
     }
 
     RENEW_CI(OP_FSYNC);
@@ -4076,6 +4178,36 @@ hit:
         struct soc_entry *se = __se_alloc(pathname, &ms);
 
         __soc_insert(se);
+    }
+
+    /* update parent directory mtime/ctime */
+    {
+        struct mdu_update mu;
+        struct mstat pms;
+
+        memset(&mu, 0, sizeof(mu));
+        memset(&pms, 0, sizeof(pms));
+        mu.valid = MU_MTIME | MU_CTIME;
+        mu.mtime = mu.ctime = time(NULL);
+
+    restat:
+        pms.ino = pino;
+        err = __mmfs_stat(pino, &pms);
+        if (err) {
+            hvfs_err(mmfs, "get mdu of _IN_%ld for parent dir update "
+                     "failed w/ %d\n",
+                     pino, err);
+            goto out;
+        }
+        err = __mmfs_update_inode(&pms, &mu);
+        if (err == -EAGAIN) {
+            pthread_yield();
+            goto restat;
+        } else if (err) {
+            hvfs_err(mmfs, "update parent dir _IN_%ld failed w/ %d\n",
+                     pino, err);
+            goto out;
+        }
     }
 
 out:

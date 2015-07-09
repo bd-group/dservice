@@ -8,7 +8,7 @@ iter=0
 for i in $@; do
     iter+=1
     if [ $iter -eq 1 ]; then
-        >&2 echo "Ignore DEVICE $i"
+        >&2 echo "Mounting: ignore DEVICE $i"
         continue
     fi
     if [ "x$i" == 'x-o' ]; then
