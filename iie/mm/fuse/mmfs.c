@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-07 10:47:48 macan>
+ * Time-stamp: <2015-07-10 17:25:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2188,6 +2188,36 @@ hit:
         hvfs_err(mmfs, "do internal create on '%s' failed w/ %d\n",
                  name, err);
         goto out;
+    }
+
+    // update mtime/ctime for parent directory.
+    {
+        struct mdu_update mu;
+        struct mstat pms;
+
+        memset(&mu, 0, sizeof(mu));
+        memset(&pms, 0, sizeof(pms));
+        mu.valid = MU_MTIME | MU_CTIME;
+        mu.mtime = mu.ctime = time(NULL);
+
+    restat:
+        pms.ino = pino;
+        err = __mmfs_stat(pino, &pms);
+        if (err) {
+            hvfs_err(mmfs, "get mdu of _IN_%ld for parent dir update "
+                     "failed w/ %d\n",
+                     pino, err);
+            goto out;
+        }
+        err = __mmfs_update_inode(&pms, &mu);
+        if (err == -EAGAIN) {
+            pthread_yield();
+            goto restat;
+        } else if (err) {
+            hvfs_err(mmfs, "update parent dir _IN_%ld failed w/ %d\n",
+                     pino, err);
+            goto out;
+        }
     }
 
 out:
