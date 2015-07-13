@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-10 17:25:48 macan>
+ * Time-stamp: <2015-07-13 10:45:09 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2369,13 +2369,14 @@ hit:
     ms.name = name;
     ms.ino = 0;
     err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
-    if (err) {
+    if (err < 0) {
         hvfs_err(mmfs, "do internal delete on '%s' failed w/ %d\n",
                  name, err);
         goto out;
     }
-    if (!S_ISLNK(ms.mdu.mode))
+    if (!S_ISLNK(ms.mdu.mode) || err != 1)
         __update_msb(MMFS_SB_U_SPACE, -ms.mdu.size);
+    err = 0;
 
 out:
     xfree(dup);
@@ -2463,7 +2464,7 @@ hit:
         ms.ino = 0;
         __ltc_lock(pathname);
         err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
-        if (err) {
+        if (err < 0) {
             hvfs_err(mmfs, "do internal delete on '%s' failed w/ %d\n",
                      name, err);
             __ltc_unlock(pathname);
@@ -2776,12 +2777,15 @@ hit2:
                     deleted_ms = ms;
                     __ltc_lock(to);
                     err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
-                    if (err) {
+                    if (err < 0) {
                         hvfs_err(mmfs, "do internal unlink on _IN_%ld "
                                  "failed w/ %d\n",
                                  ms.ino, err);
                         __ltc_unlock(to);
                         goto out;
+                    } else if (err == 1) {
+                        /* ignore existing inode */
+                        err = 0;
                     }
                     deleted_dir = 1;
                     /* invalid target directory if it is unlinked (dentry) */
@@ -2809,11 +2813,14 @@ hit2:
                 }
                 deleted_ms = ms;
                 err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
-                if (err) {
+                if (err < 0) {
                     hvfs_err(mmfs, "do internal unlink on _IN_%ld "
                              "failed w/ %d\n",
                              ms.ino, err);
                     goto out;
+                } else if (err == 1) {
+                    /* ignore existing inode */
+                    err = 0;
                 }
                 /* BUG-XXX: xfstest-generic-309: should update mtime and ctime
                  * of target directory mtime and ctime */
@@ -2839,10 +2846,13 @@ hit2:
                 deleted_ms = ms;
                 __ltc_lock(to);
                 err = __mmfs_unlink(pino, &ms, __MMFS_UNLINK_ALL);
-                if (err) {
+                if (err < 0) {
                     hvfs_err(mmfs, "do internal unlink on "
                              "_IN_%ld failed w/ %d\n",
                              pino, err);
+                } else if (err == 1) {
+                    /* ignore existing inode */
+                    err = 0;
                 }
                 deleted_dir = 1;
                 /* invalid target directory if it is unlinked (dentry) */
@@ -2923,13 +2933,13 @@ hit2:
     }
         
     err = __mmfs_unlink(saved_ms.pino, &saved_ms, __MMFS_UNLINK_DENTRY);
-    if (err) {
+    if (err < 0) {
         hvfs_err(mmfs, "do internal unlink on (pino %ld)/%s failed "
                  "w/ %d (ignore)\n",
                  saved_ms.pino, saved_ms.name, err);
-        /* ignore this error */
-        err = 0;
     }
+    /* ignore unlink error and existing inode (hard link) */
+    err = 0;
 
     /* invalid the ltc entry if source is a directory */
     if (S_ISDIR(saved_ms.mdu.mode)) {

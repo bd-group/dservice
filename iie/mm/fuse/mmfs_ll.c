@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-02 18:20:21 macan>
+ * Time-stamp: <2015-07-10 17:36:00 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -907,6 +907,8 @@ out:
     return err;
 }
 
+/* Return value: 1 -> not deleted
+ */
 int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
 {
     redisReply *rpy = NULL;
@@ -1013,6 +1015,9 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
                 hvfs_err(mmll, "call __update_inode _IN_%ld to nlink-- "
                          "failed w/ %d\n",
                          ms->ino, err);
+            } else {
+                /* this means we have not delete the inode actually */
+                err = 1;
             }
         } else {
             freeReplyObject(rpy);
