@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-06 11:15:45 macan>
+ * Time-stamp: <2015-07-18 17:15:54 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,6 +38,8 @@
 #include "atomic.h"
 #include "md5.h"
 #include "version.h"
+#include <assert.h>
+#include "err.h"
 
 #include "tracing.h"
 
@@ -46,7 +48,8 @@
 #define IOV_MAX 1024
 #endif
 
-#define EHOLE   -1050
+#define EHOLE   1050
+#define ESCAN   1051
 
 static char *mmfs_ccolor[] __attribute__((unused)) = 
 {
@@ -82,6 +85,7 @@ static char *mmfs_ccolor[] __attribute__((unused)) =
 #define MMFS_INODE_CHUNKNR      "__chk**(^%"
 
 #define MMFS_DEFAULT_UMASK      0644
+#define MMFS_DEFAULT_DIR_UMASK  0755
 
 struct mdu
 {
@@ -254,6 +258,7 @@ struct __mmfs_op_stat
 #define OP_RELEASE_DIR  22
 #define OP_CREATE_PLUS  23
 #define OP_FTRUNCATE    24
+#define OP_A_FSYNC      25
 
     atomic64_t getattr;
     atomic64_t readlink;
@@ -279,6 +284,7 @@ struct __mmfs_op_stat
     atomic64_t release_dir;
     atomic64_t create_plus;
     atomic64_t ftruncate;
+    atomic64_t a_fsync;
 };
 
 struct __mmfs_client_info
@@ -288,6 +294,8 @@ struct __mmfs_client_info
     char *ip;
     char *md5;                  /* self client binary md5sum */
     time_t born;                /* mount time */
+    u32 used_pages;             /* ODC used pages */
+    u32 free_pages;             /* ODC free pages */
     struct __mmfs_op_stat os;
 };
 

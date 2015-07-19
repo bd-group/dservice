@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-11 12:31:43 macan>
+ * Time-stamp: <2015-07-18 17:16:07 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,7 +44,7 @@ static int mmfs_mkfs(struct mmfs_sb *msb)
     ms.name = "_ROOT_INO_";
     ms.ino = 0;
     mu.valid = MU_MODE | MU_ATIME | MU_CTIME | MU_MTIME;
-    mu.mode = MMFS_DEFAULT_UMASK | S_IFDIR;
+    mu.mode = MMFS_DEFAULT_DIR_UMASK | S_IFDIR;
     mu.atime = mu.ctime = mu.mtime = time(NULL);
     ms.mdu.flags |= MMFS_MDU_DIR;
 

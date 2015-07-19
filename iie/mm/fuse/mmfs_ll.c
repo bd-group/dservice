@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-10 17:36:00 macan>
+ * Time-stamp: <2015-07-16 17:48:25 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1300,7 +1300,7 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
         hvfs_warning(mmll, "_IN_%ld does not exist or MM error\n",
                      ms->ino);
         if (ms->mdu.size > 0) {
-            err = EHOLE;
+            err = -EHOLE;
         } else {
             err = -EFBIG;
         }
@@ -2144,10 +2144,11 @@ int __mmfs_ci_pack(struct __mmfs_client_info *ci, char *key, char *buf)
 
     sprintf(key, "%s.%s", ci->hostname, ci->namespace);
     
-    n += sprintf(buf + n, "%ld,%s,%s,%s,%s,%ld,",
+    n += sprintf(buf + n, "%ld,%s,%s,%s,%s,%ld,%dU,%dF,",
                  (u64)time(NULL),
                  ci->hostname, ci->namespace,
-                 ci->ip, ci->md5, (u64)ci->born);
+                 ci->ip, ci->md5, (u64)ci->born,
+                 ci->used_pages, ci->free_pages);
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.getattr));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.readlink));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.mknod));
@@ -2172,6 +2173,7 @@ int __mmfs_ci_pack(struct __mmfs_client_info *ci, char *key, char *buf)
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.release_dir));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.create_plus));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.ftruncate));
+    n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.a_fsync));
 
     return n;
 }
@@ -2356,9 +2358,12 @@ int __mmfs_renew_ci(struct __mmfs_client_info *ci, int type)
         case OP_FTRUNCATE:
             atomic64_inc(&ci->os.ftruncate);
             break;
+        case OP_A_FSYNC:
+            atomic64_inc(&ci->os.a_fsync);
+            break;
         }
     }
-    
+
 out:
     return err;
 }
