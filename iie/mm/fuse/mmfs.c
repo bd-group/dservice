@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-18 17:24:44 macan>
+ * Time-stamp: <2015-07-19 11:47:21 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1484,12 +1484,17 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
             } else {
                 struct chunk *c = __lookup_chunk(bhh, chkid, 1);
 
-                if (c->size > 0) {
+                /* BUG-XXX: if we load in data by fill_chunk (called by
+                 * cached_write), we might in c->size < c->asize and c->size >
+                 * 0 situation, thus, we only fill [c->size, rlen - c->size].
+                 */
+                if (c->size > 0 && c->size % g_pagesize != 0) {
                     xfree(cdata);
                     hvfs_err(lib, "CHUNK %p size=%ld BH_LIST_EMPTY=%d\n",
                              c, c->size, list_empty(&c->bh));
                     __unlock_chunk(c);
                     __put_chunk(c);
+                    pthread_yield();
 
                     return -EAGAIN;
                 }
@@ -1514,15 +1519,17 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                     }
                 }
                 /* ok, fill the buffer cache */
-                if (rlen > 0) {
+                if (rlen > c->size) {
                 retry2:
-                    err = __bh_fill(&bhh->ms, bhh, cdata, chkid * g_msb.chunk_size,
-                                    rlen, 1);
+                    err = __bh_fill(&bhh->ms, bhh, cdata + c->size, 
+                                    chkid * g_msb.chunk_size + c->size,
+                                    rlen - c->size, 1);
                     if (err < 0) {
-                        hvfs_err(mmfs, "fill the buffer cache [%ld,%ld) failed w/ %d\n",
+                        hvfs_err(mmfs, "fill the buffer cache [%ld,%ld) shift %ld "
+                                 "failed w/ %d\n",
                                  (chkid) * g_msb.chunk_size, 
                                  (chkid + 1) * g_msb.chunk_size,
-                                 err);
+                                 c->size, err);
                         if (err == -ESCAN) {
                             __scan_chunks(12);
                             goto retry2;
