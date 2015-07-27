@@ -727,6 +727,9 @@ int update_mmserver(struct redisConnection *rc)
                     if (_rr) freeReplyObject(_rr);
                     continue;
                 }
+                xlock_lock(&c->lock);
+                c->ttl = time(NULL);
+                xlock_unlock(&c->lock);
             }
 
             xlock_lock(&c->lock);
@@ -735,7 +738,6 @@ int update_mmserver(struct redisConnection *rc)
             c->hostname = hostname;
             c->port = port;
             c->sid = sid;
-            c->ttl = time(NULL);
             c->sp = q;
             xlock_unlock(&c->lock);
             
@@ -1688,7 +1690,7 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
         rh = g_rh + i;
         xlock_lock(&rh->lock);
         hlist_for_each_entry(n, pos, &rh->h, hlist) {
-            if (cur - n->ttl < 120)
+            if (cur - n->ttl < 300)
                 total++;
         }
         xlock_unlock(&rh->lock);
@@ -1716,6 +1718,7 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
             }
         }
         xlock_unlock(&rh->lock);
+        if (c >= dupnum) break;
     }
 
     if (c < dupnum) {
@@ -1730,6 +1733,7 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
                 }
             }
             xlock_unlock(&rh->lock);
+            if (c >= dupnum) break;
         }
     }
 
@@ -1818,7 +1822,7 @@ int __mmcc_put_iov(char *set, char *name, struct iovec *iov, int iovlen,
         rh = g_rh + i;
         xlock_lock(&rh->lock);
         hlist_for_each_entry(n, pos, &rh->h, hlist) {
-            if (cur - n->ttl < 120)
+            if (cur - n->ttl < 300)
                 total++;
         }
         xlock_unlock(&rh->lock);
