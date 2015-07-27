@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-18 17:15:54 macan>
+ * Time-stamp: <2015-07-27 16:27:51 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -93,7 +93,6 @@ struct mdu
 #define MMFS_MDU_LINK           0x00000001
 #define MMFS_MDU_SYMLINK        0x00000002
 #define MMFS_MDU_DIR            0x00000004
-#define MMFS_MDU_LARGE          0x00000100
     u64 flags;
     u32 uid;
     u32 gid;
@@ -296,6 +295,7 @@ struct __mmfs_client_info
     time_t born;                /* mount time */
     u32 used_pages;             /* ODC used pages */
     u32 free_pages;             /* ODC free pages */
+    u32 dirty_pages;            /* ODC dirty pages */
     struct __mmfs_op_stat os;
 };
 

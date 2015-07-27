@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
         size_t ps = atol(value);
 
         g_pagesize = getpagesize();
-        if (ps > g_pagesize) {
+        if (ps >= g_pagesize) {
             g_pagesize = PAGE_ROUNDUP(ps, g_pagesize);
         } else
             g_pagesize = 0;

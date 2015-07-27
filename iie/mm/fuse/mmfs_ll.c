@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-16 17:48:25 macan>
+ * Time-stamp: <2015-07-27 14:13:44 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,6 +36,8 @@ struct __mmfs_r_op
 #define __MMFS_R_OP_DELETE_DENTRY       2
 #define __MMFS_R_OP_UPDATE_INODE        3
 #define __MMFS_R_OP_UPDATE_SB           4
+#define __MMFS_R_OP_UPDATE_BLOCK        5
+#define __MMFS_R_OP_CLEAR_BLOCK         6
 
 struct __mmfs_r_op g_ops[] = {
     {
@@ -57,6 +59,14 @@ struct __mmfs_r_op g_ops[] = {
     {
         "update_sb",
         "local x = redis.call('exists', KEYS[1]); if x == 0 then return nil end; local v = redis.call('hget', KEYS[1], 'version'); if v == false then v = '0' end; local v1 = redis.call('hget', KEYS[1], 'space_quota'); local v2 = redis.call('hget', KEYS[1], 'space_used'); local v3 = redis.call('hget', KEYS[1], 'inode_quota'); local v4 = redis.call('hget', KEYS[1], 'inode_used'); if v == ARGV[1] then redis.call('hmset', KEYS[1], 'root_ino',ARGV[2], 'space_quota', v1+ARGV[3], 'space_used', v2+ARGV[4], 'inode_quota', v3+ARGV[5], 'inode_used', v4+ARGV[6], 'version', v+1); return redis.call('hgetall', KEYS[1]); else return nil end"
+    },
+    {
+        "update_block",
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then return 2; end; local i, z, K, F; for z0 in string.gmatch(y, '[^#]+') do i = 0; for z in string.gmatch(z0, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
+    },
+    {
+        "clear_block",
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); local i, z, K, F; i = 0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hdel', KEYS[1], ARGV[1]);"
     },
 };
 
@@ -912,7 +922,7 @@ out:
 int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
 {
     redisReply *rpy = NULL;
-    int err = 0;
+    int err = 0, j;
 
     struct redisConnection *rc = getRC();
 
@@ -1021,6 +1031,26 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
             }
         } else {
             freeReplyObject(rpy);
+
+            /* Step 2.2.pre: clear blocks if exists */
+            hvfs_debug(mmll, "clear block info for _IN_%ld, blknr=%ld\n",
+                       ms->mdu.ino, ms->mdu.blknr);
+
+            for (j = 0; j < ms->mdu.blknr; j++) {
+                if (j == 0) {
+                    rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s",
+                                       g_ops[__MMFS_R_OP_CLEAR_BLOCK].sha,
+                                       ms->mdu.ino,
+                                       MMFS_INODE_BLOCK);
+                } else {
+                    rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s_%ld",
+                                       g_ops[__MMFS_R_OP_CLEAR_BLOCK].sha,
+                                       ms->mdu.ino,
+                                       MMFS_INODE_BLOCK,
+                                       j);
+                }
+                freeReplyObject(rpy);
+            }
 
             /* Step 2.2 do truely delete now */
             rpy = redisCommand(rc->rc, "del _IN_%ld",
@@ -1444,12 +1474,14 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
                ms->ino, key, info);
 
     if (likely(chkid == 0)) {
-        rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
+                           g_ops[__MMFS_R_OP_UPDATE_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK,
                            key);
     } else {
-        rpy = redisCommand(rc->rc, "hset _IN_%ld %s_%ld %s",
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s_%ld %s",
+                           g_ops[__MMFS_R_OP_UPDATE_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK,
                            chkid,
@@ -1469,11 +1501,19 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_INTEGER) {
-        if (rpy->integer == 1) {
+        switch (rpy->integer) {
+        case 2:
+            /* update, but equal? */
+            hvfs_debug(mmll, "_IN_%ld '%s' block not update %s\n",
+                       ms->ino, ms->name, key);
+            break;
+        case 1:
             /* not exist yet */
             hvfs_debug(mmll, "_IN_%ld '%s' block set    to %s\n",
                        ms->ino, ms->name, key);
-        } else {
+            break;
+        case 0:
+        default:
             /* updated */
             hvfs_debug(mmll, "_IN_%ld '%s' block update to %s\n",
                        ms->ino, ms->name, key);
@@ -1546,12 +1586,14 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
                ms->ino, key, info);
 
     if (likely(chkid == 0)) {
-        rpy = redisCommand(rc->rc, "hset _IN_%ld %s %s", 
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
+                           g_ops[__MMFS_R_OP_UPDATE_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK,
                            key);
     } else {
-        rpy = redisCommand(rc->rc, "hset _IN_%ld %s_%ld %s",
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s_%ld %s",
+                           g_ops[__MMFS_R_OP_UPDATE_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK,
                            chkid,
@@ -1571,11 +1613,19 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_INTEGER) {
-        if (rpy->integer == 1) {
-            /* not exist yet */
-            hvfs_debug(mmll, "_IN_%ld block set to %s\n",
+        switch (rpy->integer) {
+        case 2:
+            /* update, but equal? */
+            hvfs_debug(mmll, "_IN_%ld block not update %s\n",
                        ms->ino, key);
-        } else {
+            break;
+        case 1:
+            /* not exist yet */
+            hvfs_debug(mmll, "_IN_%ld block set    to %s\n",
+                       ms->ino, key);
+            break;
+        case 0:
+        default:
             /* updated */
             hvfs_debug(mmll, "_IN_%ld block update to %s\n",
                        ms->ino, key);
@@ -1620,11 +1670,13 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
                ms->ino, chkid);
 
     if (likely(chkid == 0)) {
-        rpy = redisCommand(rc->rc, "hdel _IN_%ld %s", 
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s",
+                           g_ops[__MMFS_R_OP_CLEAR_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK);
     } else {
-        rpy = redisCommand(rc->rc, "hdel _IN_%ld %s_%ld",
+        rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s_%ld",
+                           g_ops[__MMFS_R_OP_CLEAR_BLOCK].sha,
                            ms->ino,
                            MMFS_INODE_BLOCK,
                            chkid);
@@ -2144,11 +2196,12 @@ int __mmfs_ci_pack(struct __mmfs_client_info *ci, char *key, char *buf)
 
     sprintf(key, "%s.%s", ci->hostname, ci->namespace);
     
-    n += sprintf(buf + n, "%ld,%s,%s,%s,%s,%ld,%dU,%dF,",
+    n += sprintf(buf + n, "%ld,%s,%s,%s,%s,%ld,%dU,%dF,%dD,",
                  (u64)time(NULL),
                  ci->hostname, ci->namespace,
                  ci->ip, ci->md5, (u64)ci->born,
-                 ci->used_pages, ci->free_pages);
+                 ci->used_pages, ci->free_pages,
+                 ci->dirty_pages);
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.getattr));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.readlink));
     n += sprintf(buf + n, "%ld,", atomic64_read(&ci->os.mknod));
