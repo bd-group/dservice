@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-27 14:13:44 macan>
+ * Time-stamp: <2015-07-29 13:58:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1327,8 +1327,8 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
         goto out;
     }
     if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_warning(mmll, "_IN_%ld does not exist or MM error\n",
-                     ms->ino);
+        hvfs_warning(mmll, "_IN_%ld does not exist or MM error: %s\n",
+                     ms->ino, rpy->str);
         if (ms->mdu.size > 0) {
             err = -EHOLE;
         } else {

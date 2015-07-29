@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-27 17:02:22 macan>
+ * Time-stamp: <2015-07-29 14:39:45 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -392,6 +392,7 @@ struct chunk
 
     xlock_t lock;
     atomic_t ref;
+    u64 dts;                    /* dirty timestamp */
 };
 
 struct bh
@@ -774,11 +775,13 @@ static inline int __is_chunk_dirty(struct chunk *c)
 static inline void __set_chunk_dirty(struct chunk *c)
 {
     c->flag |= CHUNK_DIRTY;
+    if (!c->dts) c->dts = time(NULL);
 }
 
 static inline void __clr_chunk_dirty(struct chunk *c)
 {
     c->flag &= ~CHUNK_DIRTY;
+    c->dts = 0;
 }
 
 static struct chunk *__get_chunk(struct bhhead *bhh, u64 chkid)
@@ -1707,6 +1710,9 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         if (err) {
             hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
+            if (err == EMMNOMMS) {
+                /* going into read only file system */
+            }
             goto out_unlock;
         }
     } else {
@@ -1714,6 +1720,9 @@ static int __bh_sync_chunk(struct bhhead *bhh, struct chunk *c, u64 chkid)
         if (err) {
             hvfs_err(mmfs, "do internal fwrite on ino'%lx' failed w/ %d\n",
                      ms.ino, err);
+            if (err == EMMNOMMS) {
+                /* going into read only file system */
+            }
             goto out_unlock;
         }
     }
@@ -4569,6 +4578,7 @@ static void *mmfs_init(struct fuse_conn_info *conn)
         .tcb = mmfs_timer_main,
         .ti = 10,
         .rcc = 300,
+        .mode = MMSCONF_DEDUP,
     };
     int err = 0;
 
@@ -4710,6 +4720,7 @@ static int __sync_chunks(double target)
     struct chunk *c = NULL;
     struct bhhead **ba = NULL;
     struct bh *bh = NULL;
+    u64 cur = time(NULL);
     int err = 0, i = 0, dp = 0, tnr = 50;
 
     if (target <= 0)
@@ -4723,23 +4734,25 @@ static int __sync_chunks(double target)
     }
 
     xlock_lock(&mmfs_odc_mgr.clru_lock);
-    if (!list_empty(&mmfs_odc_mgr.clru)) {
-        list_for_each_entry_reverse(c, &mmfs_odc_mgr.clru, lru) {
-            if ((((double)atomic_read(&mmfs_odc_mgr.dirty_pages) - dp) /
-                 (atomic_read(&mmfs_odc_mgr.free_pages) + 
-                  atomic_read(&mmfs_odc_mgr.used_pages))) <= target)
-                break;
+    list_for_each_entry_reverse(c, &mmfs_odc_mgr.clru, lru) {
+        /* Bug-XXX: if we always keep target ratio of dirty pages in
+         * memory, we may lost them. OR even bad:
+         *
+         * some dirty pages distributed in some chunks, then these chunks
+         * can't be freed by __scan_chunks, which might lead to deadlock
+         * in heavy read load ENV.
+         */
 
+        if (__is_chunk_dirty(c) && cur - c->dts >= 30) {
+            /* ignore ratio, set to sync array immediately */
             err = xlock_trylock(&c->lock);
             if (!err) {
-                if (__is_chunk_dirty(c)) {
-                    if (!__is_in_array(ba, c->bhh, i)) {
-                        ba[i++] = c->bhh;
-                        /* count dirty pages in chunk */
-                        list_for_each_entry(bh, &c->bh, list) {
-                            if (__is_bh_dirty(bh)) {
-                                dp++;
-                            }
+                if (!__is_in_array(ba, c->bhh, i)) {
+                    ba[i++] = c->bhh;
+                    /* count dirty pages in chunk */
+                    list_for_each_entry(bh, &c->bh, list) {
+                        if (__is_bh_dirty(bh)) {
+                            dp++;
                         }
                     }
                 }
@@ -4747,6 +4760,29 @@ static int __sync_chunks(double target)
             }
             if (i >= target) break;
         }
+    }
+    list_for_each_entry_reverse(c, &mmfs_odc_mgr.clru, lru) {
+        if ((((double)atomic_read(&mmfs_odc_mgr.dirty_pages) - dp) /
+             (atomic_read(&mmfs_odc_mgr.free_pages) + 
+              atomic_read(&mmfs_odc_mgr.used_pages))) <= target)
+            break;
+
+        err = xlock_trylock(&c->lock);
+        if (!err) {
+            if (__is_chunk_dirty(c)) {
+                if (!__is_in_array(ba, c->bhh, i)) {
+                    ba[i++] = c->bhh;
+                    /* count dirty pages in chunk */
+                    list_for_each_entry(bh, &c->bh, list) {
+                        if (__is_bh_dirty(bh)) {
+                            dp++;
+                        }
+                    }
+                }
+            }
+            xlock_unlock(&c->lock);
+        }
+        if (i >= target) break;
     }
     xlock_unlock(&mmfs_odc_mgr.clru_lock);
 

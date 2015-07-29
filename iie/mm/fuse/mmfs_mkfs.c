@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-18 17:16:07 macan>
+ * Time-stamp: <2015-07-27 19:17:11 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -86,6 +86,7 @@ int main(int argc, char *argv[])
 {
     struct mmfs_sb msb = {0,};
     char *shortflags = "h?n:S:I:T";
+    char *value, *uris = NULL;
     struct option longflags[] = {
         {"help", no_argument, 0, 'h'},
         {"tune", no_argument, 0, 'T'},
@@ -124,10 +125,16 @@ int main(int argc, char *argv[])
 
     mmfs_debug_mode(1);
 
+    value = getenv("uris");
+    if (value) {
+        uris = strdup(value);
+    }
+
     if (msb.name == NULL || strlen(msb.name) == 0) {
         msb.name = strdup("default");
     }
     mmfs_fuse_mgr.namespace = msb.name;
+    mmfs_fuse_mgr.uris = uris;
 
     if (!is_tune)
         mmfs_fuse_mgr.ismkfs = 1;
