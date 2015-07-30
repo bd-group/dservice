@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-29 13:58:48 macan>
+ * Time-stamp: <2015-07-30 10:14:46 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,11 +62,11 @@ struct __mmfs_r_op g_ops[] = {
     },
     {
         "update_block",
-        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then return 2; end; local i, z, K, F; for z0 in string.gmatch(y, '[^#]+') do i = 0; for z in string.gmatch(z0, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then return 2; end; local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]); end; end; local i, z, K, F; i=0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F=z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
     },
     {
         "clear_block",
-        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); local i, z, K, F; i = 0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hdel', KEYS[1], ARGV[1]);"
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hdel', KEYS[1], ARGV[1]); end; end; local i, z, K, F; i = 0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hdel', KEYS[1], ARGV[1]);"
     },
 };
 
@@ -1427,7 +1427,8 @@ out:
 int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
 {
     redisReply *rpy = NULL;
-    char *set = NULL, *p, name[64], key[256], *info = NULL;
+    char *set = NULL, *p, name[64], key[256];
+    struct mres mr;
     MD5_CTX mdContext;
     int err = 0, i;
 
@@ -1448,6 +1449,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         err = -EISDIR;
         goto out;
     }
+    memset(&mr, 0, sizeof(mr));
 
     /* write the content to MMServer, and generate key */
     err = __mmfs_gset(ms->pino, &set);
@@ -1464,14 +1466,14 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     
     snprintf(key, 255, "%s@%s", set, name);
 
-    info = mmcc_put(key, data, size);
-    if (!info) {
+    mmcc_put_R(key, data, size, &mr);
+    if (!mr.info) {
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         goto out_free;
     }
-    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s\n",
-               ms->ino, key, info);
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
+               ms->ino, key, mr.info, mr.flag);
 
     if (likely(chkid == 0)) {
         rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
@@ -1522,7 +1524,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     freeReplyObject(rpy);
     
 out_free2:
-    xfree(info);
+    xfree(mr.info);
 out_free:
     xfree(set);
 out:
@@ -1536,7 +1538,8 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 {
     struct redisConnection *rc = NULL;
     redisReply *rpy = NULL;
-    char *set = NULL, *p, name[64], key[256], *info = NULL;
+    char *set = NULL, *p, name[64], key[256];
+    struct mres mr;
     MD5_CTX mdContext;
     int err = 0, i;
 
@@ -1558,6 +1561,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
         err = -EISDIR;
         goto out;
     }
+    memset(&mr, 0, sizeof(mr));
 
     /* write the content to MMServer, and generate key */
     err = __mmfs_gset(ms->pino, &set);
@@ -1576,14 +1580,14 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     
     snprintf(key, 255, "%s@%s", set, name);
 
-    info = mmcc_put_iov(key, iov, iovlen);
-    if (!info) {
+    mmcc_put_iov_R(key, iov, iovlen, &mr);
+    if (!mr.info) {
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         goto out_free;
     }
-    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s\n",
-               ms->ino, key, info);
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
+               ms->ino, key, mr.info, mr.flag);
 
     if (likely(chkid == 0)) {
         rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
@@ -1634,7 +1638,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     freeReplyObject(rpy);
     
 out_free2:
-    xfree(info);
+    xfree(mr.info);
 out_free:
     xfree(set);
 out:
