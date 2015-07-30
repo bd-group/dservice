@@ -31,7 +31,17 @@ int mmcc_fina();
 char *mmcc_put(char *key, void *content, size_t len);
 
 char *mmcc_put_iov(char *key, struct iovec *iov, int iovlen);
-    
+
+struct mres
+{
+    char *info;
+#define MR_FLAG_DUPED   0x01
+    int flag;
+};
+
+void mmcc_put_R(char *key, void *content, size_t len, struct mres *mr);
+
+void mmcc_put_iov_R(char *key, struct iovec *iov, int iovlen, struct mres *mr);
 
 /*
  * Caller should free the allocated memory by 'free'
@@ -54,6 +64,7 @@ int mmcc_del_set(char *set);
 #define EMMINVAL                -1028
 #define EMMNOMEM                -1029
 #define EREDIRECT               -1030
+#define EMMNOMMS                -1031
 
 /* Advanced Using, use only if you know it
  */
@@ -76,6 +87,7 @@ typedef struct
     __timer_cb tcb;
     int ti;
     int rcc;
+    int mode;
 } mmcc_config_t;
 
 int mmcc_config(mmcc_config_t *);

@@ -42,8 +42,9 @@ long g_ssid = -1;
 struct MMSConf
 {
     int dupnum;
-#define MMSCONF_DEDUP   0
-#define MMSCONF_NODUP   1
+#define MMSCONF_DEDUP   0x01
+#define MMSCONF_NODUP   0x02
+#define MMSCONF_DUPSET  0x04
     int mode;
     int sockperserver;
     int logdupinfo;
@@ -229,6 +230,22 @@ out:
     return err;
 }
 
+struct __client_r_op
+{
+    char *opname;
+    char *script;
+    char *sha;
+};
+
+#define __CLIENT_R_OP_DUP_DETECT        0
+
+static struct __client_r_op g_ops[] = {
+    {
+        "dup_detect",
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then redis.call('hincrby', '_DUPSET_', KEYS[1]..'@'..ARGV[1], 1); return redis.call('hget', KEYS[1], ARGV[1]); else return nil; end",
+    },
+};
+
 int client_config(mmcc_config_t *mc)
 {
     int err = 0;
@@ -239,6 +256,8 @@ int client_config(mmcc_config_t *mc)
         g_timer_interval = mc->ti;
     if (mc->rcc > 0)
         g_clean_rcs = mc->rcc;
+    if (mc->mode > 0)
+        g_conf.mode = mc->mode;
 
     return err;
 }
@@ -276,7 +295,7 @@ int client_init()
         hvfs_err(mmcc, "setup_timers() failed w/ %d\n", err);
         goto out_free2;
     }
-    
+
 out:
     return err;
 out_free2:
@@ -335,6 +354,39 @@ static inline void freeRC(struct redisConnection *rc)
 }
 
 int __clean_up_socks(struct MMSConnection *c);
+
+int __client_load_scripts(struct redisConnection *rc)
+{
+    redisReply *rpy = NULL;
+    int err = 0, i;
+
+    for (i = 0; i < sizeof(g_ops) / sizeof(struct __client_r_op); i++) {
+        rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
+        if (rpy == NULL) {
+            hvfs_err(mmcc, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
+            err = -EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(mmcc, "script %d load failed w/ \n%s.\n", i, rpy->str);
+            err = -EINVAL;
+            goto out_free;
+        }
+        if (rpy->type == REDIS_REPLY_STRING) {
+            hvfs_info(mmcc, "Script %d %s \tloaded as '%s'.\n",
+                      i, g_ops[i].opname, rpy->str);
+            g_ops[i].sha = strdup(rpy->str);
+        } else {
+            g_ops[i].sha = NULL;
+        }
+    out_free:
+        freeReplyObject(rpy);
+    }
+
+out:
+    return err;
+}
 
 int client_fina()
 {
@@ -764,7 +816,7 @@ void update_mmserver2(struct redisConnection *rc)
     redisReply *rpy = NULL;
     int i;
 
-    for (i = 0; i < g_sid_max; i++) {
+    for (i = 0; i <= g_sid_max; i++) {
         c = __mmsc_lookup(i);
         if (c) {
             rpy = redisCMD(rc->rc, "exists mm.hb.%s",
@@ -781,9 +833,10 @@ void update_mmserver2(struct redisConnection *rc)
                     hvfs_debug(mmcc, "Update MMServer %s ttl to %ld\n",
                                c->sp, (u64)c->ttl);
                 } else {
-                    c->ttl = 0;
-                    hvfs_warning(mmcc, "MMServer %s ttl to ZERO, we lost it.\n",
-                                 c->sp);
+                    if (time(NULL) - c->ttl > 600)
+                        c->ttl = 0;
+                    hvfs_warning(mmcc, "MMServer %s ttl lost, do NOT update (ttl=%ld).\n",
+                                 c->sp, c->ttl);
                 }
             }
             freeReplyObject(rpy);
@@ -1697,7 +1750,7 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
     }
     if (total == 0) {
         hvfs_warning(mmcc, "No valid MMServer to write?\n");
-        return EMMMETAERR;
+        return EMMNOMMS;
     }
 
     if (dupnum > total)
@@ -1829,7 +1882,7 @@ int __mmcc_put_iov(char *set, char *name, struct iovec *iov, int iovlen,
     }
     if (total == 0) {
         hvfs_warning(mmcc, "No valid MMServer to write?\n");
-        return EMMMETAERR;
+        return EMMNOMMS;
     }
 
     if (dupnum > total)
@@ -1945,15 +1998,26 @@ out:
 static int __dup_detect(char *set, char *name, char **info)
 {
     redisReply *rpy = NULL;
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = NULL;
     int err = 0;
 
+    if (g_conf.mode & MMSCONF_NODUP) {
+        return 0;
+    }
+    rc = getRC();
     if (!rc) {
         hvfs_err(mmcc, "getRC() failed\n");
         err = EMMMETAERR;
         goto out;
     }
-    rpy = redisCMD(rc->rc, "hget %s %s", set, name);
+    if ((g_conf.mode & MMSCONF_DUPSET) &&
+        (g_conf.mode & MMSCONF_DEDUP))
+        rpy = redisCMD(rc->rc, "evalsha %s 1 %s %s",
+                       g_ops[__CLIENT_R_OP_DUP_DETECT].sha,
+                       set, 
+                       name);
+    else
+        rpy = redisCMD(rc->rc, "hget %s %s", set, name);
     if (rpy == NULL) {
         hvfs_err(mmcc, "read from MM Meta failed: %s\n", rc->rc->errstr);
         err = EMMINVAL;
@@ -2025,13 +2089,14 @@ out:
     return err;
 }
 
-char *mmcc_put(char *key, void *content, size_t len)
+void mmcc_put_R(char *key, void *content, size_t len, struct mres *mr)
 {
     char *info = NULL, *set = NULL, *name = NULL;
     int err = 0;
 
+    memset(mr, 0, sizeof(*mr));
     if (!key || !content || len <= 0)
-        return NULL;
+        return;
 
     /* split by @ */
     {
@@ -2061,6 +2126,7 @@ char *mmcc_put(char *key, void *content, size_t len)
     /* dup detection */
     err = __dup_detect(set, name, &info);
     if (err > 0) {
+        mr->flag |= MR_FLAG_DUPED;
         /* do logging */
         if (g_conf.logdupinfo) {
             __log_dupinfo(set, name);
@@ -2086,16 +2152,26 @@ out_free2:
     xfree(set);
     xfree(name);
 
-    return info;
+    mr->info = info;
 }
 
-char *mmcc_put_iov(char *key, struct iovec *iov, int iovlen)
+char *mmcc_put(char *key, void *content, size_t len)
+{
+    struct mres mr;
+
+    mmcc_put_R(key, content, len, &mr);
+
+    return mr.info;
+}
+
+void mmcc_put_iov_R(char *key, struct iovec *iov, int iovlen, struct mres *mr)
 {
     char *info = NULL, *set = NULL, *name = NULL;
     int err = 0;
 
+    memset(mr, 0, sizeof(*mr));
     if (!key || !iov || iovlen <= 0)
-        return NULL;
+        return;
 
     /* split by @ */
     {
@@ -2125,6 +2201,7 @@ char *mmcc_put_iov(char *key, struct iovec *iov, int iovlen)
     /* dup detection */
     err = __dup_detect(set, name, &info);
     if (err > 0) {
+        mr->flag |= MR_FLAG_DUPED;
         /* do logging */
         if (g_conf.logdupinfo) {
             __log_dupinfo(set, name);
@@ -2150,7 +2227,16 @@ out_free2:
     xfree(set);
     xfree(name);
 
-    return info;
+    mr->info = info;
+}
+
+char *mmcc_put_iov(char *key, struct iovec *iov, int iovlen)
+{
+    struct mres mr;
+
+    mmcc_put_iov_R(key, iov, iovlen, &mr);
+
+    return mr.info;
 }
 
 int __del_mm_set(char *host, int port, char *set)
