@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-26 18:35:57 macan>
+ * Time-stamp: <2015-07-31 11:19:33 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,41 @@
 #include <errno.h>
 #include <assert.h>
 
-/* This file is using to find the read/write bug */
+void readdir_unlink_test(int nr)
+{
+    struct dirent *de;
+    DIR *d;
+    char fname[256];
+    int i;
+
+    mkdir("./_TEST_DIR_RUT", 0755);
+    for(i = 0; i < nr; i++) {
+        sprintf(fname, "./_TEST_DIR_RUT/%d", i);
+        FILE *f = fopen(fname, "w");
+        if (!f) perror("fopen");
+        fclose(f);
+    }
+
+    d = opendir("./_TEST_DIR_RUT");
+    if (d == NULL) {
+        perror("opendir");
+        return;
+    }
+    i = 0;
+    while (1) {
+        de = readdir(d);
+        if (de) {
+            sprintf(fname, "./_TEST_DIR_RUT/%s", de->d_name);
+            if (unlink(fname) < 0) perror(de->d_name);
+            i++;
+        } else break;
+    }
+    if (i != nr) printf("Got %d entries, expect %d\n", i, nr);
+    closedir(d);
+    if (rmdir("./_TEST_DIR_RUT") < 0) perror("rmdir");
+}
+
+/* This main function is using to find the read/write bug */
 
 int main(int argc, char *argv[])
 {

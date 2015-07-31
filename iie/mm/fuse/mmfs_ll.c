@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-30 10:14:46 macan>
+ * Time-stamp: <2015-07-31 10:35:06 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1134,7 +1134,7 @@ int __mmfs_is_empty_dir(u64 dino)
 
             do {
                 freeReplyObject(rpy);
-                rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 100",
+                rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 500",
                                    dino, cursor);
                 if (rpy == NULL) {
                     hvfs_err(mmll, "read from MM Meta failed: %s\n",
@@ -1717,6 +1717,171 @@ out:
     return err;
 }
 
+/* Duplication detector for directory listing
+ *
+ */
+struct dd_entry
+{
+    struct hlist_node hlist;
+    char *key;
+};
+
+int __dd_init(struct dup_detector *dd, int hsize)
+{
+    int i;
+
+    if (hsize)
+        dd->hsize = hsize;
+    else
+        dd->hsize = MMFS_DD_HSIZE_DEFAULT;
+
+    dd->ht = xmalloc(dd->hsize * sizeof(struct regular_hash));
+    if (!dd->ht) {
+        hvfs_err(mmll, "Dup entry detector (%ld) hash table init failed\n",
+                 dd->id);
+        return -ENOMEM;
+    }
+
+    /* init the hash table */
+    for (i = 0; i < dd->hsize; i++) {
+        INIT_HLIST_HEAD(&dd->ht[i].h);
+        xlock_init(&dd->ht[i].lock);
+    }
+    atomic_set(&dd->nr, 0);
+
+    return 0;
+}
+
+void __dd_destroy(struct dup_detector *dd)
+{
+    struct regular_hash *rh;
+    struct dd_entry *de;
+    struct hlist_node *pos, *n;
+    int i;
+
+    hvfs_debug(mmll, "DD _IN_%ld destroy w/ %d entries.\n",
+               dd->id, atomic_read(&dd->nr));
+
+    /* need to free every DD entry */
+    for (i = 0; i < dd->hsize; i++) {
+        rh = dd->ht + i;
+        xlock_lock(&rh->lock);
+        hlist_for_each_entry_safe(de, pos, n, &rh->h, hlist) {
+            hlist_del(&de->hlist);
+            xfree(de->key);
+            xfree(de);
+        }
+        xlock_unlock(&rh->lock);
+    }
+    xfree(dd->ht);
+}
+
+static inline
+int __dd_hash(struct dup_detector *dd, const char *key)
+{
+    return __murmurhash2_64a(key, strlen(key), 0xe23f21f779) % dd->hsize;
+}
+
+static inline
+struct dd_entry *__dde_alloc(const char *key)
+{
+    struct dd_entry *de;
+
+    de = xmalloc(sizeof(*de));
+    if (!de) {
+        hvfs_err(mmll, "xzalloc() dd_entry failed\n");
+        return NULL;
+    }
+    INIT_HLIST_NODE(&de->hlist);
+    de->key = strdup(key);
+
+    return de;
+}
+
+static inline
+struct dd_entry *__dd_insert(struct dup_detector *dd, struct dd_entry *new)
+{
+    struct regular_hash *rh;
+    struct dd_entry *de;
+    struct hlist_node *pos, *n;
+    int idx, found = 0;
+
+    idx = __dd_hash(dd, new->key);
+    rh = dd->ht + idx;
+
+    xlock_lock(&rh->lock);
+    hlist_for_each_entry_safe(de, pos, n, &rh->h, hlist) {
+        if (strcmp(new->key, de->key) == 0) {
+            /* already exist */
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        hlist_add_head(&new->hlist, &rh->h);
+        atomic_inc(&dd->nr);
+        de = new;
+    }
+    xlock_unlock(&rh->lock);
+
+    return de;
+}
+
+static inline
+struct dd_entry *__dd_lookup(struct dup_detector *dd, const char *key)
+{
+    struct regular_hash *rh;
+    struct dd_entry *de;
+    struct hlist_node *pos, *n;
+    int idx, found = 0;
+
+    idx = __dd_hash(dd, key);
+    rh = dd->ht + idx;
+
+    xlock_lock(&rh->lock);
+    hlist_for_each_entry_safe(de, pos, n, &rh->h, hlist) {
+        if (strcmp(de->key, key) == 0) {
+            found = 1;
+            break;
+        }
+    }
+    xlock_unlock(&rh->lock);
+
+    if (found)
+        return de;
+    else
+        return NULL;
+}
+
+/* Return: 1 -> removed; 0 -> not removed
+ */
+static inline
+int __dd_remove(struct dup_detector *dd, const char *key)
+{
+    struct regular_hash *rh;
+    struct dd_entry *de;
+    struct hlist_node *pos, *n;
+    int idx, removed = 0;
+
+    idx = __dd_hash(dd, key);
+    rh = dd->ht + idx;
+
+    xlock_lock(&rh->lock);
+    hlist_for_each_entry_safe(de, pos, n, &rh->h, hlist) {
+        if (strcmp(de->key, key) == 0) {
+            hlist_del(&de->hlist);
+            atomic_dec(&dd->nr);
+            xfree(de->key);
+            xfree(de);
+            removed = 1;
+            break;
+        }
+    }
+    xlock_unlock(&rh->lock);
+
+    return removed;
+}
+
 int __mmfs_readdir(mmfs_dir_t *dir)
 {
     struct mstat ms = {0,};
@@ -1749,7 +1914,7 @@ int __mmfs_readdir(mmfs_dir_t *dir)
     }
 
     /* hscan the dentries */
-    rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 100",
+    rpy = redisCommand(rc->rc, "hscan _IN_%ld %s count 500",
                        dir->dino, dir->cursor == NULL ? "0" : dir->cursor);
     if (rpy == NULL) {
         hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
@@ -1790,6 +1955,32 @@ int __mmfs_readdir(mmfs_dir_t *dir)
                     continue;
                 } else if (strncmp(f, MMFS_INODE_CHUNKNR, l) == 0) {
                     continue;
+                }
+            }
+            /* BUG-XXX: ignore .fuse_hiddenXXXX dentries, these entries are
+             * generated by rename when the source files are unlinked under
+             * openning.
+             *
+             * Under file openning, if file's dir entry is unlinked, it
+             * actually is renamed.
+             */
+            if (l > 12 && strncmp(f, ".fuse_hidden", 12) == 0) {
+                continue;
+            }
+            /* BUG-XXX: detect duplications here.
+             *
+             * Redis might return duplicate entries on modify hash table
+             * during scanning.
+             */
+            {
+                struct dd_entry *de = __dde_alloc(f);
+
+                if (de) {
+                    if (__dd_insert(&dir->dd, de) != de) {
+                        xfree(de->key);
+                        xfree(de);
+                        continue;
+                    }
                 }
             }
             /* ok, do record now */

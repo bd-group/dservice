@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-29 17:32:14 macan>
+ * Time-stamp: <2015-07-30 14:15:39 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -159,9 +159,32 @@ struct dentry_info
     char name[0];               /* then dentry name */
 };
 
+struct dup_detector
+{
+#define MMFS_DD_HSIZE_DEFAULT (8192)
+    struct regular_hash *ht;
+    u64 id;                     /* id for this detector */
+    u32 hsize;
+    atomic_t nr;
+};
+
+#define DUP_DETECTOR(name, xid)                                     \
+    struct dup_detector name = {.ht = NULL, .id = xid, .hsize = 0,}
+
+#define INIT_DETECTOR(name, xid) do {                   \
+        memset(name, 0, sizeof(struct dup_detector));   \
+        (name)->id = xid;                               \
+        __dd_init(name, 0);                             \
+    } while (0)
+
+#define DESTROY_DETECTOR(name) do {             \
+        __dd_destroy(name);                     \
+    } while (0)
+
 typedef struct __mmfs_dir
 {
     u64 dino;                   /* current directory inode number */
+    struct dup_detector dd;
     u64 goffset, loffset;
     char *cursor;               /* hscan cursor */
     struct dentry_info *di;
@@ -398,5 +421,9 @@ int __mmfs_rename_fix(u64 ino);
 int __mmfs_renew_ci(struct __mmfs_client_info *ci, int type);
 
 int __mmfs_client_info(struct __mmfs_client_info *ci);
+
+int __dd_init(struct dup_detector *dd, int hsize);
+
+void __dd_destroy(struct dup_detector *dd);
 
 #endif

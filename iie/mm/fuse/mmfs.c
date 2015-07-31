@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-29 17:52:52 macan>
+ * Time-stamp: <2015-07-31 11:00:22 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -233,6 +233,22 @@ static int __soc_init(int hsize)
 
 static void __soc_destroy(void)
 {
+    struct regular_hash *rh;
+    struct soc_entry *se;
+    struct hlist_node *pos, *n;
+    int i;
+
+    /* need to free every SOC entry */
+    for (i = 0; i < mmfs_soc_mgr.hsize; i++) {
+        rh = mmfs_soc_mgr.ht + i;
+        xlock_lock(&rh->lock);
+        hlist_for_each_entry_safe(se, pos, n, &rh->h, hlist) {
+            hlist_del(&se->hlist);
+            xfree(se->key);
+            xfree(se);
+        }
+        xlock_unlock(&rh->lock);
+    }
     xfree(mmfs_soc_mgr.ht);
 }
 
@@ -260,7 +276,7 @@ struct soc_entry *__se_alloc(const char *key, struct mstat *ms)
 }
 
 static inline
-void __soc_insert(struct soc_entry *new)
+struct soc_entry *__soc_insert(struct soc_entry *new)
 {
     struct regular_hash *rh;
     struct soc_entry *se;
@@ -281,9 +297,12 @@ void __soc_insert(struct soc_entry *new)
     }
     if (!found) {
         hlist_add_head(&new->hlist, &rh->h);
+        atomic_inc(&mmfs_soc_mgr.nr);
+        se = new;
     }
     xlock_unlock(&rh->lock);
-    atomic_inc(&mmfs_soc_mgr.nr);
+
+    return se;
 }
 
 static inline
@@ -518,9 +537,15 @@ static int __odc_init(int hsize, int csize, int wbtnr)
     return 0;
 }
 
+static void __put_chunk(struct chunk *c);
+
 static void __odc_destroy(void)
 {
-    int i;
+    struct regular_hash *rh;
+    struct bhhead *oe;
+    struct hlist_node *pos, *n;
+    struct chunk *c;
+    int i, j;
 
     mmfs_odc_mgr.wbt_stop = 1;
     for (i = 0; i < mmfs_odc_mgr.wbtnr; i++) {
@@ -532,6 +557,25 @@ static void __odc_destroy(void)
         }
     }
 
+    /* need to free every ODC entry */
+    for (i = 0; i < mmfs_odc_mgr.hsize; i++) {
+        rh = mmfs_odc_mgr.ht + i;
+        xlock_lock(&rh->lock);
+        hlist_for_each_entry_safe(oe, pos, n, &rh->h, hlist) {
+            hlist_del(&oe->hlist);
+            hvfs_warning(mmfs, "ODC destroy free BHH %p _IN_%ld.\n",
+                         oe, oe->ms.ino);
+
+            for (j = 0; j < oe->chknr; j++) {
+                c = oe->chunks[j];
+                if (c)
+                    __put_chunk(c);
+            }
+            xfree(oe->chunks);
+            xfree(oe);
+        }
+        xlock_unlock(&rh->lock);
+    }
     xfree(mmfs_odc_mgr.ht);
 }
 
@@ -4262,6 +4306,7 @@ hit:
     }
 
     dir->dino = ms.ino;
+    INIT_DETECTOR(&dir->dd, ms.ino);
 out:
     xfree(dup);
     xfree(spath);
@@ -4288,9 +4333,11 @@ static int __mmfs_readdir_plus(void *buf, fuse_fill_dir_t filler,
         hvfs_debug(mmfs, "seek backwards offset (%ld <- %ld)\n", 
                    off, dir->goffset);
         xfree(dir->di);
+        DESTROY_DETECTOR(&dir->dd);
         u64 ino = dir->dino;
         memset(dir, 0, sizeof(*dir));
         dir->dino = ino;
+        INIT_DETECTOR(&dir->dd, ino);
     }
     hvfs_debug(mmfs, "readdir_plus ino %ld off %ld goff %ld csize %d\n",
                dir->dino, off, dir->goffset, dir->csize);
@@ -4418,6 +4465,8 @@ out:
 static int mmfs_release_dir(const char *pathname, struct fuse_file_info *fi)
 {
     mmfs_dir_t *dir = (mmfs_dir_t *)fi->fh;
+
+    DESTROY_DETECTOR(&dir->dd);
 
     xfree(dir->cursor);
     xfree(dir->di);
