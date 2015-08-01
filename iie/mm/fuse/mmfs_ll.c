@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-31 10:35:06 macan>
+ * Time-stamp: <2015-07-31 23:24:52 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1496,8 +1496,8 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
-                 ms->ino, ms->name);
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
+                 ms->ino, rpy->errstr);
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;
@@ -1506,19 +1506,19 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         switch (rpy->integer) {
         case 2:
             /* update, but equal? */
-            hvfs_debug(mmll, "_IN_%ld '%s' block not update %s\n",
-                       ms->ino, ms->name, key);
+            hvfs_debug(mmll, "_IN_%ld block not update %s\n",
+                       ms->ino, key);
             break;
         case 1:
             /* not exist yet */
-            hvfs_debug(mmll, "_IN_%ld '%s' block set    to %s\n",
-                       ms->ino, ms->name, key);
+            hvfs_debug(mmll, "_IN_%ld block set    to %s\n",
+                       ms->ino, key);
             break;
         case 0:
         default:
             /* updated */
-            hvfs_debug(mmll, "_IN_%ld '%s' block update to %s\n",
-                       ms->ino, ms->name, key);
+            hvfs_debug(mmll, "_IN_%ld block update to %s\n",
+                       ms->ino, key);
         }
     }
     freeReplyObject(rpy);
@@ -1610,8 +1610,8 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
         goto out_free2;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
-                 ms->ino, ms->name);
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
+                 ms->ino, rpy->errstr);
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;

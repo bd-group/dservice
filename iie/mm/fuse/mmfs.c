@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-31 11:00:22 macan>
+ * Time-stamp: <2015-07-31 22:43:02 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1546,8 +1546,8 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                 struct chunk *c = __lookup_chunk(bhh, chkid, 1);
 
                 /* BUG-XXX: if we load in data by fill_chunk (called by
-                 * cached_write), we might in c->size < c->asize and c->size >
-                 * 0 situation, thus, we only fill [c->size, rlen - c->size].
+                 * mmfs_write), we might in c->size < c->asize and c->size > 0
+                 * situation, thus, we only fill [c->size, rlen - c->size].
                  */
                 if (c->size > 0 && c->size % g_pagesize != 0) {
                     xfree(cdata);
@@ -4116,13 +4116,17 @@ out:
     return err;
 }
 
-static int mmfs_cached_write(const char *pathname, const char *buf,
-                             size_t size, off_t offset,
-                             struct fuse_file_info *fi)
+static int mmfs_write(const char *pathname, const char *buf,
+                      size_t size, off_t offset,
+                      struct fuse_file_info *fi)
 {
     struct mstat ms;
     struct bhhead *bhh = (struct bhhead *)fi->fh;
     int err = 0;
+
+    hvfs_debug(mmfs, "in write the file %s(%p, ino=%ld, mdu.size=%ld) [%ld,%ld)!\n",
+               pathname, bhh, bhh->ms.ino, bhh->ms.mdu.size,
+               (u64)offset, (u64)offset + size);
 
     ms = bhh->ms;
 retry:
@@ -4143,25 +4147,9 @@ retry:
     }
     err = size;
 
-out:
-    return err;
-}
-
-static int mmfs_write(const char *pathname, const char *buf,
-                      size_t size, off_t offset,
-                      struct fuse_file_info *fi)
-{
-    struct bhhead *bhh = (struct bhhead *)fi->fh;
-    int err = 0;
-
-    hvfs_debug(mmfs, "in write the file %s(%p, ino=%ld, mdu.size=%ld) [%ld,%ld)!\n",
-               pathname, bhh, bhh->ms.ino, bhh->ms.mdu.size,
-               (u64)offset, (u64)offset + size);
-
-    err = mmfs_cached_write(pathname, buf, size, offset, fi);
-
     RENEW_CI(OP_WRITE);
 
+out:
     return err;
 }
 
