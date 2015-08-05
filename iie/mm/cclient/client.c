@@ -38,6 +38,7 @@ char *redisHost = NULL;
 int redisPort = -1;
 long g_ckpt_ts = -1;
 long g_ssid = -1;
+pid_t g_tgid = -1;
 
 struct MMSConf
 {
@@ -266,6 +267,9 @@ int client_init()
 {
     int err = 0, i;
 
+    srandom(time(NULL));
+    g_tgid = getpid();
+
     g_rh = xzalloc(sizeof(*g_rh) * g_rh_size);
     if (!g_rh) {
         hvfs_err(mmcc, "xzalloc() hash table failed, no memory.\n");
@@ -447,7 +451,7 @@ void __clean_rcs(time_t cur)
     struct redisConnection *tpos;
     struct hlist_node *pos, *n;
     struct regular_hash *rh;
-    int i;
+    int i, err;
 
     for (i = 0; i < g_rcrh_size; i++) {
         rh = g_rcrh + i;
@@ -455,6 +459,16 @@ void __clean_rcs(time_t cur)
         hlist_for_each_entry_safe(tpos, pos, n, &rh->h, hlist) {
             hvfs_debug(mmcc, "check TID %ld %ld %ld %d\n", (long)tpos->tid,
                        (tpos->ttl + g_clean_rcs), cur, atomic_read(&tpos->ref));
+            err = syscall(SYS_tgkill, g_tgid, tpos->tid, SIGCONT);
+            if (err) {
+                if (errno == ESRCH) {
+                    hlist_del_init(&tpos->hlist);
+                    hvfs_debug(mmcc, "Clean not existed RC for TID %ld\n", 
+                               (long)tpos->tid);
+                    freeRC(tpos);
+                    __put_rc(tpos);
+                }
+            }
             if ((tpos->ttl + g_clean_rcs < cur) && atomic_read(&tpos->ref) == 0) {
                 hlist_del_init(&tpos->hlist);
                 hvfs_debug(mmcc, "Clean long living RC for TID %ld\n", 
@@ -1728,6 +1742,22 @@ out_disconn:
     goto out;
 }
 
+static void __random_sort_array(int *a, int nr)
+{
+    int swap, i, j;
+
+    if (nr <= 1) return;
+
+    for (i = 0; i < (nr + 1) / 2; i++) {
+        j = random() % nr;
+        if (i != j) {
+            swap = a[i];
+            a[i] = a[j];
+            a[j] = swap;
+        }
+    }
+}
+
 int __mmcc_put(char *set, char *name, void *buffer, size_t len,
                int dupnum, char **info)
 {
@@ -1792,6 +1822,9 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
 
     hvfs_debug(mmcc, "Got active servers = %d to put for %s@%s\n", 
                c, set, name);
+
+    /* random sort the ids array */
+    __random_sort_array(ids, dupnum);
 
     /* ok, finally call do_put() */
     for (i = 0; i < c; i++) {
