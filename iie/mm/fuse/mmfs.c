@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-31 22:43:02 macan>
+ * Time-stamp: <2015-08-04 18:26:49 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -84,73 +84,58 @@ out:
     xlock_unlock(&msb->lock);
 }
 
+/* sequence: mmfs,mmll,mmcc
+ */
 void mmfs_debug_mode(int enable)
 {
-    switch (enable) {
-    case 30:
+    /* mmfs tracing flag */
+    switch (enable % 1000 / 100) {
+    default:
+    case 0:
         hvfs_mmfs_tracing_flags = 0xf0000000;
-        hvfs_mmll_tracing_flags = 0xffffffff;
-        break;
-    case 31:
-        hvfs_mmfs_tracing_flags = 0xf0000001;
-        hvfs_mmll_tracing_flags = 0xffffffff;
-        break;
-    case 32:
-        hvfs_mmfs_tracing_flags = 0xf0000004;
-        hvfs_mmll_tracing_flags = 0xffffffff;
-        break;
-    case 33:
-        hvfs_mmfs_tracing_flags = 0xffffffff;
-        hvfs_mmll_tracing_flags = 0xffffffff;
-        break;
-    case 20:
-        hvfs_mmfs_tracing_flags = 0xf0000000;
-        hvfs_mmll_tracing_flags = 0xf0000004;
-        break;
-    case 21:
-        hvfs_mmfs_tracing_flags = 0xf0000001;
-        hvfs_mmll_tracing_flags = 0xf0000004;
-        break;
-    case 22:
-        hvfs_mmfs_tracing_flags = 0xf0000004;
-        hvfs_mmll_tracing_flags = 0xf0000004;
-        break;
-    case 23:
-        hvfs_mmfs_tracing_flags = 0xffffffff;
-        hvfs_mmll_tracing_flags = 0xf0000004;
-        break;
-    case 10:
-        hvfs_mmfs_tracing_flags = 0xffffffff;
-        hvfs_mmll_tracing_flags = 0xf0000001;
-        break;
-    case 11:
-        hvfs_mmfs_tracing_flags = 0xf0000001;
-        hvfs_mmll_tracing_flags = 0xf0000001;
-        break;
-    case 12:
-        hvfs_mmfs_tracing_flags = 0xf0000004;
-        hvfs_mmll_tracing_flags = 0xf0000001;
-        break;
-    case 13:
-        hvfs_mmfs_tracing_flags = 0xffffffff;
-        hvfs_mmll_tracing_flags = 0xf0000001;
-        break;
-    case 3:
-        hvfs_mmfs_tracing_flags = 0xffffffff;
-        hvfs_mmll_tracing_flags = 0xf0000000;
-        break;
-    case 2:
-        hvfs_mmfs_tracing_flags = 0xf0000004;
-        hvfs_mmll_tracing_flags = 0xf0000000;
         break;
     case 1:
         hvfs_mmfs_tracing_flags = 0xf0000001;
+        break;
+    case 2:
+        hvfs_mmfs_tracing_flags = 0xf0000004;
+        break;
+    case 3:
+        hvfs_mmfs_tracing_flags = 0xffffffff;
+        break;
+    }
+
+    /* mmll tracing flag */
+    switch (enable % 100 / 10) {
+    default:
+    case 0:
         hvfs_mmll_tracing_flags = 0xf0000000;
         break;
-    case 0:
+    case 1:
+        hvfs_mmll_tracing_flags = 0xf0000001;
+        break;
+    case 2:
+        hvfs_mmll_tracing_flags = 0xf0000004;
+        break;
+    case 3:
+        hvfs_mmll_tracing_flags = 0xffffffff;
+        break;
+    }
+
+    /* mmcc tracing flag */
+    switch (enable % 10) {
     default:
-        hvfs_mmfs_tracing_flags = 0xf0000000;
-        hvfs_mmll_tracing_flags = 0xf0000000;
+    case 0:
+        hvfs_mmcc_tracing_flags = 0xf0000000;
+        break;
+    case 1:
+        hvfs_mmcc_tracing_flags = 0xf0000001;
+        break;
+    case 2:
+        hvfs_mmcc_tracing_flags = 0xf0000004;
+        break;
+    case 3:
+        hvfs_mmcc_tracing_flags = 0xffffffff;
         break;
     }
 }
@@ -406,7 +391,8 @@ struct chunk
     struct bhhead *bhh;         /* point back to BHH */
     u64 chkid;                  /* chunk id */
 #define CHUNK_CLEAN     0x00
-#define CHUNK_DIRTY     0x01
+#define CHUNK_UP2DATE   0x01
+#define CHUNK_DIRTY     0x02
     u32 flag;
 
     xlock_t lock;
@@ -806,7 +792,7 @@ static inline void __set_bh_up2date(struct bh *bh)
     bh->flag |= BH_UP2DATE;
 }
 
-static inline void __clr_bhh_up2date(struct bh *bh)
+static inline void __clr_bh_up2date(struct bh *bh)
 {
     bh->flag &= ~BH_UP2DATE;
 }
@@ -826,6 +812,21 @@ static inline void __clr_chunk_dirty(struct chunk *c)
 {
     c->flag &= ~CHUNK_DIRTY;
     c->dts = 0;
+}
+
+static inline int __is_chunk_up2date(struct chunk *c)
+{
+    return c->flag & CHUNK_UP2DATE;
+}
+
+static inline void __set_chunk_up2date(struct chunk *c)
+{
+    c->flag |= CHUNK_UP2DATE;
+}
+
+static inline void __clr_chunk_up2date(struct chunk *c)
+{
+    c->flag &= ~CHUNK_UP2DATE;
 }
 
 static struct chunk *__get_chunk(struct bhhead *bhh, u64 chkid)
@@ -1096,12 +1097,17 @@ int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
     return err;
 }
 
-static void __set_chunk_size(struct bhhead *bhh, u64 chkid)
+static void __set_chunk_size(struct bhhead *bhh, u64 chkid, size_t fsize)
 {
     struct chunk *c = bhh->chunks[chkid];
     u64 chk_begin = chkid * g_msb.chunk_size;
 
     c->asize = min(bhh->asize - chk_begin, g_msb.chunk_size);
+    /* BUG-XXX: we should set chunk up2date flag if current filled offset +
+     * size >= c->asize
+     */
+    if (fsize >= c->asize)
+        __set_chunk_up2date(c);
 }
 
 /* Note that, offset should be in-chunk offset
@@ -1150,7 +1156,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
     {
         u64 asize = offset + size + chkid * g_msb.chunk_size;
 
-        if (asize > bhh->asize) {
+        if (asize >= bhh->asize) {
             bhh->asize = asize;
         }
         __set_bhh_dirty(bhh);
@@ -1182,7 +1188,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
         __set_chunk_dirty(c);
         break;
     }
-    __set_chunk_size(bhh, chkid);
+    __set_chunk_size(bhh, chkid, offset + size);
 
     if (offset >= c->size) {
         while (c->size < off_end) {
@@ -1407,7 +1413,7 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
     struct chunk *c;
     struct bh *bh;
     off_t loff = 0, saved_offset = offset;
-    size_t _size, saved_size = size;
+    size_t _size, saved_size = size, xsize;
 
     c = __lookup_chunk(bhh, chkid, 1);
     if (!c) {
@@ -1416,17 +1422,19 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
         return -ENOMEM;
     }
 
-    if (offset + size > c->size || list_empty(&c->bh)) {
+    if ((!__is_chunk_up2date(c) && offset + size > c->size) || 
+        list_empty(&c->bh)) {
         __unlock_chunk(c);
         __put_chunk(c);
         return -EFBIG;
     }
 
     hvfs_debug(mmfs, "__bh_read_chunk() for _IN_%ld [%ld,%ld) CHK=%ld, "
-               "c->size=%ld c->asize=%ld\n",
+               "c->size=%ld c->asize=%ld up2date %d\n",
                bhh->ms.ino, offset, offset + size, 
-               chkid, c->size, c->asize);
-    
+               chkid, c->size, c->asize, __is_chunk_up2date(c));
+
+    memset(buf, 0, size);
     xrwlock_rlock(&bhh->clock);
     list_for_each_entry(bh, &c->bh, list) {
         if (offset >= bh->offset && offset < bh->offset + g_pagesize) {
@@ -1445,11 +1453,16 @@ static int __bh_read_chunk(struct bhhead *bhh, void *buf, off_t offset,
 
     size = saved_size - size;
     /* adjust the return size to valid file range */
-    if (saved_offset + size > c->asize) {
-        size = c->asize - saved_offset;
+    xsize = max(c->asize, 
+                min(bhh->asize - chkid * g_msb.chunk_size, g_msb.chunk_size));
+    if (saved_offset + size > xsize) {
+        size = xsize - saved_offset;
         if ((ssize_t)size < 0)
             size = 0;
+    } else {
+        size = min(xsize, saved_size);
     }
+
     __unlock_chunk(c);
     __put_chunk(c);
 
@@ -2199,7 +2212,7 @@ void __ltc_invalid_locked(const char *pathname)
 
     hlist_for_each_entry_safe(le, pos, n, &rh->h, hlist) {
         if (strcmp(pathname, le->fullname) == 0) {
-            le->born -= mmfs_ltc_mgr.ttl;
+            le->born -= mmfs_ltc_mgr.ttl + 1;
             break;
         }
     }
@@ -2219,7 +2232,7 @@ void __ltc_invalid(const char *pathname)
     xlock_lock(&rh->lock);
     hlist_for_each_entry_safe(le, pos, n, &rh->h, hlist) {
         if (strcmp(pathname, le->fullname) == 0) {
-            le->born -= mmfs_ltc_mgr.ttl;
+            le->born -= mmfs_ltc_mgr.ttl + 1;
             break;
         }
     }
@@ -4842,6 +4855,7 @@ static int __sync_chunks(double target)
 
         RENEW_CI(OP_A_FSYNC);
     }
+    err = 0;
 
     return err;
 }
@@ -4876,6 +4890,7 @@ static int __scan_chunks(double target)
                     pnr++;
                 }
                 c->size = c->asize = 0;
+                __clr_chunk_up2date(c);
                 if (pnr > 0) {
                     hvfs_info(mmfs, "clean %d bhh %p _IN_%ld chunk %p CHK=%ld "
                               "w/ %d pages (total free %d)\n", 

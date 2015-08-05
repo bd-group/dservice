@@ -1,5 +1,7 @@
 #include "mmfs.c"
 
+HVFS_TRACING_DEFINE_FILE();
+
 int main(int argc, char *argv[])
 {
     int err = 0, i, j;

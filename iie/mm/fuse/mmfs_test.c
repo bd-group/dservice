@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-31 11:19:33 macan>
+ * Time-stamp: <2015-08-03 17:53:15 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <dirent.h>
 
 void readdir_unlink_test(int nr)
 {
@@ -65,7 +66,7 @@ void readdir_unlink_test(int nr)
 
 /* This main function is using to find the read/write bug */
 
-int main(int argc, char *argv[])
+int read_write_test(int drop_cache)
 {
     int err = 0;
     int fd = 0;
@@ -135,16 +136,16 @@ int main(int argc, char *argv[])
         printf("written 100B '4' @ %ld w/ %d\n", offset, err);
     }
 
-#if 1
-    close(fd);
-
-    printf("wait 10 seconds ...\n");
-    sleep(10);
-
-    fd = open("./MMFS_TEST", O_RDWR, S_IRUSR | S_IWUSR);
-    if (fd < 0)
-        goto out;
-#endif
+    if (drop_cache) {
+        close(fd);
+        
+        printf("wait 10 seconds ...\n");
+        sleep(10);
+        
+        fd = open("./MMFS_TEST", O_RDWR, S_IRUSR | S_IWUSR);
+        if (fd < 0)
+            goto out;
+    }
 
     /* read 4096B from offset 0 */
     offset = lseek(fd, 0, SEEK_SET);
@@ -281,3 +282,20 @@ out_close:
     goto out_unlink;
 }
 
+int main(int argc, char *argv[])
+{
+    int err = 0;
+
+    err = read_write_test(0);
+    if (err) {
+        printf("read_write_test w/  cache failed w/ %d\n", err);
+        goto out;
+    }
+    err = read_write_test(1);
+    if (err) {
+        printf("read_write_test w/o cache failed w/ %d\n", err);
+        goto out;
+    }
+
+    return err;
+}

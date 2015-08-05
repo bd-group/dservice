@@ -1,5 +1,7 @@
 #include "mmfs.h"
 
+HVFS_TRACING_DEFINE_FILE();
+
 /* please use environment variables to pass MMFS specific values */
 int main(int argc, char *argv[])
 {
@@ -39,6 +41,10 @@ int main(int argc, char *argv[])
     if (value) {
         debug = atoi(value);
         mmfs_debug_mode(debug);
+    }
+    value = getenv("logdir");
+    if (value) {
+        HVFS_TRACING_INIT_FILE(value);
     }
 
     if (noatime >= 0 ||
@@ -102,6 +108,8 @@ out:
     xfree(uris);
     xfree(namespace);
     xfree(rootdir);
+
+    HVFS_TRACING_FINA_FILE();
     
     return err;
 }

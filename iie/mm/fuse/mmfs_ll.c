@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-31 23:24:52 macan>
+ * Time-stamp: <2015-08-03 15:41:37 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1497,7 +1497,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
-                 ms->ino, rpy->errstr);
+                 ms->ino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;
@@ -1611,7 +1611,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
-                 ms->ino, rpy->errstr);
+                 ms->ino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;
@@ -1692,8 +1692,8 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
         goto out;
     }
     if (rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_err(mmll, "_IN_%ld ('%s') does not exist or MM error\n",
-                 ms->ino, ms->name);
+        hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
+                 ms->ino, rpy->str);
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out;
@@ -1701,12 +1701,12 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
     if (rpy->type == REDIS_REPLY_INTEGER) {
         if (rpy->integer == 1) {
             /* deleted */
-            hvfs_debug(mmll, "_IN_%ld '%s' block CHK=%ld deleted\n",
-                       ms->ino, ms->name, chkid);
+            hvfs_debug(mmll, "_IN_%ld block CHK=%ld deleted\n",
+                       ms->ino, chkid);
         } else {
             /* not exist */
-            hvfs_debug(mmll, "_IN_%ld '%s' block CHK=%ld not exist to deleted\n",
-                       ms->ino, ms->name, chkid);
+            hvfs_debug(mmll, "_IN_%ld block CHK=%ld not exist to deleted\n",
+                       ms->ino, chkid);
         }
     }
     freeReplyObject(rpy);

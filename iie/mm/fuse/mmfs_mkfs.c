@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-07-27 19:17:11 macan>
+ * Time-stamp: <2015-08-04 20:13:43 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,6 +27,8 @@
 #include <getopt.h>
 
 #include "mmfs.c"
+
+HVFS_TRACING_DEFINE_FILE();
 
 static int mmfs_mkfs(struct mmfs_sb *msb)
 {
