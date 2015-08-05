@@ -207,6 +207,7 @@ public class MMServer {
 					System.out.println("-sa path;path;path");
 					System.exit(0);
 				}
+				System.out.println("Got storage array: " + o.opt);
 				String[] paths = o.opt.split(";");
 				for (int i = 0; i < paths.length; i++) {
 					sa.add(paths[i]);

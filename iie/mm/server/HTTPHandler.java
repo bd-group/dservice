@@ -1,6 +1,8 @@
 package iie.mm.server;
 
 import iie.mm.server.HTTPHandler.TopKeySet.KeySetEntry;
+import iie.mm.server.ServerHealth.SetInfo;
+import iie.mm.server.StorePhoto.ObjectContent;
 import iie.mm.server.StorePhoto.RedirectException;
 import iie.mm.server.StorePhoto.SetStats;
 
@@ -11,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -103,10 +106,10 @@ public class HTTPHandler extends AbstractHandler {
 			String[] infos = key.split("@|#");
 			
 			if (infos.length == 2) {
-				byte[] content = null;
+				ObjectContent oc = null;
 				try {
-					content = sp.getPhoto(infos[0], infos[1]);
-					if (content == null || content.length == 0) {
+					oc = sp.getPhoto(infos[0], infos[1]);
+					if (oc == null || oc.content == null || oc.length == 0) {
 						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
 					} else {
 						switch (infos[0].charAt(0)) {
@@ -126,16 +129,16 @@ public class HTTPHandler extends AbstractHandler {
 						default:
 							response.setContentType("text/plain;charset=utf-8");
 						}
-						okResponse(baseRequest, response, content);
+						okResponse(baseRequest, response, Arrays.copyOfRange(oc.content, 0, oc.length));
 					}
 				} catch (RedirectException e) {
 					redirectResponse(baseRequest, response, e);
 				}
 			} else if (infos.length == 7) {
-				byte[] content = null;
+				ObjectContent oc = null;
 				try {
-					content = sp.searchPhoto(key, null);
-					if (content == null || content.length == 0) {
+					oc = sp.searchPhoto(key, null, null);
+					if (oc == null || oc.content == null || oc.length == 0) {
 						notFoundResponse(baseRequest, response, "#FAIL:can not find any MM object by key=" + key);
 					} else {
 						switch (infos[1].charAt(0)) {
@@ -155,7 +158,7 @@ public class HTTPHandler extends AbstractHandler {
 						default:
 							response.setContentType("text/plain;charset=utf-8");
 						}
-						okResponse(baseRequest, response, content);
+						okResponse(baseRequest, response, Arrays.copyOfRange(oc.content, 0, oc.length));
 					}
 				} catch (RedirectException e) {
 					redirectResponse(baseRequest, response, e);
@@ -271,19 +274,27 @@ public class HTTPHandler extends AbstractHandler {
 		pw.println("# Avaliable type contains: text/image/audio/video/application/thumbnail/other");
 		if (prefix == null) 
 			return;
-		pw.println("# Data Count (Set_Name, Number, Length(MB)):");
+		pw.println("# Data Count (Set_Name, Obj_Number, Used_Length(MB), Used_Blocks, SPACE.UR, BLK.UR):");
 
 		int totallen = 0, totalnr = 0;
 		Iterator<String> ir = m.navigableKeySet().descendingIterator();
 		while (ir.hasNext()) {
 			String set = ir.next();
 			if (set.startsWith(prefix)) {
-				totallen += m.get(set).fnr;
+				SetInfo si = ServerHealth.setInfos.get(set);
+				totallen += (si == null ? m.get(set).fnr * conf.getBlockSize(): si.totalLength);
 				totalnr += m.get(set).rnr;
-				pw.println(" " + set + ", " + m.get(set).rnr + ", " + (m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)));
+				pw.println(" " + set + ", " + m.get(set).rnr + ", " +
+						(si == null ? 
+								((m.get(set).fnr * ((double)conf.getBlockSize() / 1024.0 / 1024.0)) + "^") : 
+									String.format("%.4f", si.usedLength / 1024.0 / 1024.0)) + ", " + 
+									(si == null ? "-" : si.usedBlocks) + ", " + 
+									(si == null ? "-" : String.format("%.2f%%", (si.totalLength == 0 ? 0 : (double)si.usedLength * 100 / si.totalLength))) + ", " +
+									(si == null ? "-" : String.format("%.2f%%", (si.totalBlocks == 0 ? 0 : (double)si.usedBlocks * 100 / si.totalBlocks)))
+						);
 			}
 		}
-		pw.println(" [TOTAL], " + totalnr + ", " + totallen * ((double)conf.getBlockSize() / 1024.0 / 1024.0));
+		pw.println(" [TOTAL], " + totalnr + ", " + (String.format("%.4f", (double)totallen / 1024.0 / 1024.0)));
 	}
 	
 	private void doBrowse(String target, Request baseRequest, HttpServletRequest request,

@@ -3,6 +3,7 @@ package iie.mm.server;
 import iie.mm.client.Feature;
 import iie.mm.client.ResultSet;
 import iie.mm.client.ResultSet.Result;
+import iie.mm.server.StorePhoto.ObjectContent;
 import iie.mm.server.StorePhoto.RedirectException;
 
 import java.awt.image.BufferedImage;
@@ -41,6 +42,22 @@ public class Handler implements Runnable{
 	private DataInputStream dis;
 	private DataOutputStream dos;					//向客户端的输出流
 	
+	private static final ThreadLocal<byte[]> threadLocalRecvBuffer = 
+			new ThreadLocal<byte[]>() {
+				@Override
+				protected synchronized byte[] initialValue() {
+					return new byte[ServerConf.getRecv_buffer_size()];
+				}
+			};
+
+	private static final ThreadLocal<byte[]> threadLocalSendBuffer = 
+			new ThreadLocal<byte[]>() {
+				@Override
+				protected synchronized byte[] initialValue() {
+					return new byte[ServerConf.getSend_buffer_size()];
+				}
+			};
+
 	public Handler(ServerConf conf, Socket s, ConcurrentHashMap<String, BlockingQueue<WriteTask>> sq) throws IOException {
 		this.conf = conf;
 		this.s = s;
@@ -115,29 +132,24 @@ public class Handler implements Runnable{
 				case ActionType.MPUT: {
 					int setlen = header[1];
 					int n = dis.readInt();		
-					String set = new String(readBytes(setlen, dis));
+					String set = new String(readBytesN(setlen, dis));
 					String[] md5s = new String[n];
 					int[] conlen = new int[n];
 					byte[][] content = new byte[n][];
-					for(int i = 0; i<n;i++)
-					{
-						md5s[i] = new String(readBytes(dis.readInt(), dis)); 
+					for (int i = 0; i < n; i++) {
+						md5s[i] = new String(readBytesN(dis.readInt(), dis)); 
 					}
-					for(int i = 0;i<n;i++)
+					for (int i = 0; i < n; i++)
 						conlen[i] = dis.readInt();
-					for(int i = 0;i<n;i++)
-					{
-						content[i] = readBytes(conlen[i], dis);
-//						System.out.println("in handler"+content[i].length);
+					for (int i = 0; i < n; i++) {
+						content[i] = readBytesN(conlen[i], dis);
 					}
 					
-					String[] r = sp.mstorePhoto(set,md5s,content);
-					if(r == null)
+					String[] r = sp.mstorePhoto(set, md5s, content);
+					if (r == null)
 						dos.writeInt(-1);
-					else
-					{
-						for(int i = 0;i<n;i++)
-						{
+					else {
+						for (int i = 0; i < n; i++) {
 							dos.writeInt(r[i].getBytes().length);
 							dos.write(r[i].getBytes());
 						}
@@ -149,16 +161,16 @@ public class Handler implements Runnable{
 					int infolen = header[1] & 0xff;		
 
 					if (infolen > 0) {
-						String infos = new String(readBytes(infolen, dis));		
-						byte[] content = null;
+						String infos = new String(readBytes(infolen, dis), 0, infolen);		
+						ObjectContent oc = null;
 						try {
-							content = sp.searchPhoto(infos, null);
+							oc = sp.searchPhoto(infos, null, threadLocalSendBuffer.get());
 						} catch (RedirectException e) {
 						}
 						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
-						if (content != null) {
-							dos.writeInt(content.length);
-							dos.write(content);
+						if (oc != null && oc.content != null) {
+							dos.writeInt(oc.length);
+							dos.write(oc.content, 0, oc.length);
 						} else {
 							dos.writeInt(-1);
 						}
@@ -173,17 +185,17 @@ public class Handler implements Runnable{
 					int seqno = dis.readInt();
 					
 					if (infolen > 0) {
-						String info = new String(readBytes(infolen, dis));
-						byte[] content = null;
+						String info = new String(readBytes(infolen, dis), 0, infolen);
+						ObjectContent oc = null;
 						try {
-							content = sp.searchPhoto(info, null);
+							oc = sp.searchPhoto(info, null, threadLocalSendBuffer.get());
 						} catch (RedirectException e) {
 						}
-						if (content != null) {
+						if (oc != null && oc.content != null) {
 							dos.writeInt(gid);
 							dos.writeInt(seqno);
-							dos.writeInt(content.length);
-							dos.write(content);
+							dos.writeInt(oc.length);
+							dos.write(oc.content, 0, oc.length);
 						} else {
 							dos.writeInt(-1);
 						}
@@ -194,7 +206,7 @@ public class Handler implements Runnable{
 					break;
 				}
 				case ActionType.DELSET: {
-					String set = new String(readBytes(header[1], dis));
+					String set = new String(readBytes(header[1], dis), 0, header[1]);
 
 					BlockingQueue<WriteTask> bq = sq.get(set);
 					
@@ -238,7 +250,7 @@ public class Handler implements Runnable{
 						
 						if (obj_len > 0) {
 							byte[] obj = readBytes(obj_len, dis);
-							ByteArrayInputStream bais = new ByteArrayInputStream(obj);
+							ByteArrayInputStream bais = new ByteArrayInputStream(obj, 0, obj_len);
 							bi = ImageIO.read(bais);
 						}
 						ResultSet rs = sp.featureSearch(bi, features);
@@ -260,18 +272,19 @@ public class Handler implements Runnable{
 					String redirect = null;
 
 					if (setlen > 0 && md5len > 0) {
-						String set = new String(readBytes(setlen, dis));
-						String md5 = new String(readBytes(md5len, dis));
-						byte[] content = null;
+						byte[] setmd5 = readBytes(setlen + md5len, dis);
+						String set = new String(setmd5, 0, setlen);
+						String md5 = new String(setmd5, setlen, md5len);
+						ObjectContent oc = null;
 						try {
-							content = sp.getPhoto(set, md5);
+							oc = sp.getPhoto(set, md5);
 						} catch (RedirectException e) {
 							// ok, this means we should notify the client to retry another server
 							redirect = e.info;
 						}
-						if (content != null) {
-							dos.writeInt(content.length);
-							dos.write(content);
+						if (oc != null && oc.content != null) {
+							dos.writeInt(oc.length);
+							dos.write(oc.content, 0, oc.length);
 						} else {
 							if (redirect != null) {
 								dos.writeInt(-1 * redirect.length());
@@ -312,13 +325,27 @@ public class Handler implements Runnable{
 	 * @return
 	 */
 	public byte[] readBytes(int count, InputStream istream) throws IOException {
-		byte[] buf = new byte[count];			
+		byte[] buf = threadLocalRecvBuffer.get();
+		int n = 0;
+
+		if (buf.length < count) {
+			buf = new byte[count];
+		}
+		while (count > n) {
+			n += istream.read(buf, n, count - n);
+		}
+
+		return buf;
+	}
+
+	public byte[] readBytesN(int count, InputStream istream) throws IOException {
+		byte[] buf = new byte[count];
 		int n = 0;
 
 		while (count > n) {
 			n += istream.read(buf, n, count - n);
 		}
-		
+
 		return buf;
 	}
 }

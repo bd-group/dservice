@@ -121,14 +121,15 @@ public class ProfileTimerTask extends TimerTask {
 		
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		String s = df.format(new Date());
-		String info = s + " avg write bandwidth " + wbw + " KB/s";
+		String info = s + " avg write bandwidth " + (String.format("%.4f", wbw)) + " KB/s";
 		String line = (System.currentTimeMillis() / 1000) + "," + wbw + "," + rbw + ",";
 		
 		if ((dl - lastDl) == 0) {
 			info += ", no read requests";
 			line += "0,";
 		} else {
-			info += ", avg read latency " + (double)(dl - lastDl) / (dnr - lastDnr) + " ms";
+			info += ", avg read latency " + 
+					(String.format("%.4f", (double)(dl - lastDl) / (dnr - lastDnr))) + " ms";
 			line += (double)(dl - lastDl) / (dnr - lastDnr) + ",";
 		}
 		if (cur - lastRecycleTs >= 5 * 60 * 1000) {

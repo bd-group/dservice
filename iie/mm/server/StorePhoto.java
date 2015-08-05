@@ -41,7 +41,6 @@ public class StorePhoto {
 	private ServerConf conf;
 	private String localHostName;
 	private int serverport;							//本机监听的端口,在这里的作用就是构造存图片时返回值
-	private String destRoot = "./mm_data/";
 	private Set<String> storeArray = new HashSet<String>();
 	private String[] diskArray;						//代表磁盘的数组
 	private long blocksize;							//文件块的大小，单位是B
@@ -74,6 +73,16 @@ public class StorePhoto {
 		public RedirectException(long serverId, String info) {
 			this.serverId = serverId;
 			this.info = info;
+		}
+	}
+	
+	public static class ObjectContent {
+		byte[] content;
+		int length;
+		
+		public ObjectContent() {
+			content = null;
+			length = 0;
 		}
 	}
 	
@@ -185,7 +194,7 @@ public class StorePhoto {
 			StringBuffer sb = new StringBuffer();
 			sb.append(disk);
 			sb.append("/");
-			sb.append(destRoot);
+			sb.append(conf.destRoot);
 			sb.append(set);
 			sb.append("/");
 			path = sb.toString();
@@ -612,7 +621,7 @@ public class StorePhoto {
 	
 	// if ss_id is ourself, do search; otherwise redirect the request to correct 
 	// master server.
-	private byte[] getPhotoFromSS(String set, String md5) throws RedirectException {
+	private ObjectContent getPhotoFromSS(String set, String md5) throws RedirectException {
 		if (ServerConf.getSs_id() == ServerConf.serverId) {
 			// ok, do search
 			String info = LMDBInterface.getLmdb().read("H#" + set + "." + md5);
@@ -624,7 +633,7 @@ public class StorePhoto {
 					String[] is = i.split("@");
 
 					if (Long.parseLong(is[2]) == ServerConf.serverId)
-						return searchPhoto(i, is);
+						return searchPhoto(i, is, null);
 					else {
 						savedInfo = i;
 						savedId = Long.parseLong(is[2]);
@@ -639,11 +648,11 @@ public class StorePhoto {
 	}
 	
 	/**
-	 *获得md5值所代表的图片的内容
+	 * 获得md5值所代表的图片的内容
 	 * @param md5		与storePhoto中的参数md5相对应
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
-	public byte[] getPhoto(String set, String md5) throws RedirectException {
+	public ObjectContent getPhoto(String set, String md5) throws RedirectException {
 		try {
 			reconnectJedis();
 		} catch (IOException e2) {
@@ -693,7 +702,7 @@ public class StorePhoto {
 			String[] is = i.split("@");
 			
 			if (Long.parseLong(is[2]) == ServerConf.serverId)
-				return searchPhoto(i, is);
+				return searchPhoto(i, is, null);
 			else {
 				savedInfo = i;
 				savedId = Long.parseLong(is[2]);
@@ -707,23 +716,32 @@ public class StorePhoto {
 	 * @param info		对应storePhoto的type@set@serverid@block@offset@length@disk格式的返回值
 	 * @return			图片内容content
 	 */
-	public byte[] searchPhoto(String info, String[] infos) throws RedirectException {
+	public ObjectContent searchPhoto(String info, String[] infos, byte[] ibuf) throws RedirectException {
+		ObjectContent oc = new ObjectContent();
 		long start = System.currentTimeMillis();
+		int rlen = 0;
+		
 		if (infos == null)
 			infos = info.split("@");
 		
 		if (infos.length != 7) {
 			System.out.println("Invalid INFO string: " + info);
-			return null;
+			return oc;
 		}
 		if (Long.parseLong(infos[2]) != ServerConf.serverId) {
 			// this request should be send to another server
 			throw new RedirectException(Long.parseLong(infos[2]), info);
 		}
-		String path = infos[6] + "/" + destRoot + infos[1] + "/b" + infos[3];
+		String path = infos[6] + "/" + conf.destRoot + infos[1] + "/b" + infos[3];
 		ReadContext readr = null;
-		byte[] content = new byte[Integer.parseInt(infos[5])];
-	
+		byte[] content = null;
+
+		rlen = Integer.parseInt(infos[5]);
+		if (ibuf != null && ibuf.length >= rlen)
+			content = ibuf;
+		else
+			content = new byte[rlen];
+
 		try {
 			//用哈希缓存打开的文件随机访问流
 			do {
@@ -742,28 +760,30 @@ public class StorePhoto {
 				if (readr.raf == null)
 					readr.reopen();
 				readr.raf.seek(Long.parseLong(infos[4]));
-				readr.raf.read(content);
+				readr.raf.read(content, 0, rlen);
 				readr.updateAccessTs();
 			}
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
-			return null;
+			return oc;
 		} catch (NumberFormatException e) {
 			e.printStackTrace();
-			return null;
+			return oc;
 		} catch (IOException e) {
 			e.printStackTrace();
 			readRafHash.remove(path);
-			return null;
+			return oc;
 		}
+		oc.content = content;
+		oc.length = rlen;
 		ServerProfile.updateRead(content.length, System.currentTimeMillis() - start);
 
-		return content;
+		return oc;
 	}
 	
 	public void delSet(String set) {
 		for (String d : diskArray)		//删除每个磁盘上的该集合
-			delFile(new File(d + "/" + destRoot + set));
+			delFile(new File(d + "/" + conf.destRoot + set));
 		//删除一个集合后,同时删除关于该集合的全局的上下文
 		for(String d : diskArray)
 			writeContextHash.remove(set+ ":" + d);			

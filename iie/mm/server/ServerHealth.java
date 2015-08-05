@@ -2,6 +2,7 @@ package iie.mm.server;
 
 import iie.mm.tools.MM2SSMigrater;
 
+import java.io.File;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -30,7 +31,8 @@ import redis.clients.jedis.exceptions.JedisException;
  * 0. monitor info memory used_memory to trigger auto SS migration
  * 1. check and clean mm.dedup.info;
  * 2. check and fix under/over replicated objects;
-
+ * 3. auto clean block file if there are on reference on it; 
+ *
  * @author macan
  *
  */
@@ -43,6 +45,22 @@ public class ServerHealth extends TimerTask {
 	private boolean isCleaningDI = false;
 	private boolean isFixingObj = false;
 	private int nhours = 1;
+	
+	public static class SetInfo {
+		int usedBlocks;
+		int totalBlocks;
+		long usedLength;
+		long totalLength;
+		
+		public SetInfo() {
+			usedBlocks = 0;
+			totalBlocks = 0;
+			usedLength = 0;
+			totalLength = 0;
+		}
+	}
+	
+	public static Map<String, SetInfo> setInfos = new HashMap<String, SetInfo>();
 	
 	public ServerHealth(ServerConf conf) {
 		super();
@@ -118,6 +136,9 @@ public class ServerHealth extends TimerTask {
 					isFixingObj = true;
 					isFixingObj = false;
 				}
+			}
+			if (true) {
+				scrubSets();
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -391,5 +412,239 @@ public class ServerHealth extends TimerTask {
 		}
 		
 		return deleted;
+	}
+
+	private int scrubSets() throws Exception {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		int err = 0;
+
+		// get all sets
+		TreeSet<String> sets = new TreeSet<String>();
+		try {
+			Set<String> keys = jedis.keys("*.blk.*");
+
+			if (keys != null && keys.size() > 0) {
+				String[] keya = keys.toArray(new String[0]);
+
+				for (int i = 0; i < keya.length; i++) {
+					String set = keya[i].split("\\.")[0];
+
+					sets.add(set);
+				}
+			}
+		} catch (JedisConnectionException e) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+			sets.clear();
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+			sets.clear();
+		} finally {
+			if (err < 0)
+				RedisFactory.putBrokenInstance(jedis);
+			else
+				RedisFactory.putInstance(jedis);
+		}
+
+		// scrub for each set
+		for (String set : sets) {
+			err = scrubSetData(set);
+		}
+
+		return err;
+	}
+
+	private class BlockRef {
+		public long ref;
+		public long len;
+
+		public BlockRef() {
+			ref = 0;
+			len = 0;
+		}
+
+		public void updateRef(long refDelta, long lenDelta) {
+			ref += refDelta;
+			len += lenDelta;
+		}
+	}
+
+	private int scrubSetData(String set) throws Exception {
+		int err = 0;
+
+		try {
+			if (jedis == null)
+				jedis = new RedisFactory(conf).getDefaultInstance();
+			if (jedis == null) {
+				System.out.println("get jedis connection failed for " + set + " scrub.");
+			} else {
+				// Map: disk.block -> refcount
+				Map<String, BlockRef> br = new HashMap<String, BlockRef>();
+				Set<String> disks = new TreeSet<String>();
+				ScanParams sp = new ScanParams();
+				boolean isDone = false;
+				String cursor = ScanParams.SCAN_POINTER_START;
+
+				sp.match("*");
+				while (!isDone) {
+					ScanResult<Entry<String, String>> r = jedis.hscan(set, cursor, sp);
+
+					for (Entry<String, String> entry : r.getResult()) {
+						// parse value into hashmap
+						String[] infos = entry.getValue().split("#");
+
+						if (infos != null) {
+							for (int i = 0; i < infos.length; i++) {
+								String[] vf = infos[i].split("@");
+								String disk = null, block = null, serverId = null;
+								BlockRef ref = null;
+								long len = 0;
+
+								if (vf != null) {
+									for (int j = 0; j < vf.length; j++) {
+										switch (j) {
+										case 1:
+											break;
+										case 2:
+											// serverId
+											serverId = vf[j];
+											break;
+										case 3:
+											// blockId
+											block = vf[j];
+											break;
+										case 5:
+											// length
+											try { 
+												len = Long.parseLong(vf[j]);
+											} catch (Exception nfe) {};
+											break;
+										case 6:
+											// diskId
+											disk = vf[j];
+											break;
+										}
+									}
+									try {
+										if (serverId != null && disk != null && block != null &&
+												Long.parseLong(serverId) == ServerConf.serverId) {
+											ref = br.get(disk + "." + block);
+											if (ref == null) {
+												ref = new BlockRef();
+											}
+											ref.updateRef(1, len);
+											br.put(disk + "." + block, ref);
+											if (!disks.contains(disk))
+												disks.add(disk);
+										}
+									} catch (Exception nfe) {}
+								}
+							}
+						}
+					}
+					cursor = r.getStringCursor();
+					if (cursor.equalsIgnoreCase("0")) {
+						isDone = true;
+					}
+				}
+
+				if (!conf.getStoreArray().containsAll(disks)) {
+					System.out.println("Got disks set isn't filled in configed store array (" +
+						disks + " vs " + conf.getStoreArray() + "), retain it!");
+					disks.retainAll(conf.getStoreArray());
+				}
+				for (String d : disks) {
+					int blockMax = 0;
+					int usedBlocks = 0;
+					long usedLength = 0, totalLength = 0;
+
+					// find the max block id for this disk
+					String _blk = jedis.get(set + ".blk." + conf.getNodeName() + "." + d);
+					try {
+						blockMax = Integer.parseInt(_blk);
+					} catch (Exception nfe) {}
+					for (int i = 0; i <= blockMax; i++) {
+						if (br.get(d + "." + i) == null) {
+							if (fexist(d + "/" + conf.destRoot + set + "/b" + i)) {
+								if (i < blockMax) {
+									if (conf.isVerbose(2))
+										System.out.println("Clean block file b" + i + " in disk [" 
+												+ d + "] set [" + set + "] ...");
+									delFile(new File(d + "/" + conf.destRoot + set + "/b" + i));
+								}
+							}
+						} else {
+							usedBlocks++;
+							if (fexist(d + "/" + conf.destRoot + set + "/b" + i)) {
+								totalLength += statFile(new File(d + "/" + conf.destRoot + set + "/b" + i));
+								usedLength += br.get(d + "." + i).len;
+								if (conf.isVerbose(2))
+									System.out.println("Used  block file b" + i + " in disk [" + 
+											d + "] set [" + set + "], ref="	+ br.get(d + "." + i).ref);
+							} else {
+								System.out.println("Set [" + String.format("%8s", set) + 
+										"] in disk [" + d + "] used but not exist.");
+							}
+						}
+					}
+					SetInfo si = setInfos.get(set);
+					if (si == null) {
+						si = new SetInfo();
+					}
+					si.usedBlocks = usedBlocks;
+					si.totalBlocks = blockMax + 1;
+					si.usedLength = usedLength;
+					si.totalLength = totalLength;
+					setInfos.put(set, si);
+					if (conf.isVerbose(1))
+						System.out.println("Set [" + String.format("%8s", set) + 
+								"] in disk [" + d + "] u/t=" + 
+								usedBlocks + "/" + (blockMax + 1) + " B.UR=" + 
+								String.format("%.4f", (blockMax == 0 ? 0 : (double)usedBlocks / blockMax)) +
+								" P.UR=" + 
+								String.format("%.4f", (totalLength == 0 ? 0 : (double)usedLength / totalLength)));
+				}
+			}
+		} catch (JedisException e) {
+			jedis = RedisFactory.putBrokenInstance(jedis);
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			jedis = RedisFactory.putInstance(jedis);
+		}
+
+		return err;
+	}
+
+	private boolean fexist(String fpath) {
+		return new File(fpath).exists();
+	}
+
+	private long statFile(File f) {
+		if (!f.exists())
+			return 0;
+		if (f.isFile())
+			return f.length();
+
+		return 0;
+	}
+
+	private void delFile(File f) {
+		if (!f.exists())
+			return;
+		if (f.isFile())
+			f.delete();
+		else {
+			for (File a : f.listFiles())
+				if (a.isFile())
+					a.delete();
+				else
+					delFile(a);
+			f.delete();
+		}
 	}
 }

@@ -33,8 +33,11 @@ public class ServerConf {
 	public static int DEFAULT_SYSINFOSTAT_PORT = 19888;
 	public static long DEFAULT_WRITE_FD_RECYCLE_TO = 4 * 3600 * 1000;
 	public static long DEFAULT_READ_FD_RECYCLE_TO = 2 * 3600 * 1000;
+	public static int DEFAULT_RECV_BUFFER_SIZE = 11 * 1024 * 1024;
+	public static int DEFAULT_SEND_BUFFER_SIZE = 11 * 1024 * 1024;
 	
 	private boolean use_junixsocket = false;
+	private int verbose = 0;
 	
 	private String nodeName; // 节点名
 	private int serverPort = DEFAULT_SERVER_PORT;
@@ -50,6 +53,9 @@ public class ServerConf {
 	private long write_fd_recycle_to = DEFAULT_WRITE_FD_RECYCLE_TO;
 	private long read_fd_recycle_to = DEFAULT_READ_FD_RECYCLE_TO;
 	
+	private static int recv_buffer_size = DEFAULT_RECV_BUFFER_SIZE;
+	private static int send_buffer_size = DEFAULT_SEND_BUFFER_SIZE;
+	
 	private String faceDetectorXML = null;
 	private String featureIndexPath = null;
 	private static List<FeatureType> features = new ArrayList<FeatureType>();
@@ -58,6 +64,8 @@ public class ServerConf {
 	// this is http servers
 	public static Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 		
+	public String destRoot = "./mm_data/";
+
 	private Set<String> storeArray = new HashSet<String>();
 	
 	private String sysInfoServerName = null;
@@ -471,5 +479,29 @@ public class ServerConf {
 
 	public void setEnableSSMig(boolean enableSSMig) {
 		this.enableSSMig = enableSSMig;
+	}
+
+	public boolean isVerbose(int level) {
+		return verbose >= level;
+	}
+
+	public void setVerbose(int verbose) {
+		this.verbose = verbose;
+	}
+
+	public static int getRecv_buffer_size() {
+		return recv_buffer_size;
+	}
+
+	public static void setRecv_buffer_size(int recv_buffer_size) {
+		ServerConf.recv_buffer_size = recv_buffer_size;
+	}
+
+	public static int getSend_buffer_size() {
+		return send_buffer_size;
+	}
+
+	public static void setSend_buffer_size(int send_buffer_size) {
+		ServerConf.send_buffer_size = send_buffer_size;
 	}
 }
