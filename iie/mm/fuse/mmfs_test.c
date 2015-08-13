@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-03 17:53:15 macan>
+ * Time-stamp: <2015-08-05 18:21:11 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -282,6 +282,78 @@ out_close:
     goto out_unlink;
 }
 
+int large_write_test_duped(long fsize)
+{
+    int err = 0, i = 0;
+    int fd = 0;
+    char buf[4096];
+
+    /* write by 4K blocks */
+    fd = open("./MMFS_LARGE_WRITE_TEST_DUPED", O_CREAT | O_TRUNC | O_RDWR,
+              S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        goto out;
+
+    close(fd);
+
+    fd = open("./MMFS_LARGE_WRITE_TEST_DUPED", O_RDWR, S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        goto out;
+
+    for (i = 0; i < fsize / sizeof(buf); i++) {
+        memset(buf, i & 0xff, sizeof(buf));
+        err = write(fd, buf, sizeof(buf));
+        if (err < 0) {
+            printf("write %d failed w/ %s\n",
+                   i, strerror(errno));
+        } else if (err != sizeof(buf)) {
+            printf("write %d miss: expect %ld got %d\n", 
+                   i, sizeof(buf), err);
+        }
+    }
+    close(fd);
+    err = 0;
+out:
+
+    return err;
+}
+
+int large_write_test_rand(long fsize)
+{
+    int err = 0, i = 0;
+    int fd = 0;
+    char buf[4096];
+
+    /* write by 4K blocks */
+    fd = open("./MMFS_LARGE_WRITE_TEST_RAND", O_CREAT | O_TRUNC | O_RDWR,
+              S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        goto out;
+
+    close(fd);
+
+    fd = open("./MMFS_LARGE_WRITE_TEST_RAND", O_RDWR, S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        goto out;
+
+    for (i = 0; i < fsize / sizeof(buf); i++) {
+        memset(buf, random() & 0xff, sizeof(buf));
+        err = write(fd, buf, sizeof(buf));
+        if (err < 0) {
+            printf("write %d failed w/ %s\n",
+                   i, strerror(errno));
+        } else if (err != sizeof(buf)) {
+            printf("write %d miss: expect %ld got %d\n", 
+                   i, sizeof(buf), err);
+        }
+    }
+    close(fd);
+    err = 0;
+out:
+
+    return err;
+}
+
 int main(int argc, char *argv[])
 {
     int err = 0;
@@ -296,6 +368,11 @@ int main(int argc, char *argv[])
         printf("read_write_test w/o cache failed w/ %d\n", err);
         goto out;
     }
-
+    err = large_write_test_duped(1024 * 1024 * 1024 * 10L);
+    if (err) {
+        printf("larget_write_test_duped failed w/ %d\n", err);
+        goto out;
+    }
+out:
     return err;
 }

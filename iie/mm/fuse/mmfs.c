@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-04 18:26:49 macan>
+ * Time-stamp: <2015-08-06 14:22:52 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1097,9 +1097,9 @@ int __mmfs_update_inode_proxy(struct mstat *ms, struct mdu_update *mu)
     return err;
 }
 
-static void __set_chunk_size(struct bhhead *bhh, u64 chkid, size_t fsize)
+static void __set_chunk_size(struct bhhead *bhh, struct chunk *c, 
+                             u64 chkid, size_t fsize)
 {
-    struct chunk *c = bhh->chunks[chkid];
     u64 chk_begin = chkid * g_msb.chunk_size;
 
     c->asize = min(bhh->asize - chk_begin, g_msb.chunk_size);
@@ -1144,6 +1144,10 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
     }
 
     xrwlock_wlock(&bhh->clock);
+    /* BUG-XXX: recheck if the chunk is valid, it might be cleared. */
+    if (bhh->chunks[chkid] != c) {
+        goto out_unlock;
+    }
     hvfs_debug(mmfs, "__bh_fill_chunk(%ld) CHK=%ld offset=%ld size=%ld "
                "c->size=%ld c->asize=%ld bhh->size=%ld bhh->asize=%ld bhh->chknr=%ld"
                " bhh %p chunk %p update=%d clocked=%d\n",
@@ -1165,8 +1169,9 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
     }
     case 3:
         __set_bhh_dirty(bhh);
-        if (offset == chkid * g_msb.chunk_size &&
-            size == g_msb.chunk_size) {
+        /* Bug-XXX: offset is in-chunk offset, should always be ZERO
+         */
+        if (offset == 0 && size == g_msb.chunk_size) {
             bhh->chunks[chkid] = NULL;
 
             err = __mmfs_clr_block(ms, chkid);
@@ -1188,7 +1193,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
         __set_chunk_dirty(c);
         break;
     }
-    __set_chunk_size(bhh, chkid, offset + size);
+    __set_chunk_size(bhh, c, chkid, offset + size);
 
     if (offset >= c->size) {
         while (c->size < off_end) {
@@ -3773,18 +3778,31 @@ static int mmfs_truncate(const char *pathname, off_t size)
         goto out_put;
     } else if (size > bhh->asize) {
         /* truncate up */
+        /* BUG-XXX: we might unable to fill in whole data range here. */
+        u64 chkid = osize / g_msb.chunk_size;
+        u64 eid = size / g_msb.chunk_size;
+        eid -= size % g_msb.chunk_size == 0 ? 1 : 0;
+
+        __odc_lock(bhh);
         bhh->asize = size;
-    retry:
-        err = __bh_fill(&ms, bhh, NULL, osize, (size - osize), 2);
-        if (err < 0) {
-            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
-                     osize, size - osize, err);
-            if (err == -ESCAN) {
-                __scan_chunks(0.25);
-                goto retry;
+        __odc_unlock(bhh);
+
+        /* fill in block in range [size, osize - size) */
+        for (; chkid <= eid; chkid++) {
+            off_t o = max(osize, chkid * g_msb.chunk_size);
+            size_t s = min(g_msb.chunk_size, (u64)size - o);
+        retry:
+            err = __bh_fill(&ms, bhh, NULL, o, s, 2);
+            if (err < 0) {
+                hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+                         o, s, err);
+                if (err == -ESCAN) {
+                    __scan_chunks(0.25);
+                    goto retry;
+                }
+                bhh->asize = osize;
+                goto out_put;
             }
-            bhh->asize = osize;
-            goto out_put;
         }
     } else {
         /* truncate down */
@@ -3792,7 +3810,7 @@ static int mmfs_truncate(const char *pathname, off_t size)
     retry2:
         err = __bh_fill(&ms, bhh, NULL, size, osize - size, 3);
         if (err < 0) {
-            hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
+            hvfs_err(mmfs, "clear the buffer cache range [%ld,%ld) failed w/ %d\n",
                      size, osize - size, err);
             if (err == -ESCAN) {
                 __scan_chunks(0.25);
@@ -4855,6 +4873,7 @@ static int __sync_chunks(double target)
 
         RENEW_CI(OP_A_FSYNC);
     }
+    xfree(ba);
     err = 0;
 
     return err;
@@ -4904,6 +4923,9 @@ static int __scan_chunks(double target)
         }
     }
     xlock_unlock(&mmfs_odc_mgr.clru_lock);
+    /*if (!nr && atomic_read(&mmfs_odc_mgr.free_pages)) {
+        sem_post(&mmfs_odc_mgr.wbt_sem);
+    }*/
     
     return err;
 }

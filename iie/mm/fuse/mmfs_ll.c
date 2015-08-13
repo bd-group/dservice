@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-03 15:41:37 macan>
+ * Time-stamp: <2015-08-07 21:04:17 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1470,6 +1470,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     if (!mr.info) {
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
+        err = EMMMMSERR;
         goto out_free;
     }
     hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
@@ -1584,6 +1585,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     if (!mr.info) {
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
+        err = EMMMMSERR;
         goto out_free;
     }
     hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",

@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-04 20:23:54 macan>
+ * Time-stamp: <2015-08-07 16:04:34 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -326,6 +326,7 @@ struct __mmfs_client_info
 /* Regin for Internal APIs */
 extern u32 hvfs_mmll_tracing_flags;
 extern u32 hvfs_mmcc_tracing_flags;
+
 struct redisConnection
 {
     time_t born;                /* born time */
