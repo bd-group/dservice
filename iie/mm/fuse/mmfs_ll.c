@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-07 21:04:17 macan>
+ * Time-stamp: <2015-08-17 18:47:49 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@ struct __mmfs_r_op g_ops[] = {
     },
     {
         "update_block",
-        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then return 2; end; local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]); end; end; local i, z, K, F; i=0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F=z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
+        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then local d=redis.call('hincrby', '_DUPSET_', y, -1); if d < 0 then redis.call('hdel', '_DUPSET_', y); end; return 2; end; local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]); end; end; local i, z, K, F; i=0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F=z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
     },
     {
         "clear_block",

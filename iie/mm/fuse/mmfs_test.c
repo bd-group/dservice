@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-05 18:21:11 macan>
+ * Time-stamp: <2015-08-17 14:24:58 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -318,12 +318,48 @@ out:
     return err;
 }
 
+int large_read_test_duped(long fsize)
+{
+    int err = 0, i, j;
+    int fd = 0;
+    char buf[4096];
+
+    /* read by 4K blocks */
+    fd = open("./MMFS_LARGE_WRITE_TEST_DUPED", O_RDONLY);
+    if (fd < 0)
+        goto out;
+
+    for (i = 0; i < fsize / sizeof(buf); i++) {
+        memset(buf, 0, sizeof(buf));
+        err = read(fd, buf, sizeof(buf));
+        if (err < 0) {
+            printf("read %d failed w/ %s\n",
+                   i, strerror(errno));
+        } else if (err != sizeof(buf)) {
+            printf("read %d miss: expect %ld got %d\n",
+                   i, sizeof(buf), err);
+        }
+        for (j = 0; j < sizeof(buf); j++) {
+            if ((unsigned char)buf[j] != (i & 0xff)) {
+                printf("read %d error: expect %d got %d, j=%d\n",
+                       i, (i & 0xff), buf[j], j);
+                break;
+            }
+        }
+    }
+    err = 0;
+    close(fd);
+out:
+    return err;
+}
+
 int large_write_test_rand(long fsize)
 {
     int err = 0, i = 0;
     int fd = 0;
     char buf[4096];
 
+    srandom(1279);
     /* write by 4K blocks */
     fd = open("./MMFS_LARGE_WRITE_TEST_RAND", O_CREAT | O_TRUNC | O_RDWR,
               S_IRUSR | S_IWUSR);
@@ -354,6 +390,43 @@ out:
     return err;
 }
 
+int large_read_test_rand(long fsize)
+{
+    int err = 0, i, j;
+    int fd = 0;
+    char buf[4096];
+
+    srandom(1279);
+    /* read by 4K blocks */
+    fd = open("./MMFS_LARGE_WRITE_TEST_RAND", O_RDONLY);
+    if (fd < 0)
+        goto out;
+
+    for (i = 0; i < fsize / sizeof(buf); i++) {
+        memset(buf, 0, sizeof(buf));
+        err = read(fd, buf, sizeof(buf));
+        if (err < 0) {
+            printf("read %d failed w/ %s\n",
+                   i, strerror(errno));
+        } else if (err != sizeof(buf)) {
+            printf("read %d miss: expect %ld got %d\n",
+                   i, sizeof(buf), err);
+        }
+        unsigned char x = random() & 0xff;
+        for (j = 0; j < sizeof(buf); j++) {
+            if ((unsigned char)buf[j] != (x)) {
+                printf("read %d error: expect %d got %d, j=%d\n",
+                       i, (x), buf[j], j);
+                break;
+            }
+        }
+    }
+    err = 0;
+    close(fd);
+out:
+    return err;
+}
+
 int main(int argc, char *argv[])
 {
     int err = 0;
@@ -368,9 +441,28 @@ int main(int argc, char *argv[])
         printf("read_write_test w/o cache failed w/ %d\n", err);
         goto out;
     }
-    err = large_write_test_duped(1024 * 1024 * 1024 * 10L);
+    printf("Begin large write test duped ...\n");
+    //err = large_write_test_duped(1024 * 1024 * 1024 * 10L);
     if (err) {
         printf("larget_write_test_duped failed w/ %d\n", err);
+        goto out;
+    }
+    printf("Begin large read  test duped ...\n");
+    err = large_read_test_duped(1024 * 1024 * 1024 * 10L);
+    if (err) {
+        printf("large_read_test_duped failed w/ %d\n", err);
+        goto out;
+    }
+    printf("Begin large write test rand ...\n");
+    err = large_write_test_rand(1024 * 1024 * 1024 * 10L);
+    if (err) {
+        printf("larget_write_test_rand failed w/ %d\n", err);
+        goto out;
+    }
+    printf("Begin large read  test rand ...\n");
+    err = large_read_test_rand(1024 * 1024 * 1024 * 10L);
+    if (err) {
+        printf("large_read_test_rand failed w/ %d\n", err);
         goto out;
     }
 out:

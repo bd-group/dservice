@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-06 14:22:52 macan>
+ * Time-stamp: <2015-08-13 13:48:45 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4883,15 +4883,17 @@ static int __scan_chunks(double target)
 {
     struct chunk *c = NULL;
     struct bh *bh, *n;
-    int err = 0, nr = 0, pnr;
+    int err = 0, nr = 0, pnr, pressure = 1;
 
     xlock_lock(&mmfs_odc_mgr.clru_lock);
     list_for_each_entry_reverse(c, &mmfs_odc_mgr.clru, lru) {
         if ((double)atomic_read(&mmfs_odc_mgr.free_pages) / 
             (atomic_read(&mmfs_odc_mgr.free_pages) +
              atomic_read(&mmfs_odc_mgr.used_pages))
-            >= target)
+            >= target) {
+            pressure = 0;
             break;
+        }
         
         err = xlock_trylock(&c->lock);
         if (!err) {
@@ -4923,10 +4925,10 @@ static int __scan_chunks(double target)
         }
     }
     xlock_unlock(&mmfs_odc_mgr.clru_lock);
-    /*if (!nr && atomic_read(&mmfs_odc_mgr.free_pages)) {
+    if (pressure && !nr && atomic_read(&mmfs_odc_mgr.free_pages) == 0) {
         sem_post(&mmfs_odc_mgr.wbt_sem);
-    }*/
-    
+    }
+
     return err;
 }
 
