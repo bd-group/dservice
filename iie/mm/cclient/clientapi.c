@@ -29,7 +29,7 @@ int client_config(mmcc_config_t *);
 int client_init();
 int __client_load_scripts(struct redisConnection *rc);
 int client_fina();
-int update_mmserver();
+int update_mmserver2();
 void update_g_info(struct redisConnection *rc);
 int get_ss_object(char *set, char *md5, void **buf, size_t *length);
 int __is_in_redis(char *set);
@@ -237,6 +237,8 @@ int mmcc_init(char *uris)
             hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
             goto out_put;
         }
+
+        update_mmserver2(rc);
 
         /* FIXME: do auto config */
         update_g_info(rc);

@@ -62,6 +62,12 @@ struct MMSCSock
     int state;
 };
 
+struct loadBalanceInfo
+{
+    u64 total;
+    u64 free;
+};
+
 struct MMSConnection
 {
     long sid;
@@ -75,6 +81,7 @@ struct MMSConnection
     int port;
     time_t ttl;                 /* update ttl to detect removal */
     char *sp;                   /* server:port info from active.mms */
+    struct loadBalanceInfo lb;
 };
 
 struct redisConnection
@@ -828,7 +835,11 @@ void update_mmserver2(struct redisConnection *rc)
 {
     struct MMSConnection *c;
     redisReply *rpy = NULL;
+    struct loadBalanceInfo *lba;
     int i;
+
+    lba = alloca(sizeof(struct loadBalanceInfo) * (g_sid_max + 1));
+    memset(lba, 0, sizeof(struct loadBalanceInfo) * (g_sid_max + 1));
 
     for (i = 0; i <= g_sid_max; i++) {
         c = __mmsc_lookup(i);
@@ -847,13 +858,72 @@ void update_mmserver2(struct redisConnection *rc)
                     hvfs_debug(mmcc, "Update MMServer %s ttl to %ld\n",
                                c->sp, (u64)c->ttl);
                 } else {
-                    if (time(NULL) - c->ttl > 600)
+                    if (time(NULL) - c->ttl > 360)
                         c->ttl = 0;
                     hvfs_warning(mmcc, "MMServer %s ttl lost, do NOT update (ttl=%ld).\n",
                                  c->sp, c->ttl);
                 }
             }
             freeReplyObject(rpy);
+        }
+    }
+
+    /* get space info for load balance */
+    rpy = redisCMD(rc->rc, "hgetall mm.space");
+    if (rpy == NULL) {
+        hvfs_err(mmcc, "invalid redis status, connection broken?\n");
+        redisFree(rc->rc);
+        rc->rc = NULL;
+        return;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_err(mmcc, "redis error to get mm.space: %s\n", rpy->str);
+    }
+    if (rpy->type == REDIS_REPLY_ARRAY) {
+        char *f, *v, *p, *n = NULL;
+        int i, j;
+
+        for (i = 0; i < rpy->elements; i+=2) {
+            long sid = -1;
+            char type = '?';
+
+            f = p = strdup(rpy->element[i]->str);
+            v = rpy->element[i + 1]->str;
+            for (j = 0; j < 3; j++, p = NULL) {
+                p = strtok_r(p, "|", &n);
+                if (p != NULL) {
+                    switch (j) {
+                    case 0:
+                        sid = atol(p);
+                        break;
+                    case 2:
+                        type = *p;
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            xfree(f);
+            if (sid >= 0 && type != '?') {
+                switch (type) {
+                case 'T':
+                    lba[sid].total += atol(v);
+                    break;
+                case 'F':
+                    lba[sid].free += atol(v);
+                    break;
+                }
+            }
+        }
+    }
+    freeReplyObject(rpy);
+
+    for (i = 0; i <= g_sid_max; i++) {
+        c = __mmsc_lookup(i);
+        if (c) {
+            c->lb.total = lba[i].total;
+            c->lb.free = lba[i].free;
         }
     }
 }
@@ -1321,13 +1391,13 @@ int search_by_info(char *info, void **buf, size_t *length)
 
         err = send_bytes(s->sock, header, 4);
         if (err) {
-            hvfs_err(mmcc, "send header failed.\n");
+            hvfs_err(mmcc, "send header failed, connection broken?\n");
             goto out_disconn;
         }
         
         err = send_bytes(s->sock, info, strlen(info));
         if (err) {
-            hvfs_err(mmcc, "send info failed.\n");
+            hvfs_err(mmcc, "send info failed, connection broken?\n");
             goto out_disconn;
         }
 	
@@ -1352,7 +1422,8 @@ int search_by_info(char *info, void **buf, size_t *length)
 
         err = recv_bytes(s->sock, *buf, count);
         if (err) {
-            hvfs_err(mmcc, "recv_bytes data content %dB failed.\n", count);
+            hvfs_err(mmcc, "recv_bytes data content %dB failed, "
+                     "connection broken?\n", count);
             xfree(*buf);
             goto out_disconn;
         }
@@ -1382,16 +1453,27 @@ int search_mm_object(char *infos, void **buf, size_t *length)
     begin = tv.tv_sec * 1000000.0 + tv.tv_usec;
 #endif
 
-    /* FIXME: we should random read from backend servers.
+    /* Note: We should random read from backend servers. But if # list had
+     * already randomized in mmcc_put stage, thus here we can read by
+     * sequence.
      */
     do {
         p = strtok_r(p, "#", &n);
         if (p != NULL) {
             /* handle this info */
+            int __retry = 1;
+        retry:
             err = search_by_info(p, buf, length);
             if (err) {
                 hvfs_err(mmcc, "search_by_info(%s) failed %d\n",
                          p, err);
+                /* Note that, for long running system, some socket ends by not
+                 * freed, we should do another retry to reconnect.
+                 */
+                if (err == EMMCONNERR && __retry) {
+                    __retry = 0;
+                    goto retry;
+                }
             } else {
                 found = 1;
                 break;
@@ -1425,8 +1507,8 @@ int search_mm_object(char *infos, void **buf, size_t *length)
 int get_mm_object(char *set, char *md5, void **buf, size_t *length)
 {
 	redisReply* reply = NULL;
-    int err = 0;
     struct redisConnection *rc = NULL;
+    int err = 0;
 
     if (!set || !md5 || !buf || !length)
         return EMMINVAL;
@@ -1555,31 +1637,31 @@ static int do_put(long sid, char *set, char *name, void *buffer,
 
         err = send_bytes(s->sock, header, 4);
         if (err) {
-            hvfs_err(mmcc, "send header failed.\n");
+            hvfs_err(mmcc, "send header failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_int(s->sock, count);
         if (err) {
-            hvfs_err(mmcc, "send length failed.\n");
+            hvfs_err(mmcc, "send length failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, set, slen);
         if (err) {
-            hvfs_err(mmcc, "send set failed.\n");
+            hvfs_err(mmcc, "send set failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, name, nlen);
         if (err) {
-            hvfs_err(mmcc, "send name (or md5) failed.\n");
+            hvfs_err(mmcc, "send name (or md5) failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, buffer, count);
         if (err) {
-            hvfs_err(mmcc, "send data content failed.\n");
+            hvfs_err(mmcc, "send data content failed, connection broken?\n");
             goto out_disconn;
         }
 
@@ -1606,7 +1688,8 @@ static int do_put(long sid, char *set, char *name, void *buffer,
 
         err = recv_bytes(s->sock, *out, count);
         if (err) {
-            hvfs_err(mmcc, "recv_bytes data content %dB failed.\n",
+            hvfs_err(mmcc, "recv_bytes data content %dB failed, "
+                     "connection broken?\n",
                      count);
             xfree(*out);
             goto out_disconn;
@@ -1664,19 +1747,19 @@ static int do_put_iov(long sid, char *set, char *name, struct iovec *iov,
 
         err = send_bytes(s->sock, header, 4);
         if (err) {
-            hvfs_err(mmcc, "send header failed.\n");
+            hvfs_err(mmcc, "send header failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_int(s->sock, count);
         if (err) {
-            hvfs_err(mmcc, "send length failed.\n");
+            hvfs_err(mmcc, "send length failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, set, slen);
         if (err) {
-            hvfs_err(mmcc, "send set failed.\n");
+            hvfs_err(mmcc, "send set failed, connection broken?\n");
             goto out_disconn;
         }
 
@@ -1689,7 +1772,8 @@ static int do_put_iov(long sid, char *set, char *name, struct iovec *iov,
         for (i = 0; i < iovlen; i++) {
             err = send_bytes(s->sock, iov[i].iov_base, iov[i].iov_len);
             if (err) {
-                hvfs_err(mmcc, "send content iov[%d] len=%ld failed.\n",
+                hvfs_err(mmcc, "send content iov[%d] len=%ld failed, "
+                         "connection broken?\n",
                          i, (u64)iov[i].iov_len);
                 goto out_disconn;
             }
@@ -1718,7 +1802,8 @@ static int do_put_iov(long sid, char *set, char *name, struct iovec *iov,
 
         err = recv_bytes(s->sock, *out, count);
         if (err) {
-            hvfs_err(mmcc, "recv_bytes data content %dB failed.\n",
+            hvfs_err(mmcc, "recv_bytes data content %dB failed, "
+                     "connection broken?\n",
                      count);
             xfree(*out);
             goto out_disconn;
@@ -1758,17 +1843,33 @@ static void __random_sort_array(int *a, int nr)
     }
 }
 
-int __mmcc_put(char *set, char *name, void *buffer, size_t len,
-               int dupnum, char **info)
+static int fratio_compare(const void *a, const void *b)
 {
+    struct MMSConnection *x = (struct MMSConnection *)a;
+    struct MMSConnection *y = (struct MMSConnection *)b;
+
+    if ((double)x->lb.free / x->lb.total > (double)y->lb.free / y->lb.total)
+        return 1;
+    else if ((double)x->lb.free / x->lb.total < (double)y->lb.free / y->lb.total)
+        return -1;
+    else
+        return 0;
+}
+
+static void __sort_array_by_fratio(struct MMSConnection **a, int nr)
+{
+    return qsort(a, nr, sizeof(struct MMSConnection *), fratio_compare);
+}
+
+static int __select_mms(int *ids, int dupnum)
+{
+    time_t cur = time(NULL);
     struct hlist_node *pos;
     struct regular_hash *rh;
     struct MMSConnection *n;
-    time_t cur = time(NULL);
-    int i, j, k, c = 0, total = 0, *ids = NULL, err = 0;
+    int i, c = 0, k = 0, total = 0, err = 0;
+    struct MMSConnection **tids = NULL;
 
-    srandom(cur);
-    
     for (i = 0; i < g_rh_size; i++) {
         rh = g_rh + i;
         xlock_lock(&rh->lock);
@@ -1779,52 +1880,72 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
         xlock_unlock(&rh->lock);
     }
     if (total == 0) {
-        hvfs_warning(mmcc, "No valid MMServer to write?\n");
+        hvfs_warning(mmcc, "No valid MMServer to write before select?\n");
         return EMMNOMMS;
     }
 
     if (dupnum > total)
         dupnum = total;
 
-    k = random() % total;
+    tids = alloca(sizeof(struct MMSConnection *) * total);
 
-    ids = alloca(sizeof(int) * dupnum);
-
-    for (i = 0, j = 0; i < g_rh_size; i++) {
+    for (i = 0; i < g_rh_size; i++) {
         rh = g_rh + i;
         xlock_lock(&rh->lock);
         hlist_for_each_entry(n, pos, &rh->h, hlist) {
-            if (cur - n->ttl < 120 && j >= k && j < k + dupnum) {
+            if (cur - n->ttl < 120 && n->lb.free > 0) {
                 /* save it  */
-                ids[c] = n->sid;
+                tids[c] = n;
                 c++;
             }
         }
         xlock_unlock(&rh->lock);
-        if (c >= dupnum) break;
+        if (c >= total) break;
     }
 
-    if (c < dupnum) {
-        for (i = 0; i < g_rh_size; i++) {
-            rh = g_rh + i;
-            xlock_lock(&rh->lock);
-            hlist_for_each_entry(n, pos, &rh->h, hlist) {
-                if (cur - n->ttl < 120 && c < dupnum) {
-                    /* save it */
-                    ids[c] = n->sid;
-                    c++;
-                }
-            }
-            xlock_unlock(&rh->lock);
-            if (c >= dupnum) break;
-        }
+    /* sort the array by free ratio as needed */
+    if (c > dupnum) {
+        __sort_array_by_fratio(tids, c);
+    }
+
+    /* copy top dupnum id to result array */
+    for (i = 0; i < c; i++) {
+        ids[k] = tids[i]->sid;
+        k++;
+        if (k >= dupnum) break;
+    }
+
+    /* random sort the ids array */
+    __random_sort_array(ids, k);
+
+    hvfs_debug(mmcc, "total %d c %d k %d dupnum %d\n", total, c, k, dupnum);
+
+    err = k;
+
+    return err;
+}
+
+int __mmcc_put(char *set, char *name, void *buffer, size_t len,
+               int dupnum, char **info)
+{
+    int i, c = 0, *ids = NULL, err = 0;
+
+    ids = alloca(sizeof(int) * dupnum);
+
+    err = __select_mms(ids, dupnum);
+    if (err < 0) {
+        hvfs_err(mmcc, "__select_mm() for %s@%s dupnum=%d failed w/ %d\n",
+                 set, name, dupnum, err);
+        goto out;
+    }
+    c = err;
+    if (c <= 0) {
+        hvfs_warning(mmcc, "No valid MMServer to write after select?\n");
+        return EMMNOMMS;
     }
 
     hvfs_debug(mmcc, "Got active servers = %d to put for %s@%s\n", 
                c, set, name);
-
-    /* random sort the ids array */
-    __random_sort_array(ids, dupnum);
 
     /* ok, finally call do_put() */
     for (i = 0; i < c; i++) {
@@ -1896,61 +2017,20 @@ out:
 int __mmcc_put_iov(char *set, char *name, struct iovec *iov, int iovlen,
                    int dupnum, char **info)
 {
-    struct hlist_node *pos;
-    struct regular_hash *rh;
-    struct MMSConnection *n;
-    time_t cur = time(NULL);
-    int i, j, k, c = 0, total = 0, *ids = NULL, err = 0;
-
-    srandom(cur);
-
-    for (i = 0; i < g_rh_size; i++) {
-        rh = g_rh + i;
-        xlock_lock(&rh->lock);
-        hlist_for_each_entry(n, pos, &rh->h, hlist) {
-            if (cur - n->ttl < 300)
-                total++;
-        }
-        xlock_unlock(&rh->lock);
-    }
-    if (total == 0) {
-        hvfs_warning(mmcc, "No valid MMServer to write?\n");
-        return EMMNOMMS;
-    }
-
-    if (dupnum > total)
-        dupnum = total;
-
-    k = random() % total;
+    int i, c = 0, *ids = NULL, err = 0;
 
     ids = alloca(sizeof(int) * dupnum);
 
-    for (i = 0, j = 0; i < g_rh_size; i++) {
-        rh = g_rh + i;
-        xlock_lock(&rh->lock);
-        hlist_for_each_entry(n, pos, &rh->h, hlist) {
-            if (cur - n->ttl < 120 && j >= k && j < k + dupnum) {
-                /* save it  */
-                ids[c] = n->sid;
-                c++;
-            }
-        }
-        xlock_unlock(&rh->lock);
+    err = __select_mms(ids, dupnum);
+    if (err < 0) {
+        hvfs_err(mmcc, "__select_mm() for %s@%s dupnum=%d failed w/ %d\n",
+                 set, name, dupnum, err);
+        goto out;
     }
-
-    if (c < dupnum) {
-        for (i = 0; i < g_rh_size; i++) {
-            rh = g_rh + i;
-            xlock_lock(&rh->lock);
-            hlist_for_each_entry(n, pos, &rh->h, hlist) {
-                if (cur - n->ttl < 120 && c < dupnum) {
-                    /* save it */
-                    ids[c] = n->sid;
-                    c++;
-                }
-            }
-            xlock_unlock(&rh->lock);
-        }
+    c = err;
+    if (c <= 0) {
+        hvfs_warning(mmcc, "No valid MMServer to write after select?\n");
+        return EMMNOMMS;
     }
 
     hvfs_debug(mmcc, "Got active servers = %d to put for %s@%s\n", 
@@ -2166,8 +2246,9 @@ void mmcc_put_R(char *key, void *content, size_t len, struct mres *mr)
         }
         /* if larger than dupnum, then do NOT put */
         if (err >= g_conf.dupnum) {
-            hvfs_debug(mmcc, "DETECT dupnum=%d >= %d, do not put actually.\n",
-                       err, g_conf.dupnum);
+            hvfs_debug(mmcc, "DETECT dupnum=%d >= %d, do not put actually for "
+                       "%s@%s.\n",
+                       err, g_conf.dupnum, set, name);
             goto out_free2;
         }
     }
@@ -2302,20 +2383,21 @@ int __del_mm_set(char *host, int port, char *set)
 
         err = send_bytes(s->sock, header, 4);
         if (err) {
-            hvfs_err(mmcc, "send header failed.\n");
+            hvfs_err(mmcc, "send header failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, set, slen);
         if (err) {
-            hvfs_err(mmcc, "send set failed.\n");
+            hvfs_err(mmcc, "send set failed, connection broken?\n");
             goto out_disconn;
         }
 
         /* ok, wait for reply now */
         err = recv_bytes(s->sock, &r, 1);
         if (err) {
-            hvfs_err(mmcc, "recv_bytes result byte failed.\n");
+            hvfs_err(mmcc, "recv_bytes result byte failed, "
+                     "connection broken?\n");
             goto out_disconn;
         }
 
@@ -2558,18 +2640,18 @@ int get_ss_object(char *set, char *md5, void **buf, size_t *length)
 
         err = send_bytes(s->sock, header, 4);
         if (err) {
-            hvfs_err(mmcc, "send header failed.\n");
+            hvfs_err(mmcc, "send header failed, connection broken?\n");
             goto out_disconn;
         }
 
         err = send_bytes(s->sock, set, setlen);
         if (err) {
-            hvfs_err(mmcc, "send set failed.\n");
+            hvfs_err(mmcc, "send set failed, connection broken?\n");
             goto out_disconn;
         }
         err = send_bytes(s->sock, md5, md5len);
         if (err) {
-            hvfs_err(mmcc, "send md5 failed.\n");
+            hvfs_err(mmcc, "send md5 failed, connection broken?.\n");
             goto out_disconn;
         }
 
@@ -2593,7 +2675,8 @@ int get_ss_object(char *set, char *md5, void **buf, size_t *length)
 
         err = recv_bytes(s->sock, *buf, count);
         if (err) {
-            hvfs_err(mmcc, "recv_bytes data content %dB failed.\n", count);
+            hvfs_err(mmcc, "recv_bytes data content %dB failed, "
+                     "connection broken?\n", count);
             xfree(*buf);
             goto out_disconn;
         }
@@ -2611,4 +2694,3 @@ out_disconn:
     err = EMMCONNERR;
     goto out;
 }
-

@@ -65,6 +65,7 @@ int mmcc_del_set(char *set);
 #define EMMNOMEM                -1029
 #define EREDIRECT               -1030
 #define EMMNOMMS                -1031
+#define EMMMMSERR               -1032
 
 /* Advanced Using, use only if you know it
  */
