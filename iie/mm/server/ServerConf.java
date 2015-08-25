@@ -102,6 +102,8 @@ public class ServerConf {
 	
 	private long memCheckInterval = 60 * 1000; // 60 seconds
 	
+	private long spaceOperationInterval = 30 * 1000; // 30 seconds
+	
 	private int di_keep_days = 3; // default only keep dupinfo for 3 days
 
 	public ServerConf(int httpPort) throws Exception {
@@ -488,6 +490,10 @@ public class ServerConf {
 	public void setVerbose(int verbose) {
 		this.verbose = verbose;
 	}
+	
+	public void addVerbose(int delta) {
+		verbose += delta;
+	}
 
 	public static int getRecv_buffer_size() {
 		return recv_buffer_size;
@@ -503,5 +509,13 @@ public class ServerConf {
 
 	public static void setSend_buffer_size(int send_buffer_size) {
 		ServerConf.send_buffer_size = send_buffer_size;
+	}
+
+	public long getSpaceOperationInterval() {
+		return spaceOperationInterval;
+	}
+
+	public void setSpaceOperationInterval(long spaceOperationInterval) {
+		this.spaceOperationInterval = spaceOperationInterval;
 	}
 }

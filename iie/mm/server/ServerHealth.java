@@ -39,16 +39,17 @@ import redis.clients.jedis.exceptions.JedisException;
 public class ServerHealth extends TimerTask {
 	private ServerConf conf;
 	private long lastFetch = System.currentTimeMillis();
+	private long lastScrub = System.currentTimeMillis();
 	private Jedis jedis = null;
 	private long used_memory = 0;
 	private boolean isMigrating = false;
 	private boolean isCleaningDI = false;
 	private boolean isFixingObj = false;
 	private int nhours = 1;
-	
+
 	public static class SetInfo {
-		int usedBlocks;
-		int totalBlocks;
+		long usedBlocks;
+		long totalBlocks;
 		long usedLength;
 		long totalLength;
 		
@@ -137,8 +138,10 @@ public class ServerHealth extends TimerTask {
 					isFixingObj = false;
 				}
 			}
-			if (true) {
+			if (cur - lastScrub >= conf.getSpaceOperationInterval()) {
 				scrubSets();
+				gatherSpaceInfo();
+				lastScrub = cur;
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -413,7 +416,45 @@ public class ServerHealth extends TimerTask {
 		
 		return deleted;
 	}
+	
+	private int gatherSpaceInfo() throws Exception {
+		Jedis jedis = null;
+		int err = 0;
 
+		try {
+			jedis = new RedisFactory(conf).getDefaultInstance();
+			if (jedis == null) return -1;
+			Pipeline p = jedis.pipelined();
+
+			for (String d : conf.getStoreArray()) {
+				File f = new File(d);
+				if (err == 0) {
+					p.hset("mm.space", ServerConf.serverId + "|" + d + "|T", 
+							"" + f.getTotalSpace());
+					p.hset("mm.space", ServerConf.serverId + "|" + d + "|F", 
+							"" + f.getUsableSpace());
+				}
+			}
+			p.sync();
+		} catch (JedisConnectionException e) {
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e1) {
+			}
+			err = -1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			err = -1;
+		} finally {
+			if (err < 0)
+				RedisFactory.putBrokenInstance(jedis);
+			else
+				RedisFactory.putInstance(jedis);
+		}
+
+		return err;
+	}
+	
 	private int scrubSets() throws Exception {
 		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
 		int err = 0;
@@ -424,11 +465,9 @@ public class ServerHealth extends TimerTask {
 			Set<String> keys = jedis.keys("*.blk.*");
 
 			if (keys != null && keys.size() > 0) {
-				String[] keya = keys.toArray(new String[0]);
-
-				for (int i = 0; i < keya.length; i++) {
-					String set = keya[i].split("\\.")[0];
-
+				for (String k : keys) {
+					String set = k.split("\\.")[0];
+					
 					sets.add(set);
 				}
 			}
@@ -484,10 +523,18 @@ public class ServerHealth extends TimerTask {
 			} else {
 				// Map: disk.block -> refcount
 				Map<String, BlockRef> br = new HashMap<String, BlockRef>();
+				Map<String, Long> blockId = new HashMap<String, Long>();
 				Set<String> disks = new TreeSet<String>();
 				ScanParams sp = new ScanParams();
 				boolean isDone = false;
 				String cursor = ScanParams.SCAN_POINTER_START;
+
+				// BUG-XXX: if we get _blk max after hscan, then we might delete a block file false positive.
+				for (String d : conf.getStoreArray()) {
+					String _blk = jedis.get(set + ".blk." + ServerConf.serverId + "." + d);
+					if (_blk != null)
+						blockId.put(d, Long.parseLong(_blk));
+				}
 
 				sp.match("*");
 				while (!isDone) {
@@ -557,17 +604,19 @@ public class ServerHealth extends TimerTask {
 						disks + " vs " + conf.getStoreArray() + "), retain it!");
 					disks.retainAll(conf.getStoreArray());
 				}
+				// if disks is empty set, we know that all refs are freed, thus we can 
+				// put StoreArray to disks to free block files 
+				if (disks.isEmpty())
+					disks.addAll(conf.getStoreArray());
 				for (String d : disks) {
-					int blockMax = 0;
-					int usedBlocks = 0;
+					long blockMax = 0;
+					long usedBlocks = 0;
 					long usedLength = 0, totalLength = 0;
 
 					// find the max block id for this disk
-					String _blk = jedis.get(set + ".blk." + conf.getNodeName() + "." + d);
-					try {
-						blockMax = Integer.parseInt(_blk);
-					} catch (Exception nfe) {}
-					for (int i = 0; i <= blockMax; i++) {
+					if (blockId.containsKey(d))
+						blockMax = blockId.get(d);
+					for (long i = 0; i <= blockMax; i++) {
 						if (br.get(d + "." + i) == null) {
 							if (fexist(d + "/" + conf.destRoot + set + "/b" + i)) {
 								if (i < blockMax) {
@@ -575,6 +624,8 @@ public class ServerHealth extends TimerTask {
 										System.out.println("Clean block file b" + i + " in disk [" 
 												+ d + "] set [" + set + "] ...");
 									delFile(new File(d + "/" + conf.destRoot + set + "/b" + i));
+								} else {
+									totalLength += statFile(new File(d + "/" + conf.destRoot + set + "/b" + i));
 								}
 							}
 						} else {
@@ -582,12 +633,12 @@ public class ServerHealth extends TimerTask {
 							if (fexist(d + "/" + conf.destRoot + set + "/b" + i)) {
 								totalLength += statFile(new File(d + "/" + conf.destRoot + set + "/b" + i));
 								usedLength += br.get(d + "." + i).len;
-								if (conf.isVerbose(2))
+								if (conf.isVerbose(3))
 									System.out.println("Used  block file b" + i + " in disk [" + 
 											d + "] set [" + set + "], ref="	+ br.get(d + "." + i).ref);
 							} else {
 								System.out.println("Set [" + String.format("%8s", set) + 
-										"] in disk [" + d + "] used but not exist.");
+										"] in disk [" + d + "] used but not exist(blk=" + i + ",ref=" + br.get(d + "." + i).ref + ").");
 							}
 						}
 					}

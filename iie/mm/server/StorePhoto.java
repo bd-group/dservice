@@ -25,6 +25,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.fusesource.lmdbjni.*;
 import static org.fusesource.lmdbjni.Constants.*;
@@ -178,6 +179,7 @@ public class StorePhoto {
 		public String key;
 		public String disk;
 		
+		public AtomicLong bref = new AtomicLong(0);
 		public long openTs = -1;
 		//当前可写的块
 		private long curBlock = -1;
@@ -285,7 +287,7 @@ public class StorePhoto {
 			try {
 				if (ssc.curBlock < 0) {
 					//需要通过节点名字来标示不同节点上相同名字的集合
-					String reply = jedis.get().get(set + ".blk." + localHostName + "." + ssc.disk);
+					String reply = jedis.get().get(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
@@ -295,7 +297,7 @@ public class StorePhoto {
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
 						jedis.get().sadd(set + ".srvs", localHostName + ":" + serverport);
-						jedis.get().set(set + ".blk." + localHostName + "." + ssc.disk, "" + ssc.curBlock);
+						jedis.get().set(set + ".blk." + ServerConf.serverId + "." + ssc.disk, "" + ssc.curBlock);
 						ssc.offset = 0;
 					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -309,7 +311,13 @@ public class StorePhoto {
 					if (ssc.raf != null)
 						ssc.raf.close();
 					//当前可写的块号加一
-					jedis.get().incr(set + ".blk." + localHostName + "." + ssc.disk);
+					do {
+						if (ssc.bref.get() == 0) {
+							jedis.get().incr(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
+							break;
+						}
+						Thread.yield();
+					} while (true);
 					ssc.offset = 0;
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 					ssc.openTs = System.currentTimeMillis();
@@ -343,6 +351,7 @@ public class StorePhoto {
 				ssc.raf.write(content, coff, clen);
 	
 				ssc.offset += clen;
+				ssc.bref.incrementAndGet();
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken in storeObject.");
 				try {
@@ -363,6 +372,7 @@ public class StorePhoto {
 				if (err < 0) {
 					jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 					ServerProfile.writeErr.incrementAndGet();
+					ssc.bref.decrementAndGet();
 					return returnStr;
 				}
 			}
@@ -371,8 +381,6 @@ public class StorePhoto {
 		try {
 			returnStr = rVal.toString();
 			returnStr = jedis.get().evalsha(sha, 1, set, md5, returnStr).toString();
-			FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
-					conf.getFeatures(), content, coff, clen, set, md5));
 		} catch (JedisConnectionException e) {
 			System.out.println("Jedis connection broken in storeObject.");
 			e.printStackTrace();
@@ -393,11 +401,18 @@ public class StorePhoto {
 			err = -1;
 			returnStr = "#FAIL:" + e.getMessage();
 		} finally {
+			ssc.bref.decrementAndGet();
 			if (err < 0) {
 				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
 			} else
 				jedis.set(RedisFactory.putInstance(jedis.get()));
+		}
+		try {
+			FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
+					conf.getFeatures(), content, coff, clen, set, md5));
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
 		return returnStr;
 	}
@@ -465,7 +480,7 @@ public class StorePhoto {
 				try {
 					if (ssc.curBlock < 0) {
 						// 需要通过节点名字来标示不同节点上相同名字的集合
-						String reply = jedis.get().get(set + ".blk." + localHostName
+						String reply = jedis.get().get(set + ".blk." + ServerConf.serverId
 								+ "." + ssc.disk);
 						if (reply != null) {
 							ssc.curBlock = Long.parseLong(reply);
@@ -477,7 +492,7 @@ public class StorePhoto {
 							// 把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
 							jedis.get().sadd(set + ".srvs", localHostName + ":"
 									+ serverport);
-							jedis.get().set(set + ".blk." + localHostName + "."
+							jedis.get().set(set + ".blk." + ServerConf.serverId + "."
 									+ ssc.disk, "" + ssc.curBlock);
 							ssc.offset = 0;
 						}
@@ -496,7 +511,7 @@ public class StorePhoto {
 							baos.reset();
 						}
 						// 当前可写的块号加一
-						jedis.get().incr(set + ".blk." + localHostName + "."
+						jedis.get().incr(set + ".blk." + ServerConf.serverId + "."
 								+ ssc.disk);
 						ssc.offset = 0;
 						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -776,7 +791,7 @@ public class StorePhoto {
 		}
 		oc.content = content;
 		oc.length = rlen;
-		ServerProfile.updateRead(content.length, System.currentTimeMillis() - start);
+		ServerProfile.updateRead(oc.length, System.currentTimeMillis() - start);
 
 		return oc;
 	}

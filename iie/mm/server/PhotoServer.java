@@ -6,6 +6,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
@@ -20,8 +21,10 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 import org.eclipse.jetty.server.Server;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class PhotoServer {
 	public static long upts = System.currentTimeMillis();
@@ -69,9 +72,24 @@ public class PhotoServer {
 		Timer t = new Timer("ProfileTimer");
 		t.schedule(new ProfileTimerTask(conf, period), 1 * 1000, period * 1000);
 
+		//修改了blk文件的命名策略，因此MMServer在启动后应当首先检查与自己相关的所有blk信息，
+		//确定是否需要对名字进行转换
+		do {
+			if (ServerConf.serverId != -1l) {
+				__upgrade_blk_info();
+				break;
+			} else {
+				try {
+					Thread.sleep(1000);
+				} catch (Exception e) {}
+			}
+		} while (true);
+
 		// Server Health timer trigger every half interval seconds
 		Timer t2 = new Timer("ServerHealth");
-		t2.schedule(new ServerHealth(conf), 2 * 1000, conf.getMemCheckInterval() / 2);
+		t2.schedule(new ServerHealth(conf), 2 * 1000, 
+				Math.min(conf.getMemCheckInterval(), 
+						conf.getSpaceOperationInterval()) / 2);
 
 		//启动http服务
 		Server server = new Server(conf.getHttpPort());
@@ -107,6 +125,47 @@ public class PhotoServer {
 				// BUG-XXX: do not shutdown the pool on any IOException.
 				//pool.shutdown();
 			}
+		}
+	}
+	
+	public void __upgrade_blk_info() throws Exception {
+		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		int err = 0;
+		
+		if (jedis == null) {
+			throw new Exception("Could not get avaliable Jedis instance.");
+		}
+		try {
+			String upgraded = jedis.hget("mm.s.upgrade", "blk." + ServerConf.serverId);
+
+			if (upgraded == null || !upgraded.equals("ok")) {
+				Set<String> keys = jedis.keys("*.blk.*");
+
+				if (keys != null && keys.size() > 0) {
+					for (String k : keys) {
+						String[] ka = k.split("\\.");
+
+						if (ka != null && ka.length == 4) {
+							if (ka[2].equals(conf.getNodeName()) && conf.getStoreArray().contains(ka[3])) {
+								// update it to serverId
+								String value = jedis.get(k);
+								Pipeline p = jedis.pipelined();
+								p.set(k.replace(conf.getNodeName(), "" + ServerConf.serverId), value);
+								p.del(k);
+								p.sync();
+							}
+						}
+					}
+				}
+				jedis.hset("mm.s.upgrade", "blk." + ServerConf.serverId, "ok");
+			}
+		} catch (JedisException je) { 
+			err = -1;
+		} finally {
+			if (err < 0)
+				jedis = RedisFactory.putBrokenInstance(jedis);
+			else
+				jedis = RedisFactory.putInstance(jedis);
 		}
 	}
 	

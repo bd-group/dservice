@@ -96,6 +96,7 @@ public class MMServer {
 		String lmdb_prefix = ".";
 		long memorySize = 32 * 1024; //set memory size
 		boolean enableMig = false;
+		int verbose_delta = 0;
 		
 		for (Option o : optsList) {
 			if (o.flag.equals("-h")) {
@@ -122,8 +123,20 @@ public class MMServer {
 				System.out.println("-lmdb : set lmdb prefix path.");
 				System.out.println("-uip  : use IP as hostname.");
 				System.out.println("-msize: set max memory size(in MB).");
+				System.out.println("-v    : set to verbose.");
+				System.out.println("-vv   : set to more verbose.");
+				System.out.println("-vvv  : set to most verbose.");
 				
 				System.exit(0);
+			}
+			if (o.flag.equals("-v")) {
+				verbose_delta = 1;
+			}
+			if (o.flag.equals("-vv")) {
+				verbose_delta = 2;
+			}
+			if (o.flag.equals("-vvv")) {
+				verbose_delta = 3;
 			}
 			if (o.flag.equals("-ip")) {
 				// set outside accessible IP address hint
@@ -337,6 +350,7 @@ public class MMServer {
 			conf.setLmdb_prefix(lmdb_prefix);
 			conf.setMemorySize(memorySize);
 			conf.setEnableSSMig(enableMig);
+			conf.addVerbose(verbose_delta);
 			System.out.println((isSSMaster ? "Enable" : "Disable") + " Secondary Server on current MMServer.");
 			if (conf.getStoreArray().size() > 0) {
 				conf.setFeatureIndexPath(conf.getStoreArray().toArray(new String[0])[0]);

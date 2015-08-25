@@ -7,6 +7,11 @@ import iie.mm.server.StorePhoto.RedirectException;
 import iie.mm.server.StorePhoto.SetStats;
 
 import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
@@ -236,6 +241,467 @@ public class HTTPHandler extends AbstractHandler {
 		}
 	}
 	
+	private void __gen_json_d(String date, String NAME, long lastTs, 
+			int f1, int f2, boolean delta) {
+		String fpath = "m/d/";
+		ArrayList<String> lines = new ArrayList<String>();
+		FileWriter fw = null;
+
+		try {
+			File r = new File("log/" + conf.getNodeName() + "." + 
+					conf.getServerPort() + "." + date + ".log");
+			if (!r.exists()) {
+				System.out.println("Can't find the log file for date " + date);
+				return;
+			}
+			FileReader fr = new FileReader(r);
+			BufferedReader br = new BufferedReader(fr);
+			String line = null, rline;
+			Double thisF2 = null, lastF2 = null;
+			Long thisF1 = null, lastF1 = null;
+			do {
+				rline = null;
+				line = br.readLine();
+				if (line == null) break;
+				String[] la = line.split(",");
+				if (la != null && la.length > 0) {
+					for (int i = 0; i < la.length; i++) {
+						if (i == f1) {
+							thisF1 = Long.parseLong(la[i]);
+							if (rline == null)
+								rline = "" + thisF1 * 1000;
+							else
+								rline += "," + thisF1 * 1000;
+							if (lastF1 == null)
+								lastF1 = thisF1;
+						}
+						if (i == f2) {
+							if (delta) {
+								thisF2 = Double.parseDouble(la[i]);
+								if (lastF2 == null) {
+									rline = null;
+								} else {
+									if (thisF2 >= lastF2 && thisF1 > lastF1) {
+										if (rline == null)
+											rline = "" + (thisF2 - lastF2) / (thisF1 - lastF1);
+										else
+											rline += "," + (thisF2 - lastF2) / (thisF1 - lastF1);
+									} else {
+										rline += ",null";
+									}
+								}
+								lastF1 = thisF1;
+								lastF2 = thisF2;
+							} else {
+								if (rline == null)
+									rline = la[i];
+								else
+									rline += "," + la[i];
+							}
+						}
+					}
+					if (rline != null) {
+						if (thisF1 > lastTs)
+							lines.add(rline);
+					}
+				}
+			} while (true);
+			br.close();
+			File f = new File(fpath + NAME + ".json." + date);
+			if (!f.exists()) {
+				if (!f.getParentFile().exists())
+					f.getParentFile().mkdir();
+				f.createNewFile();
+			}
+			fw = new FileWriter(f, false);
+			BufferedWriter w = new BufferedWriter(fw);
+			w.write("[\n");
+			for (int i = 0; i < lines.size(); i++) {
+				String l = lines.get(i);
+				w.write("[");
+				w.write(l);
+				if (i == lines.size() - 1)
+					w.write("]\n");
+				else
+					w.write("],\n");
+			}
+			w.write("]");
+			w.close();
+			fw.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+	}
+	
+	private void __gen_json_d_rbl(String date, String NAME, long lastTs,
+			int f1, int f2, int f3) {
+		String fpath = "m/d/";
+		ArrayList<String> lines = new ArrayList<String>();
+		FileWriter fw = null;
+
+		try {
+			File r = new File("log/" + conf.getNodeName() + "." + 
+					conf.getServerPort() + "." + date + ".log");
+			if (!r.exists()) {
+				System.out.println("Can't find the log file for date " + date);
+				return;
+			}
+			FileReader fr = new FileReader(r);
+			BufferedReader br = new BufferedReader(fr);
+			String line = null, rline;
+			Long thisF1 = null;
+			Long thisF2 = null, lastF2 = null;
+			Long thisF3 = null, lastF3 = null;
+			do {
+				rline = null;
+				line = br.readLine();
+				if (line == null) break;
+				String[] la = line.split(",");
+				if (la != null && la.length > 0) {
+					for (int i = 0; i < la.length; i++) {
+						if (i == f1) {
+							thisF1 = Long.parseLong(la[i]);
+							if (rline == null)
+								rline = "" + thisF1 * 1000;
+							else
+								rline += "," + thisF1 * 1000;
+						}
+						if (i == f2) {
+							thisF2 = Long.parseLong(la[i]);
+						}
+						if (i == f3) {
+							thisF3 = Long.parseLong(la[i]);
+							if (lastF3 == null) {
+								rline += ",null";
+							} else {
+								if (thisF2 >= lastF2 && thisF3 > lastF3) {
+									if (rline == null)
+										rline = "" + (thisF2 - lastF2) / (thisF3 - lastF3);
+									else
+										rline += "," + (thisF2 - lastF2) / (thisF3 - lastF3);
+								} else {
+									rline += ",null";
+								}
+							}
+							lastF2 = thisF2;
+							lastF3 = thisF3;
+						}
+					}
+					if (rline != null) {
+						if (thisF1 > lastTs)
+							lines.add(rline);
+					}
+				}
+			} while (true);
+			br.close();
+			File f = new File(fpath + NAME + ".json." + date);
+			if (!f.exists()) {
+				if (!f.getParentFile().exists())
+					f.getParentFile().mkdir();
+				f.createNewFile();
+			}
+			fw = new FileWriter(f, false);
+			BufferedWriter w = new BufferedWriter(fw);
+			w.write("[\n");
+			for (int i = 0; i < lines.size(); i++) {
+				String l = lines.get(i);
+				w.write("[");
+				w.write(l);
+				if (i == lines.size() - 1)
+					w.write("]\n");
+				else
+					w.write("],\n");
+			}
+			w.write("]");
+			w.close();
+			fw.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+	}
+	
+	private void __gen_json_a(String date, String NAME, long lastTs, 
+			int f1, int f2) {
+		String fpath = "m/a/";
+		ArrayList<String> lines = new ArrayList<String>();
+		FileWriter fw = null;
+
+		try {
+			File r = new File("log/sysinfo-" + date);
+			if (!r.exists()) {
+				System.out.println("Can't find the sysinfo log file for date " + date);
+				return;
+			}
+			FileReader fr = new FileReader(r);
+			BufferedReader br = new BufferedReader(fr);
+			String line = null, rline;
+			Long thisF1 = null, lastF1 = null;
+			do {
+				rline = null;
+				line = br.readLine();
+				if (line == null) break;
+				String[] la = line.split(",");
+				if (la != null && la.length > 0) {
+					for (int i = 0; i < la.length; i++) {
+						if (!la[0].endsWith("ALL_MMS"))
+							break;
+						if (i == f1) {
+							thisF1 = Long.parseLong(la[i]);
+							if (rline == null)
+								rline = "" + thisF1 * 1000;
+							else
+								rline += "," + thisF1 * 1000;
+							if (lastF1 == null)
+								lastF1 = thisF1;
+						}
+						if (i == f2) {
+							if (rline == null)
+								rline = la[i];
+							else
+								rline += "," + la[i];
+						}
+					}
+					if (rline != null) {
+						if (thisF1 > lastTs)
+							lines.add(rline);
+					}
+				}
+			} while (true);
+			br.close();
+			File f = new File(fpath + NAME + ".json." + date);
+			if (!f.exists()) {
+				if (!f.getParentFile().exists())
+					f.getParentFile().mkdir();
+				f.createNewFile();
+			}
+			fw = new FileWriter(f, false);
+			BufferedWriter w = new BufferedWriter(fw);
+			w.write("[\n");
+			for (int i = 0; i < lines.size(); i++) {
+				String l = lines.get(i);
+				w.write("[");
+				w.write(l);
+				if (i == lines.size() - 1)
+					w.write("]\n");
+				else
+					w.write("],\n");
+			}
+			w.write("]");
+			w.close();
+			fw.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+	}
+	
+	private void __gen_json_a_rbl(String date, String NAME, long lastTs,
+			int f1, int f2, int f3) {
+		String fpath = "m/a/";
+		ArrayList<String> lines = new ArrayList<String>();
+		FileWriter fw = null;
+
+		try {
+			File r = new File("log/sysinfo-" + date);
+			if (!r.exists()) {
+				System.out.println("Can't find the sysinfo log file for date " + date);
+				return;
+			}
+			FileReader fr = new FileReader(r);
+			BufferedReader br = new BufferedReader(fr);
+			String line = null, rline;
+			Long thisF1 = null;
+			Long thisF2 = null;
+			Long thisF3 = null;
+			do {
+				rline = null;
+				line = br.readLine();
+				if (line == null) break;
+				String[] la = line.split(",");
+				if (la != null && la.length > 0) {
+					for (int i = 0; i < la.length; i++) {
+						if (!la[0].endsWith("ALL_MMS"))
+							break;
+						if (i == f1) {
+							thisF1 = Long.parseLong(la[i]);
+							if (rline == null)
+								rline = "" + thisF1 * 1000;
+							else
+								rline += "," + thisF1 * 1000;
+						}
+						if (i == f2) {
+							thisF2 = Long.parseLong(la[i]);
+						}
+						if (i == f3) {
+							thisF3 = Long.parseLong(la[i]);
+							if (thisF3 > 0)
+								rline += "," + thisF2 / thisF3;
+							else
+								rline += ",null";
+						}
+					}
+					if (rline != null) {
+						if (thisF1 > lastTs)
+							lines.add(rline);
+					}
+				}
+			} while (true);
+			br.close();
+			File f = new File(fpath + NAME + ".json." + date);
+			if (!f.exists()) {
+				if (!f.getParentFile().exists())
+					f.getParentFile().mkdir();
+				f.createNewFile();
+			}
+			fw = new FileWriter(f, false);
+			BufferedWriter w = new BufferedWriter(fw);
+			w.write("[\n");
+			for (int i = 0; i < lines.size(); i++) {
+				String l = lines.get(i);
+				w.write("[");
+				w.write(l);
+				if (i == lines.size() - 1)
+					w.write("]\n");
+				else
+					w.write("],\n");
+			}
+			w.write("]");
+			w.close();
+			fw.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+			return;
+		}
+	}
+	
+	private void __cat_json_file(String fpath, String date, String NAME, 
+			long lastTs, PrintWriter pw) {
+		try {
+			File r = new File(fpath + NAME + ".json." + date);
+			if (!r.exists()) 
+				return;
+			FileReader fr = new FileReader(r);
+			BufferedReader br = new BufferedReader(fr);
+			String line = null;
+			do {
+				line = br.readLine();
+				if (line == null) break;
+				pw.write(line);
+				pw.write("\n");
+			} while (true);
+			br.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
+	private void doMonitor(String target, Request baseRequest, HttpServletRequest request,
+			HttpServletResponse response) throws IOException, ServletException {
+		String date = request.getParameter("date");
+		String slastTs = request.getParameter("last");
+		long lastTs = 0;
+
+		if (slastTs != null) {
+			lastTs = Long.parseLong(slastTs);
+		}
+		if (target.startsWith("/m/a/")) {
+			if (date == null) {
+				date = new SimpleDateFormat("yyyy-MM-dd").format(new Date());
+			}
+			String fname = target.substring(target.lastIndexOf("/") + 1, 
+					target.indexOf("."));
+			
+			response.getWriter().print(request.getParameter("callback") + "(");
+			response.getWriter().flush();
+			
+			// generate json files in /m/a/ as NAME.yyyy-MM-dd.json
+			if (fname.equals("BW")) {
+				__gen_json_a(date, "WBW", lastTs, 1, 4);
+				__gen_json_a(date, "RBW", lastTs, 1, 5);
+				__cat_json_file("m/a/", date, "WBW", lastTs, response.getWriter());
+				response.getWriter().print(",");
+				__cat_json_file("m/a/", date, "RBW", lastTs, response.getWriter());
+				response.getWriter().print(");");
+				response.getWriter().flush();
+				return;
+			} else if (fname.equals("WBW"))
+				__gen_json_a(date, "WBW", lastTs, 1, 4);
+			else if (fname.equals("RBW"))
+				__gen_json_a(date, "RBW", lastTs, 1, 5);
+			else if (fname.equals("RLT"))
+				__gen_json_a(date, "RLT", lastTs, 1, 6);
+			else if (fname.equals("WBS"))
+				__gen_json_a(date, "WBS", lastTs, 1, 7);
+			else if (fname.equals("RBS"))
+				__gen_json_a(date, "RBS", lastTs, 1, 8);
+			else if (fname.equals("RDL"))
+				__gen_json_a(date, "RDL", lastTs, 1, 9);
+			else if (fname.equals("RDN"))
+				__gen_json_a(date, "RDN", lastTs, 1, 10);
+			else if (fname.equals("RER"))
+				__gen_json_a(date, "RER", lastTs, 1, 11);
+			else if (fname.equals("WRN"))
+				__gen_json_a(date, "WRN", lastTs, 1, 12);
+			else if (fname.equals("WER"))
+				__gen_json_a(date, "WER", lastTs, 1, 13);
+			else if (fname.equals("RBL")) 
+				__gen_json_a_rbl(date, "RBL", lastTs, 1, 8, 10);
+		}
+
+		if (target.startsWith("/m/d/")) {
+			if (date == null) {
+				date = new SimpleDateFormat("yyyy-MM-dd").format(new Date());
+			}
+			String fname = target.substring(target.lastIndexOf("/") + 1, 
+					target.indexOf("."));
+			
+			response.getWriter().print(request.getParameter("callback") + "(");
+			response.getWriter().flush();
+
+			// generate json files in /m/d/ as NAME.yyyy-MM-dd.json
+			if (fname.equals("BW")) {
+				__gen_json_d(date, "WBW", lastTs, 0, 1, false);
+				__gen_json_d(date, "RBW", lastTs, 0, 2, false);
+				__cat_json_file("m/d/", date, "WBW", lastTs, response.getWriter());
+				response.getWriter().print(",");
+				__cat_json_file("m/d/", date, "RBW", lastTs, response.getWriter());
+				response.getWriter().print(");");
+				response.getWriter().flush();
+				return;
+			} else if (fname.equals("WBW"))
+				__gen_json_d(date, "WBW", lastTs, 0, 1, false);
+			else if (fname.equals("RBW"))
+				__gen_json_d(date, "RBW", lastTs, 0, 2, false);
+			else if (fname.equals("RLT"))
+				__gen_json_d(date, "RLT", lastTs, 0, 3, false);
+			else if (fname.equals("WBS"))
+				__gen_json_d(date, "WBS", lastTs, 0, 4, true);
+			else if (fname.equals("RBS"))
+				__gen_json_d(date, "RBS", lastTs, 0, 5, true);
+			else if (fname.equals("RDL"))
+				__gen_json_d(date, "RDL", lastTs, 0, 6, false);
+			else if (fname.equals("RDN"))
+				__gen_json_d(date, "RDN", lastTs, 0, 7, true);
+			else if (fname.equals("RER"))
+				__gen_json_d(date, "RER", lastTs, 0, 8, true);
+			else if (fname.equals("WRN"))
+				__gen_json_d(date, "WRN", lastTs, 0, 9, true);
+			else if (fname.equals("WER"))
+				__gen_json_d(date, "WER", lastTs, 0, 10, true);
+			else if (fname.equals("RBL")) 
+				__gen_json_d_rbl(date, "RBL", lastTs, 0, 5, 7);
+		}
+
+		ResourceHandler rh = new ResourceHandler();
+		rh.setResourceBase(".");
+		rh.handle(target, baseRequest, request, response);
+		
+		response.getWriter().print(");");
+		response.getWriter().flush();
+	}
+	
 	private void doData(String target, Request baseRequest, HttpServletRequest request, 
 			HttpServletResponse response) throws IOException, ServletException {
 		String type = request.getParameter("type");
@@ -274,7 +740,7 @@ public class HTTPHandler extends AbstractHandler {
 		pw.println("# Avaliable type contains: text/image/audio/video/application/thumbnail/other");
 		if (prefix == null) 
 			return;
-		pw.println("# Data Count (Set_Name, Obj_Number, Used_Length(MB), Used_Blocks, SPACE.UR, BLK.UR):");
+		pw.println("# Data Count (Set_Name, Obj_Number, Used_Length(MB), Used_Blocks, SPACE.UR, BLK.UR, SPACE.WASTE(MB):");
 
 		int totallen = 0, totalnr = 0;
 		Iterator<String> ir = m.navigableKeySet().descendingIterator();
@@ -290,7 +756,8 @@ public class HTTPHandler extends AbstractHandler {
 									String.format("%.4f", si.usedLength / 1024.0 / 1024.0)) + ", " + 
 									(si == null ? "-" : si.usedBlocks) + ", " + 
 									(si == null ? "-" : String.format("%.2f%%", (si.totalLength == 0 ? 0 : (double)si.usedLength * 100 / si.totalLength))) + ", " +
-									(si == null ? "-" : String.format("%.2f%%", (si.totalBlocks == 0 ? 0 : (double)si.usedBlocks * 100 / si.totalBlocks)))
+									(si == null ? "-" : String.format("%.2f%%", (si.totalBlocks == 0 ? 0 : (double)si.usedBlocks * 100 / si.totalBlocks))) + ", " + 
+									(si == null ? "-" : ((si.totalLength - si.usedLength) / 1024.0 / 1024.0))
 						);
 			}
 		}
@@ -930,6 +1397,8 @@ public class HTTPHandler extends AbstractHandler {
 			doTopdup(target, baseRequest, request, response);
 		} else if (target.startsWith("/dailydup")) {
 			doDailydup(target, baseRequest, request, response);
+		} else if (target.startsWith("/m/")) {
+			doMonitor(target, baseRequest, request, response);
 		} else if (target.startsWith("/p2p")) {
 			try {
 				doP2p(target, baseRequest, request, response);

@@ -30,6 +30,7 @@ public class FaceDetector {
 	public FaceDetector(String confPath) {
 		if (!initialized && confPath != null) {
 			System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+			initialized = true;
 			System.out.println("Running FaceDetector");
 		}
 		if (confPath != null && !confPath.equals(""))
