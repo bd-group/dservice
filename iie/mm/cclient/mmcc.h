@@ -58,6 +58,8 @@ int mmcc_del_set(char *set);
 /*
  * ERROR numbers
  */
+#define EMMERR_MAX              -1025
+
 #define EMMMETAERR              -1025
 #define EMMNOTFOUND             -1026
 #define EMMCONNERR              -1027
@@ -66,6 +68,10 @@ int mmcc_del_set(char *set);
 #define EREDIRECT               -1030
 #define EMMNOMMS                -1031
 #define EMMMMSERR               -1032
+
+#define EMMERR_MIN              -1032
+
+char *mmcc_strerr(int errno);
 
 /* Advanced Using, use only if you know it
  */

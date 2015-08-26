@@ -1465,8 +1465,8 @@ int search_mm_object(char *infos, void **buf, size_t *length)
         retry:
             err = search_by_info(p, buf, length);
             if (err) {
-                hvfs_err(mmcc, "search_by_info(%s) failed %d\n",
-                         p, err);
+                hvfs_err(mmcc, "search_by_info(%s) failed %d(%s)\n",
+                         p, err, mmcc_strerr(err));
                 /* Note that, for long running system, some socket ends by not
                  * freed, we should do another retry to reconnect.
                  */
@@ -1542,7 +1542,8 @@ int get_mm_object(char *set, char *md5, void **buf, size_t *length)
 
     err = search_mm_object(reply->str, buf, length);
     if (err) {
-        hvfs_err(mmcc, "search_mm_object failed w/ %d\n", err);
+        hvfs_err(mmcc, "search_mm_object failed w/ %d(%s)\n", 
+                 err, mmcc_strerr(err));
         goto out_free;
     }
 
@@ -2138,8 +2139,8 @@ static int __dup_detect(char *set, char *name, char **info)
         goto out_put;
     }
     if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-        hvfs_warning(mmcc, "%s@%s does not exist or internal error.\n",
-                     set, name);
+        hvfs_warning(mmcc, "%s@%s does not exist or internal error(%s).\n",
+                     set, name, rpy->str);
         goto out_free;
     }
     if (rpy->type == REDIS_REPLY_STRING) {

@@ -39,6 +39,25 @@ struct redisConnection *getRC();
 void putRC(struct redisConnection *rc);
 int del_mm_set(char *set);
 
+static char *g_err_str[] = {
+    "Meta Service Error",
+    "Metadata or Data Not Found",
+    "MMS Connection Failure",
+    "Invalid MM Argument",
+    "No Memory in MMSC",
+    "Request Need to Redirect",
+    "No Valid MMS",
+    "MMS Internal Error",
+};
+
+char *mmcc_strerr(int err)
+{
+    if (err <= EMMERR_MAX && err >= EMMERR_MIN)
+        return g_err_str[EMMERR_MAX - err];
+    else
+        return "Invalid Error Number Input";
+}
+
 static inline void __fetch_from_sentinel(char *uris)
 {
     char *dup = strdup(uris), *p, *n = NULL, *q, *m = NULL;
