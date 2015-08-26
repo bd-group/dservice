@@ -606,6 +606,20 @@ public class HTTPHandler extends AbstractHandler {
 		if (slastTs != null) {
 			lastTs = Long.parseLong(slastTs);
 		}
+		if (target.startsWith("/m/x/")) {
+			// get mmfs.client.info
+			if (date == null) {
+				date = new SimpleDateFormat("yyyy-MM-dd").format(new Date());
+			}
+			String fname = target.substring(target.lastIndexOf("/") + 1, 
+					target.indexOf("."));
+
+			response.getWriter().print(request.getParameter("callback") + "(");
+			response.getWriter().flush();
+
+			// generate json file in /m/x/ as NAME.yyyy-MM-dd.json
+		}
+
 		if (target.startsWith("/m/a/")) {
 			if (date == null) {
 				date = new SimpleDateFormat("yyyy-MM-dd").format(new Date());

@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-17 18:47:49 macan>
+ * Time-stamp: <2015-08-25 20:30:18 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2449,6 +2449,26 @@ int __mmfs_client_info(struct __mmfs_client_info *ci)
         }
 
         rpy = redisCommand(rc->rc, "hset mmfs.client.info %s %s",
+                           key, buf);
+        if (rpy == NULL) {
+            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
+            freeRC(rc);
+            err = EMMMETAERR;
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_ERROR) {
+            hvfs_err(mmll, "hset mmfs.client.info failed w/ %s\n", rpy->str);
+            err = -EINVAL;
+            freeReplyObject(rpy);
+            goto out;
+        }
+        if (rpy->type == REDIS_REPLY_INTEGER) {
+            /* it is ok */
+        }
+        freeReplyObject(rpy);
+
+        /* publish this message to mm.info.mmfs.client */
+        rpy = redisCommand(rc->rc, "publish mm.info.mmfs.client %s,%s",
                            key, buf);
         if (rpy == NULL) {
             hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);

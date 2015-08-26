@@ -37,6 +37,23 @@ public class ProfileTimerTask extends TimerTask {
 	private Jedis jedis;
 	private String hbkey;
 	private DatagramSocket client = null;
+	private PubSubThread pst = null;
+
+	public class PubSubThread extends Thread {
+		private MMSPubSub mps;
+
+		public PubSubThread(MMSPubSub mps) {
+			this.mps = mps;
+		}
+
+		public void run() {
+			Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+			if (jedis != null) {
+				jedis.psubscribe(mps, "mm.info.*");
+				RedisFactory.putInstance(jedis);
+			}
+		}
+	}
 	
 	public ProfileTimerTask(ServerConf conf, int period) throws JedisException {
 		super();
@@ -95,8 +112,13 @@ public class ProfileTimerTask extends TimerTask {
 		if (conf.isSSMaster()) {
 			jedis.set("mm.ss.id", "" + ServerConf.serverId);
 			System.out.println("Register SS ID to " + ServerConf.serverId);
+
+			// setup pub/sub channel
+			pst = new PubSubThread(new MMSPubSub(conf));
+			pst.start();
+			System.out.println("Setup MM stat info to channel mm.s.info");
 		}
-		
+
 		jedis = RedisFactory.putInstance(jedis);
 		this.period = period;
 		if (conf.getSysInfoServerName() != null && conf.getSysInfoServerPort() != -1) {
