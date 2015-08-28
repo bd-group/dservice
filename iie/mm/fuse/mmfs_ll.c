@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-28 14:28:06 macan>
+ * Time-stamp: <2015-08-28 20:20:40 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,7 +70,7 @@ struct __mmfs_r_op g_ops[] = {
     },
 };
 
-int __mmfs_load_scripts() 
+int __mmfs_load_scripts(int idx)
 {
     redisReply *rpy = NULL;
     int err = 0, i;
@@ -83,27 +83,33 @@ int __mmfs_load_scripts()
     }
 
     for (i = 0; i < sizeof(g_ops) / sizeof(struct __mmfs_r_op); i++) {
-        rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
-        if (rpy == NULL) {
-            hvfs_err(mmll, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            freeRC(rc);
-            err = -EMMMETAERR;
-            goto out;
+        if (idx == -1 || i == idx) {
+            rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
+            if (rpy == NULL) {
+                hvfs_err(mmll, "read from MM Meta failed: %s\n", 
+                         rc->rc->errstr);
+                freeRC(rc);
+                err = -EMMMETAERR;
+                goto out;
+            }
+            if (rpy->type == REDIS_REPLY_ERROR) {
+                hvfs_err(mmll, "script %d load failed w/ \n%s.\n", 
+                         i, rpy->str);
+                err = -EINVAL;
+                goto out_free;
+            }
+            if (rpy->type == REDIS_REPLY_STRING) {
+                hvfs_info(mmll, "Script %d %s \tloaded as '%s'.\n",
+                          i, g_ops[i].opname, rpy->str);
+                xfree(g_ops[i].sha);
+                g_ops[i].sha = strdup(rpy->str);
+            } else {
+                xfree(g_ops[i].sha);
+                g_ops[i].sha = NULL;
+            }
+        out_free:
+            freeReplyObject(rpy);
         }
-        if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(mmll, "script %d load failed w/ \n%s.\n", i, rpy->str);
-            err = -EINVAL;
-            goto out_free;
-        }
-        if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_info(mmll, "Script %d %s \tloaded as '%s'.\n",
-                      i, g_ops[i].opname, rpy->str);
-            g_ops[i].sha = strdup(rpy->str);
-        } else {
-            g_ops[i].sha = NULL;
-        }
-    out_free:
-        freeReplyObject(rpy);
     }
 out:
     putRC(rc);
@@ -445,6 +451,13 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
         if (rpy->type == REDIS_REPLY_ERROR) {
             hvfs_err(mmll, "_IN_* create for (pino %ld)/%s failed w/\n%s\n",
                      pino, ms->name, rpy->str);
+            if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                err = __mmfs_load_scripts(__MMFS_R_OP_CREATE_INODE);
+                if (err) {
+                    hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                             g_ops[__MMFS_R_OP_CREATE_INODE].opname, err);
+                }
+            }
             err = -EINVAL;
             goto out_free;
         }
@@ -513,6 +526,13 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
         if (rpy->type == REDIS_REPLY_ERROR) {
             hvfs_err(mmll, "create dentry for (pino %ld)/%s failed.\n",
                      pino, ms->name);
+            if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                err = __mmfs_load_scripts(__MMFS_R_OP_CREATE_DENTRY);
+                if (err) {
+                    hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                             g_ops[__MMFS_R_OP_CREATE_DENTRY].opname, err);
+                }
+            }
             err = -EINVAL;
             freeReplyObject(rpy);
             goto out_clear;
@@ -594,6 +614,13 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
         if (rpy->type == REDIS_REPLY_ERROR) {
             hvfs_err(mmll, "_IN_* create for (pino %d)/%s failed w/\n%s\n",
                      MMFS_ROOT_INO, ms->name, rpy->str);
+            if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                err = __mmfs_load_scripts(__MMFS_R_OP_CREATE_INODE);
+                if (err) {
+                    hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                             g_ops[__MMFS_R_OP_CREATE_INODE].opname, err);
+                }
+            }
             err = -EINVAL;
             goto out_free;
         }
@@ -742,6 +769,13 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
         }
         if (rpy->type == REDIS_REPLY_NIL) {
             hvfs_err(mmll, "invalid arguments or version for update_sb.\n");
+            if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                err = __mmfs_load_scripts(__MMFS_R_OP_UPDATE_SB);
+                if (err) {
+                    hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                             g_ops[__MMFS_R_OP_UPDATE_SB].opname, err);
+                }
+            }
             err = -EINVAL;
             freeReplyObject(rpy);
             goto out;
@@ -880,6 +914,13 @@ static inline int __update_inode(struct redisConnection *rc, redisReply *rpy,
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "find _IN_%ld failed w/ %s\n",
                  ms->ino, rpy->str);
+        if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __mmfs_load_scripts(__MMFS_R_OP_UPDATE_INODE);
+            if (err) {
+                hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                         g_ops[__MMFS_R_OP_UPDATE_INODE].opname, err);
+            }
+        }
         err = -EINVAL;
         freeReplyObject(rpy);
         goto out;
@@ -949,6 +990,13 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
         if (rpy->type == REDIS_REPLY_ERROR) {
             hvfs_err(mmll, "delete dentry for (pino %ld)/%s failed w/ %s\n",
                      pino, ms->name, rpy->str);
+            if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                err = __mmfs_load_scripts(__MMFS_R_OP_DELETE_DENTRY);
+                if (err) {
+                    hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                             g_ops[__MMFS_R_OP_DELETE_DENTRY].opname, err);
+                }
+            }
             freeReplyObject(rpy);
             err = -EINVAL;
             goto out;
@@ -1048,6 +1096,22 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
                                        ms->mdu.ino,
                                        MMFS_INODE_BLOCK,
                                        j);
+                }
+                if (rpy == NULL) {
+                    hvfs_err(mmll, "read from MM Meta failed: %s\n",
+                             rc->rc->errstr);
+                    break;
+                }
+                if (rpy->type == REDIS_REPLY_ERROR) {
+                    hvfs_err(mmll, "clear blocks for (pino %ld)/%s _IN_%ld failed w/ %s\n",
+                             pino, ms->name, ms->mdu.ino, rpy->str);
+                    if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+                        err = __mmfs_load_scripts(__MMFS_R_OP_CLEAR_BLOCK);
+                        if (err) {
+                            hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                                     g_ops[__MMFS_R_OP_CLEAR_BLOCK].opname, err);
+                        }
+                    }
                 }
                 freeReplyObject(rpy);
             }
@@ -1497,6 +1561,13 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
                  ms->ino, rpy->str);
+        if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __mmfs_load_scripts(__MMFS_R_OP_UPDATE_BLOCK);
+            if (err) {
+                hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                         g_ops[__MMFS_R_OP_UPDATE_BLOCK].opname, err);
+            }
+        }
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;
@@ -1608,6 +1679,13 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
                  ms->ino, rpy->str);
+        if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __mmfs_load_scripts(__MMFS_R_OP_UPDATE_BLOCK);
+            if (err) {
+                hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                         g_ops[__MMFS_R_OP_UPDATE_BLOCK].opname, err);
+            }
+        }
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out_free2;
@@ -1688,6 +1766,13 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
     if (rpy->type == REDIS_REPLY_ERROR) {
         hvfs_err(mmll, "_IN_%ld does not exist or MM error: %s\n",
                  ms->ino, rpy->str);
+        if (strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __mmfs_load_scripts(__MMFS_R_OP_CLEAR_BLOCK);
+            if (err) {
+                hvfs_err(mmll, "try to reload script %s failed: %d\n",
+                         g_ops[__MMFS_R_OP_CLEAR_BLOCK].opname, err);
+            }
+        }
         err = -ENOENT;
         freeReplyObject(rpy);
         goto out;

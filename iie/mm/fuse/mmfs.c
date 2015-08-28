@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-28 13:33:44 macan>
+ * Time-stamp: <2015-08-28 19:44:48 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1246,6 +1246,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                 alloced = __prepare_bh(bh, 1);
                 if (alloced < 0) {
                     err = alloced;
+                    __put_bh(bh);
                     goto out_unlock;
                 }
                 _size = min(size, bh->offset + g_pagesize - offset);
@@ -1265,6 +1266,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                  * copy data */
                 if (c->size <= ms->mdu.size) {
                     if ((err = __prepare_bh(bh, 1)) < 0) {
+                        __put_bh(bh);
                         goto out_unlock;
                     }
                 }
@@ -1287,6 +1289,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                                  "failed w/ %ld\n",
                                  c->size, c->size + g_pagesize, rlen);
                         err = rlen;
+                        __put_bh(bh);
                         goto out_unlock;
                     }
                     __set_bh_up2date(bh);
@@ -1294,6 +1297,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                 /* should we fill with buf? */
                 if (size && offset < bh->offset + g_pagesize) {
                     if ((err = __prepare_bh(bh, 1)) < 0) {
+                        __put_bh(bh);
                         goto out_unlock;
                     }
                     _size = min(size, bh->offset + g_pagesize - offset);
@@ -1382,6 +1386,7 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                                      "failed w/ %ld",
                                      c->size, c->size + g_pagesize, rlen);
                             err = rlen;
+                            __put_bh(bh);
                             goto out_unlock;
                         }
                         __set_bh_up2date(bh);
@@ -4752,7 +4757,7 @@ realloc:
     }
 
     /* load create script now */
-    err = __mmfs_load_scripts();
+    err = __mmfs_load_scripts(-1);
     if (err) {
         hvfs_err(mmfs, "__mmfs_load_scripts() failed w/ %d\n",
                  err);
