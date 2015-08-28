@@ -6,7 +6,7 @@ HVFS_TRACING_DEFINE_FILE();
 int main(int argc, char *argv[])
 {
     char *value, *uris = NULL, *namespace = NULL, *rootdir = NULL;
-    int noatime = -1, nodiratime = -1, ttl = -1, debug = 0, perm = -1;
+    int noatime = -1, nodiratime = -1, ttl = -1, debug = 0, perm = -1, cc = 0;
     int err = 0;
 
     value = getenv("noatime");
@@ -46,6 +46,10 @@ int main(int argc, char *argv[])
     if (value) {
         HVFS_TRACING_INIT_FILE(value);
     }
+    value = getenv("cc");
+    if (value) {
+        cc = atoi(value);
+    }
 
     if (noatime >= 0 ||
         nodiratime >= 0 ||
@@ -73,6 +77,7 @@ int main(int argc, char *argv[])
         mmfs_fuse_mgr.perm = (perm > 0 ? 1 : 0);
         mmfs_fuse_mgr.ttl = ttl;
         mmfs_fuse_mgr.uris = uris;
+        mmfs_fuse_mgr.cached_chunk = (cc > 0 ? 1 : 0);
         mmfs_fuse_mgr.namespace = namespace;
     }
 

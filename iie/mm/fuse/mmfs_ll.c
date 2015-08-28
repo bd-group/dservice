@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-25 20:30:18 macan>
+ * Time-stamp: <2015-08-28 14:28:06 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1427,7 +1427,7 @@ out:
 int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
 {
     redisReply *rpy = NULL;
-    char *set = NULL, *p, name[64], key[256];
+    char set[64], *p, name[64], key[256];
     struct mres mr;
     MD5_CTX mdContext;
     int err = 0, i;
@@ -1452,10 +1452,8 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     memset(&mr, 0, sizeof(mr));
 
     /* write the content to MMServer, and generate key */
-    err = __mmfs_gset(ms->pino, &set);
-    if (err) {
-        goto out;
-    }
+    __mmfs_gset(ms->pino, set);
+
     MD5Init(&mdContext);
     MD5Update(&mdContext, (unsigned char *)data, size);
     MD5Final(&mdContext);
@@ -1471,7 +1469,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         err = EMMMMSERR;
-        goto out_free;
+        goto out;
     }
     hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
                ms->ino, key, mr.info, mr.flag);
@@ -1526,8 +1524,6 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     
 out_free2:
     xfree(mr.info);
-out_free:
-    xfree(set);
 out:
     putRC(rc);
 
@@ -1539,7 +1535,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 {
     struct redisConnection *rc = NULL;
     redisReply *rpy = NULL;
-    char *set = NULL, *p, name[64], key[256];
+    char set[64], *p, name[64], key[256];
     struct mres mr;
     MD5_CTX mdContext;
     int err = 0, i;
@@ -1565,10 +1561,8 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     memset(&mr, 0, sizeof(mr));
 
     /* write the content to MMServer, and generate key */
-    err = __mmfs_gset(ms->pino, &set);
-    if (err) {
-        goto out;
-    }
+    __mmfs_gset(ms->pino, set);
+
     MD5Init(&mdContext);
     for (i = 0; i < iovlen; i++) {
         MD5Update(&mdContext, (unsigned char *)iov[i].iov_base, iov[i].iov_len);
@@ -1586,7 +1580,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
         err = EMMMMSERR;
-        goto out_free;
+        goto out;
     }
     hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
                ms->ino, key, mr.info, mr.flag);
@@ -1641,8 +1635,6 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
     
 out_free2:
     xfree(mr.info);
-out_free:
-    xfree(set);
 out:
     putRC(rc);
 

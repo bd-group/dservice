@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-07 16:04:34 macan>
+ * Time-stamp: <2015-08-28 14:29:49 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -241,6 +241,7 @@ struct __mmfs_fuse_mgr
     u32 nodiratime:1;
     u32 ismkfs:1;
     u32 perm:1;
+    u32 cached_chunk:1;
 
     u32 ttl:8;                  /* lru translate cache ttl */
 
@@ -350,16 +351,9 @@ static inline void freeRC(struct redisConnection *rc)
     }
 }
 
-static inline int __mmfs_gset(u64 ino, char **out)
+static inline void __mmfs_gset(u64 ino, char *out)
 {
-    if (*out == NULL) {
-        *out = xmalloc(32);
-        if (*out == NULL)
-            return -ENOMEM;
-    }
-    snprintf(*out, 31, "o%ld", ino);
-
-    return 0;
+    snprintf(out, 31, "o%ld", ino);
 }
 
 int __mmfs_fill_root(struct mstat *ms);

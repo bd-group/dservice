@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-13 13:48:45 macan>
+ * Time-stamp: <2015-08-28 13:33:44 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -437,7 +437,7 @@ static void *__odc_wb_thread_main(void *arg)
             hvfs_err(mmfs, "evict chunks failed w/ %d\n", err);
         }
         err = __scan_chunks(0.2);
-        if (err) {
+        if (err < 0) {
             hvfs_err(mmfs, "scan chunks failed w/ %d\n", err);
         }
     }
@@ -1110,6 +1110,41 @@ static void __set_chunk_size(struct bhhead *bhh, struct chunk *c,
         __set_chunk_up2date(c);
 }
 
+struct cached_chunk
+{
+    void *cdata;
+    u64 clen;
+};
+
+static inline
+int __cached_chunk_to_refill(struct mstat *ms, u64 chkid, void *todata, 
+                             u64 offset, u64 size, 
+                             struct cached_chunk *cc)
+{
+    if (cc->cdata == NULL) {
+        cc->cdata = xmalloc(g_msb.chunk_size);
+        if (!cc->cdata)
+            return -ENOMEM;
+        cc->clen = __mmfs_fread(ms, cc->cdata, chkid * g_msb.chunk_size, 
+                                g_msb.chunk_size);
+    }
+    if (cc->clen == -EFBIG || cc->clen == -EHOLE)
+        return cc->clen;
+    else if (cc->clen < 0) {
+        return cc->clen;
+    }
+    /* ok, use cached chunk data to fill todata */
+    if (offset >= chkid * g_msb.chunk_size && size <= cc->clen) {
+        memcpy(todata, 
+               cc->cdata + (offset - chkid * g_msb.chunk_size), 
+               size);
+    } else {
+        return __mmfs_fread(ms, todata, offset, size);
+    }
+
+    return size;
+}
+
 /* Note that, offset should be in-chunk offset
  *
  *
@@ -1129,6 +1164,10 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
     off_t loff = 0;
     ssize_t rlen;
     size_t _size = 0;
+    struct cached_chunk cc = {
+        .cdata = NULL,
+        .clen = 0,
+    };
     int err = 0, alloced = 0, clocked = 1;
 
     /* Note-XXX: many caller already hold the chunk lock, we can't hold it
@@ -1230,9 +1269,16 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     }
                 }
                 if (!__is_bh_up2date(bh)) {
-                    rlen = __mmfs_fread(ms, bh->data, 
-                                        chkid * g_msb.chunk_size + c->size, 
-                                        g_pagesize);
+                    if (mmfs_fuse_mgr.cached_chunk) {
+                        rlen = __cached_chunk_to_refill(
+                            ms, chkid, bh->data,
+                            chkid * g_msb.chunk_size + c->size,
+                            g_pagesize, &cc);
+                    } else {
+                        rlen = __mmfs_fread(ms, bh->data, 
+                                            chkid * g_msb.chunk_size + c->size, 
+                                            g_pagesize);
+                    }
                     if (rlen == -EFBIG || rlen == -EHOLE) {
                         /* it is ok, we just zero the page */
                         err = 0;
@@ -1318,9 +1364,16 @@ static int __bh_fill_chunk(u64 chkid, struct mstat *ms, struct bhhead *bhh,
                     /* read in the page if the bh is clean; otherwise just
                      * copy the data */
                     if (!__is_bh_up2date(bh)) {
-                        rlen = __mmfs_fread(ms, bh->data, 
-                                            chkid * g_msb.chunk_size + c->size, 
-                                            g_pagesize);
+                        if (mmfs_fuse_mgr.cached_chunk) {
+                            rlen = __cached_chunk_to_refill(
+                                ms, chkid, bh->data,
+                                chkid * g_msb.chunk_size + c->size,
+                                g_pagesize, &cc);
+                        } else {
+                            rlen = __mmfs_fread(ms, bh->data, 
+                                                chkid * g_msb.chunk_size + c->size, 
+                                                g_pagesize);
+                        }
                         if (rlen == -EFBIG || rlen == -EHOLE) {
                             /* it is ok, we just zero the page */
                             err = 0;
@@ -1360,6 +1413,9 @@ out_unlock:
     xrwlock_wunlock(&bhh->clock);
     if (clocked) __unlock_chunk(c);
     __put_chunk(c);
+    if (cc.cdata) {
+        xfree(cc.cdata);
+    }
 
     return err;
 }
@@ -1537,7 +1593,8 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                                  (u64)offset + bytes, 
                                  (u64)offset + bytes + lsize, err);
                         if (err == -ESCAN) {
-                            __scan_chunks(0.3);
+                            if (__scan_chunks(0.3) == 0)
+                                pthread_yield();
                             goto retry;
                         }
                         goto out;
@@ -1610,7 +1667,8 @@ static int __bh_read(struct bhhead *bhh, void *buf, off_t offset,
                                  (chkid + 1) * g_msb.chunk_size,
                                  c->size, err);
                         if (err == -ESCAN) {
-                            __scan_chunks(0.3);
+                            if (__scan_chunks(0.3) == 0)
+                                pthread_yield();
                             goto retry2;
                         }
                         xfree(cdata);
@@ -3797,7 +3855,8 @@ static int mmfs_truncate(const char *pathname, off_t size)
                 hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
                          o, s, err);
                 if (err == -ESCAN) {
-                    __scan_chunks(0.25);
+                    if (__scan_chunks(0.25) == 0)
+                        pthread_yield();
                     goto retry;
                 }
                 bhh->asize = osize;
@@ -3813,7 +3872,8 @@ static int mmfs_truncate(const char *pathname, off_t size)
             hvfs_err(mmfs, "clear the buffer cache range [%ld,%ld) failed w/ %d\n",
                      size, osize - size, err);
             if (err == -ESCAN) {
-                __scan_chunks(0.25);
+                if (__scan_chunks(0.25) == 0)
+                    pthread_yield();
                 goto retry2;
             }
             bhh->asize = osize;
@@ -3861,7 +3921,8 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
             hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
                      osize, size - osize, err);
             if (err == -ESCAN) {
-                __scan_chunks(0.25);
+                if (__scan_chunks(0.25) == 0)
+                    pthread_yield();
                 goto retry;
             }
             bhh->asize = osize;
@@ -3876,7 +3937,8 @@ static int mmfs_ftruncate(const char *pathname, off_t size,
             hvfs_err(mmfs, "zero the buffer cache range [%ld,%ld) failed w/ %d\n",
                      size, osize - size, err);
             if (err == -ESCAN) {
-                __scan_chunks(0.25);
+                if (__scan_chunks(0.25) == 0)
+                    pthread_yield();
                 goto retry2;
             }
             bhh->asize = osize;
@@ -4166,7 +4228,8 @@ retry:
         hvfs_err(mmfs, "fill the buffer cache failed w/ %d\n",
                  err);
         if (err == -ESCAN) {
-            __scan_chunks(0.2);
+            if (__scan_chunks(0.2) == 0)
+                pthread_yield();
             goto retry;
         }
         goto out;
@@ -4879,6 +4942,8 @@ static int __sync_chunks(double target)
     return err;
 }
 
+/* Return value: >0 has freed some memory; <0 error; =0 not freed
+ */
 static int __scan_chunks(double target)
 {
     struct chunk *c = NULL;
@@ -4929,7 +4994,7 @@ static int __scan_chunks(double target)
         sem_post(&mmfs_odc_mgr.wbt_sem);
     }
 
-    return err;
+    return nr;
 }
 
 struct fuse_operations mmfs_ops = {
