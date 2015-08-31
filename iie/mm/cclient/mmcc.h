@@ -50,6 +50,14 @@ int mmcc_get(char *key, void **buffer, size_t *len);
 
 
 /*
+ * Caller must prepare the buffer for [len] bytes, return result length that
+ * might be less than [len] bytes (but >= 0).
+ *
+ * On any error: return <0 errno.
+ */
+int mmcc_get_range(char *key, void *buffer, off_t offset, size_t len);
+
+/*
  * Delete the whole set, release storage space
  */
 int mmcc_del_set(char *set);

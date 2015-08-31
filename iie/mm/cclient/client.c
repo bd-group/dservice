@@ -366,33 +366,37 @@ static inline void freeRC(struct redisConnection *rc)
 
 int __clean_up_socks(struct MMSConnection *c);
 
-int __client_load_scripts(struct redisConnection *rc)
+int __client_load_scripts(struct redisConnection *rc, int idx)
 {
     redisReply *rpy = NULL;
     int err = 0, i;
 
     for (i = 0; i < sizeof(g_ops) / sizeof(struct __client_r_op); i++) {
-        rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
-        if (rpy == NULL) {
-            hvfs_err(mmcc, "read from MM Meta failed: %s\n", rc->rc->errstr);
-            freeRC(rc);
-            err = -EMMMETAERR;
-            goto out;
+        if (idx == -1 || i == idx) {
+            rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
+            if (rpy == NULL) {
+                hvfs_err(mmcc, "read from MM Meta failed: %s\n", 
+                         rc->rc->errstr);
+                freeRC(rc);
+                err = -EMMMETAERR;
+                goto out;
+            }
+            if (rpy->type == REDIS_REPLY_ERROR) {
+                hvfs_err(mmcc, "script %d load failed w/ \n%s.\n", 
+                         i, rpy->str);
+                err = -EINVAL;
+                goto out_free;
+            }
+            if (rpy->type == REDIS_REPLY_STRING) {
+                hvfs_info(mmcc, "Script %d %s \tloaded as '%s'.\n",
+                          i, g_ops[i].opname, rpy->str);
+                g_ops[i].sha = strdup(rpy->str);
+            } else {
+                g_ops[i].sha = NULL;
+            }
+        out_free:
+            freeReplyObject(rpy);
         }
-        if (rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(mmcc, "script %d load failed w/ \n%s.\n", i, rpy->str);
-            err = -EINVAL;
-            goto out_free;
-        }
-        if (rpy->type == REDIS_REPLY_STRING) {
-            hvfs_info(mmcc, "Script %d %s \tloaded as '%s'.\n",
-                      i, g_ops[i].opname, rpy->str);
-            g_ops[i].sha = strdup(rpy->str);
-        } else {
-            g_ops[i].sha = NULL;
-        }
-    out_free:
-        freeReplyObject(rpy);
     }
 
 out:
@@ -449,6 +453,11 @@ int client_fina()
     g_uris = NULL;
     xfree(redisHost);
     redisHost = NULL;
+
+    for (i = 0; i < sizeof(g_ops) / sizeof(struct __client_r_op); i++) {
+        if (g_ops[i].sha)
+            xfree(g_ops[i].sha);
+    }
 
     return 0;
 }
@@ -1265,6 +1274,9 @@ struct MMSCSock *__get_free_sock(struct MMSConnection *c)
         } else
             break;
     } while (1);
+
+    /* FIXME: should we fast failed on connection error? set c->ttl to ZERO?
+     */
 
     return pos;
 }
@@ -2141,6 +2153,13 @@ static int __dup_detect(char *set, char *name, char **info)
     if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
         hvfs_warning(mmcc, "%s@%s does not exist or internal error(%s).\n",
                      set, name, rpy->str);
+        if (rpy->str != NULL && strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __client_load_scripts(rc, __CLIENT_R_OP_DUP_DETECT);
+            if (err) {
+                hvfs_err(mmcc, "try to load script %s failed: %d\n",
+                         g_ops[__CLIENT_R_OP_DUP_DETECT].opname, err);
+            }
+        }
         goto out_free;
     }
     if (rpy->type == REDIS_REPLY_STRING) {

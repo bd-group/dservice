@@ -27,7 +27,7 @@ struct redisConnection;
 
 int client_config(mmcc_config_t *);
 int client_init();
-int __client_load_scripts(struct redisConnection *rc);
+int __client_load_scripts(struct redisConnection *rc, int idx);
 int client_fina();
 int update_mmserver2();
 void update_g_info(struct redisConnection *rc);
@@ -251,7 +251,7 @@ int mmcc_init(char *uris)
             return EINVAL;
         }
 
-        err = __client_load_scripts(rc);
+        err = __client_load_scripts(rc, -1);
         if (err) {
             hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
             goto out_put;
