@@ -268,7 +268,7 @@ public class StorePhoto {
 		
 		StringBuffer rVal = new StringBuffer(128);
 		
-		//随机选一个磁盘
+		// 随机选一个磁盘
 		int diskid = new Random().nextInt(diskArray.length);
 		StoreSetContext ssc = null;
 
@@ -281,13 +281,15 @@ public class StorePhoto {
 		} while (ssc == null);
 		
 		synchronized (ssc) {
-			//找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id,id递增,redis中只存储id
-			//用curBlock缓存当前可写的块，减少查询jedis的次数
-		
+			// 找到当前可写的文件块,如果当前不够大,或不存在,则新创建一个,命名block＿id(b[id]),
+			// id递增,redis中只存储id
+			// 用curBlock缓存当前可写的块，减少查询jedis的次数
+
 			try {
 				if (ssc.curBlock < 0) {
-					//需要通过节点名字来标示不同节点上相同名字的集合
-					String reply = jedis.get().get(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
+					// 需要通过节点名字来标示不同节点上相同名字的集合
+					String reply = jedis.get().get(set + ".blk." + 
+							ServerConf.serverId + "." + ssc.disk);
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
@@ -295,9 +297,11 @@ public class StorePhoto {
 					} else {
 						ssc.curBlock = 0;
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-						//把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
+						// 把集合和它所在节点记录在redis的set里,方便删除,
+						// set.srvs表示set所在的服务器的位置
 						jedis.get().sadd(set + ".srvs", localHostName + ":" + serverport);
-						jedis.get().set(set + ".blk." + ServerConf.serverId + "." + ssc.disk, "" + ssc.curBlock);
+						jedis.get().set(set + ".blk." + ServerConf.serverId + "." + 
+								ssc.disk, "" + ssc.curBlock);
 						ssc.offset = 0;
 					}
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -307,10 +311,10 @@ public class StorePhoto {
 				if (ssc.offset + content.length > blocksize) {
 					ssc.curBlock++;
 					ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
-					//如果换了一个新块,则先把之前的关掉
+					// 如果换了一个新块,则先把之前的关掉
 					if (ssc.raf != null)
 						ssc.raf.close();
-					//当前可写的块号加一
+					// 当前可写的块号加一
 					do {
 						if (ssc.bref.get() == 0) {
 							jedis.get().incr(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
@@ -322,12 +326,11 @@ public class StorePhoto {
 					ssc.raf = new RandomAccessFile(ssc.newf, "rw");
 					ssc.openTs = System.currentTimeMillis();
 				}
-				
-				//在每个文件前面写入它的md5和offset length，从而恢复元数据
-				//md5 32个字节，offset:length分配20个字节
-//				ssc.offset += 52;
-				// 统计写入的字节数
-				ServerProfile.addWrite(clen);
+
+				// 在每个文件前面写入它的md5和offset length，从而恢复元数据
+				// md5 32个字节，offset:length分配20个字节
+				// ssc.offset += 52;
+
 				// 构造返回值
 				rVal.append("1@"); // type
 				rVal.append(set);
@@ -340,7 +343,7 @@ public class StorePhoto {
 				rVal.append("@");
 				rVal.append(clen);
 				rVal.append("@");
-				//磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
+				// 磁盘,现在存的是磁盘的名字,读取的时候直接拿来构造路径
 				rVal.append(diskArray[diskid]);
 				
 				if (ssc.raf == null) {
@@ -349,9 +352,12 @@ public class StorePhoto {
 					ssc.raf.seek(ssc.offset);
 				}
 				ssc.raf.write(content, coff, clen);
-	
+
 				ssc.offset += clen;
 				ssc.bref.incrementAndGet();
+
+				// 统计写入的字节数
+				ServerProfile.addWrite(clen);
 			} catch (JedisConnectionException e) {
 				System.out.println("Jedis connection broken in storeObject.");
 				try {
