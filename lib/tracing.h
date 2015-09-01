@@ -3,7 +3,7 @@
  *                           <macan@ncic.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-10 17:37:38 macan>
+ * Time-stamp: <2015-08-05 18:25:12 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,6 +65,48 @@ extern atomic_t g_env_prot;
 #define HVFS_TRACING_RESET() atomic_set(&g_env_prot, 0)
 #define HVFS_TRACING_RESTORE(saved) atomic_set(&g_env_prot, saved)
 
+extern FILE *g_fp;
+extern char *g_logdir;
+extern int g_yday;
+
+#define HVFS_TRACING_DEFINE_FILE() FILE *g_fp = NULL;   \
+    char *g_logdir = NULL;                              \
+    int g_yday = -1;
+
+#define HVFS_TRACING_INIT_FILE(parent) ({        \
+            struct timeval __cur2;               \
+            struct tm __tmp2;                    \
+            char fpath[256];                     \
+            char __ct2[64];                      \
+            int _err = 0;                        \
+                                                 \
+            if (!g_logdir)                                          \
+                g_logdir = strdup(parent);                          \
+            gettimeofday(&__cur2, NULL);                            \
+            if (!localtime_r(&__cur2.tv_sec, &__tmp2)) {            \
+                _err = errno;                                       \
+            } else {                                                \
+                strftime(__ct2, 64, "mmfs.log.%Y-%m-%d", &__tmp2);  \
+                g_yday = __tmp2.tm_yday;                            \
+                snprintf(fpath, 255, "%s/%s", parent, __ct2);       \
+                if (g_fp) {                                         \
+                    fclose(g_fp);                                   \
+                }                                                   \
+                g_fp = fopen(fpath, "a+");                          \
+                if (!g_fp) {                                        \
+                    _err = errno;                                   \
+                } else {                                            \
+                    PRINTK("(re)set log dir to %s/\n", fpath);      \
+                }                                                   \
+            }                                                       \
+            _err;                                                   \
+        })
+
+#define HVFS_TRACING_FINA_FILE() ({             \
+            if (g_fp) fclose(g_fp);             \
+            if (g_logdir) free(g_logdir);       \
+        })
+
 #ifdef HVFS_TRACING
 #define hvfs_tracing(module, mask, flag, lvl, f, a...) do {             \
         if (unlikely(mask & flag)) {                                    \
@@ -83,27 +125,53 @@ extern atomic_t g_env_prot;
             } while (1);                                                \
             gettimeofday(&__cur, NULL);                                 \
             if (!localtime_r(&__cur.tv_sec, &__tmp)) {                  \
-                PRINTK(KERN_ERR f, ## a);                               \
-                FFLUSH(stdout);                                         \
+                if (!g_fp) {                                            \
+                    PRINTK(KERN_ERR f, ## a);                           \
+                    FFLUSH(stdout);                                     \
+                } else {                                                \
+                    FPRINTK(g_fp, KERN_ERR f, ## a);                    \
+                    FFLUSH(g_fp);                                       \
+                }                                                       \
                 atomic_dec(&g_env_prot);                                \
                 break;                                                  \
             }                                                           \
             strftime(__ct, 64, "%G-%m-%d %H:%M:%S", &__tmp);            \
+            if (__tmp.tm_yday != g_yday && g_logdir != NULL) {          \
+                HVFS_TRACING_INIT_FILE(g_logdir);                       \
+            }                                                           \
             atomic_dec(&g_env_prot);                                    \
             if (mask & HVFS_PRECISE) {                                  \
-                PRINTK("%s.%03ld " lvl "[%lx] " # module " (%16s, %5d): %s: " f, \
-                       __ct, (long)(__cur.tv_usec / 1000),              \
-                       pthread_self(),                                  \
-                       __FILE__, __LINE__, __func__,                    \
-                       ## a);                                           \
-                FFLUSH(stdout);                                         \
+                if (!g_fp) {                                            \
+                    PRINTK("%s.%03ld " lvl "[%lx] " # module " (%16s, %5d): %s: " f, \
+                           __ct, (long)(__cur.tv_usec / 1000),          \
+                           pthread_self(),                              \
+                           __FILE__, __LINE__, __func__, ## a);         \
+                    FFLUSH(stdout);                                     \
+                } else {                                                \
+                    FPRINTK(g_fp, "%s.%03ld " lvl "[%lx] " # module " (%16s, %5d): %s: " f, \
+                            __ct, (long)(__cur.tv_usec / 1000),         \
+                            pthread_self(),                             \
+                            __FILE__, __LINE__, __func__, ## a);        \
+                    FFLUSH(g_fp);                                       \
+                }                                                       \
             } else if (mask & HVFS_PLAIN) {                             \
-                PRINTK(lvl f, ## a);                                    \
-                FFLUSH(stdout);                                         \
+                if (!g_fp) {                                            \
+                    PRINTK(lvl f, ## a);                                \
+                    FFLUSH(stdout);                                     \
+                } else {                                                \
+                    PRINTK(lvl f, ## a);                                \
+                    FFLUSH(stdout);                                     \
+                }                                                       \
             } else {                                                    \
-                PRINTK("%s.%03ld " lvl # module ": " f,                 \
-                       __ct, (long)(__cur.tv_usec / 1000), ## a);       \
-                FFLUSH(stdout);                                         \
+                if (!g_fp) {                                            \
+                    PRINTK("%s.%03ld " lvl # module ": " f,             \
+                           __ct, (long)(__cur.tv_usec / 1000), ## a);   \
+                    FFLUSH(stdout);                                     \
+                } else {                                                \
+                    FPRINTK(g_fp, "%s.%03ld " lvl # module ": " f,      \
+                            __ct, (long)(__cur.tv_usec / 1000), ## a);  \
+                    FFLUSH(g_fp);                                       \
+                }                                                       \
             }                                                           \
         }                                                               \
     } while (0)
