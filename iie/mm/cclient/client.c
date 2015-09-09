@@ -605,13 +605,15 @@ struct MMSConnection *__mmsc_lookup_byname(char *host, int port)
     struct hlist_node *pos;
     struct regular_hash *rh;
     struct MMSConnection *c;
+    char sp[256];
     int found = 0, i;
     
     for (i = 0; i < g_rh_size; i++) {
         rh = g_rh + i;
         xlock_lock(&rh->lock);
         hlist_for_each_entry(c, pos, &rh->h, hlist) {
-            if (port == c->port && strcmp(host, c->hostname) == 0) {
+            sprintf(sp, "%s:%d", host, port);
+            if (c->sp && port == c->port && strcmp(sp, c->sp) == 0) {
                 /* ok, found it */
                 found = 1;
                 break;
