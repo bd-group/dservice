@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-28 19:44:48 macan>
+ * Time-stamp: <2015-09-08 17:08:01 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@ static struct __mmfs_client_info g_ci;
 
 static void mmfs_update_sb(struct mmfs_sb *msb)
 {
-    int need_retry = 1, err = 0;
+    int need_retry = 20, err = 0;
 
     xlock_lock(&msb->lock);
     if (msb->flags & MMFS_SB_DIRTY) {
@@ -57,7 +57,7 @@ static void mmfs_update_sb(struct mmfs_sb *msb)
         err = __mmfs_update_sb(msb);
         if (err) {
             if (err == -EINVAL) {
-                if (need_retry) {
+                if (need_retry > 0) {
                     /* this might be version mismatch, just reget the sb and do
                      * another update */
                     u64 space_used = msb->d.space_used;
@@ -70,7 +70,7 @@ static void mmfs_update_sb(struct mmfs_sb *msb)
                     }
                     msb->d.space_used = space_used;
                     msb->d.inode_used = inode_used;
-                    need_retry = 0;
+                    need_retry--;
                     goto retry;
                 }
             }
