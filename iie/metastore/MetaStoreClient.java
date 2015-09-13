@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -1139,6 +1140,90 @@ public class MetaStoreClient {
 		return rf;
 	}
 	
+	public static Map<Long, SFile> __get_files_by_external_file_4mig(String dbName,
+			String tableName, String fpath) {
+		HashMap<Long, SFile> targets = new HashMap<Long, SFile>();
+
+		try {
+			File mfile = new File(fpath);
+			FileReader fr = new FileReader(mfile.getAbsoluteFile());
+			BufferedReader br = new BufferedReader(fr);
+			String line = null, xpline;
+
+			System.out.println("#EXPECT LINE FORMAT: FID|TABNAME|L1V(,)|L2V(-)|HOST|LOC|RECNR");
+			while ((line = br.readLine()) != null) {
+				String[] ln = line.split("\\|");
+				if (ln.length == 7) {
+					Long fid = Long.parseLong(ln[0]);
+					Long recordnr = Long.parseLong(ln[6]);
+
+					xpline = "FID " + fid + " TABNAME " + ln[1] +
+							" L1V " + ln[2] + " L2V " + ln[3] +
+							" HOST " + ln[4] +
+							" LOC " + ln[5] + " RECNR " + recordnr;
+					if (!targets.containsKey(fid)) {
+						System.out.println("#INSERT " + xpline);
+						SFile nsf = new SFile();
+						nsf.setDbName(dbName);
+						nsf.setTableName(tableName);
+						nsf.setFid(fid);
+						nsf.setStore_status(MetaStoreConst.MFileStoreStatus.REPLICATED);
+						nsf.setRep_nr(2);
+						nsf.setDigest("MIGRATE_BY_EXTERNAL_FILE_IMPORT_" + fid);
+						nsf.setRecord_nr(recordnr);
+						// set split values
+						List<SplitValue> values = new ArrayList<SplitValue>();
+						SplitValue l11 = new SplitValue();
+						SplitValue l12 = new SplitValue();
+						SplitValue l2 = new SplitValue();
+						String[] sa1 = ln[2].split("=");
+						if (sa1 != null && sa1.length == 2) {
+							l11.setSplitKeyName(sa1[0]);
+							l12.setSplitKeyName(sa1[0]);
+							l11.setLevel(1);
+							l12.setLevel(1);
+							String[] sa12 = sa1[1].split(",");
+							if (sa12 != null && sa12.length == 2) {
+								l11.setValue(sa12[0]);
+								l12.setValue(sa12[1]);
+							}
+						}
+						String[] sa2 = ln[3].split("=");
+						if (sa2 != null && sa2.length == 2) {
+							l2.setSplitKeyName(sa2[0]);
+							l2.setLevel(2);
+							String[] sa22 = sa2[1].split("-");
+							if (sa22 != null && sa22.length == 2) {
+								l2.setValue(sa22[1]);
+							}
+						}
+						values.add(l11);
+						values.add(l12);
+						values.add(l2);
+						nsf.setValues(values);
+						// set SFL
+						SFileLocation sfl = new SFileLocation();
+						sfl.setNode_name(ln[4]);
+						sfl.setFid(fid);
+						sfl.setLocation(ln[5]);
+						sfl.setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
+						// add this file to hash map
+						nsf.addToLocations(sfl);
+						targets.put(nsf.getFid(), nsf);
+					} else {
+						System.out.println("#IGNORE " + xpline);
+					}
+				}
+			}
+			br.close();
+			fr.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+			targets.clear();
+		}
+		return targets;
+	}
+
 	public static Map<Long, SFile> __get_table_files_4mig(MetaStoreClient cli, 
 			String dbName, String tableName,
 			String bdate, String edate) {
@@ -1418,6 +1503,8 @@ public class MetaStoreClient {
 	    // for MIG target, we prefer to migrate T2 time;
 	    int mig_prio = 2;
 	    String xURI = null;
+	    String fimportPath = null;
+	    long seed = System.currentTimeMillis();
 	    
 	    // parse the args
 	    for (int i = 0; i < args.length; i++) {
@@ -2115,6 +2202,22 @@ public class MetaStoreClient {
 	    			mig_prio = Integer.parseInt(o.opt);
 	    		} catch (Exception e) {}
 	    	}
+	    	if (o.flag.equals("-fimpath")) {
+	    		// set file import path for migrate
+	    		if (o.opt == null) {
+	    			System.out.println("-fimpath PATH_TO_FILE_TO_IMPORT");
+	    			MetaStoreClient.__EXIT(0);
+	    		}
+	    		fimportPath = o.opt;
+	    	}
+	    	if (o.flag.equals("-seed")) {
+	    		// set seed from MBF/M1BF running
+	    		if (o.opt == null) {
+	    			System.out.println("-seed SEED_TO_RERUN");
+	    			MetaStoreClient.__EXIT(0);
+	    		}
+	    		seed = Long.parseLong(o.opt);
+	    	}
 	    }
 	    if (cli == null) {
 	    	if (xURI == null) {
@@ -2453,6 +2556,164 @@ public class MetaStoreClient {
 	    			// update to fileMap
 	    			sfl.setNode_name(tunnel_node);
 	    			sfl.setLocation(location);
+	    			fileMap.put(entry.getKey(), sfl);
+	    		}
+	    		
+	    		try {
+					Table tbl = cli.client.getTable(dbName, tableName);
+					short maxIndexNum = 1000;
+					List<Index> idxs = cli.client.listIndexes(dbName, tableName, maxIndexNum);
+					if (idxs != null && idxs.size() > 0) {
+						for (Index i : idxs) {
+							i.setDbName(to_dc);
+						}
+					}
+					List<NodeGroup> ngs = new ArrayList<NodeGroup>();
+					ngs.add(new NodeGroup(ng, null, 0, null));
+					tbl.setNodeGroups(ngs);
+					tbl.setDbName(to_dc);
+					// call by remote URI
+					MetaStoreClient remote = new MetaStoreClient(remoteUri);
+					System.out.println("Auth to " + remoteUri + " " + 
+							remote.client.authentication("root", "111111"));
+					if (remote.client.migrate_in(tbl, targets, idxs, dbName, devid, fileMap))
+						System.out.println("OK");
+					else
+						System.out.println("Failed");
+				} catch (MetaException e) {
+					e.printStackTrace();
+				} catch (NoSuchObjectException e) {
+					e.printStackTrace();
+				} catch (TException e) {
+					e.printStackTrace();
+				}
+	    	}
+	    	if (o.flag.equals("-m1bf")) {
+	    		Random rand = new Random(seed);
+	    		System.out.println("#USE SEED: " + seed);
+	    		
+	    		// migrate by rsync, stage 1 and 2, create metadata in remote db
+	    		if (dbName == null || tableName == null || to_dc == null || devid == null ||
+	    				tunnel_node == null || remoteUri == null || ng == null || fimportPath == null) {
+	    			System.out.println("Please set dbName,tableName,to_dc,devid,tunnel_node,remoteUri,ng");
+	    			MetaStoreClient.__EXIT(0);
+	    		}
+	    		Map<Long, SFile> targets = __get_files_by_external_file_4mig(dbName, 
+	    				tableName, fimportPath);
+	    		
+	    		// get all files, generate rsync string
+	    		for (Map.Entry<Long, SFile> entry : targets.entrySet()) {
+	    			System.out.print("#" + entry.getKey() + ",");
+	    			
+	    			if (entry.getValue().getValues() != null) {
+	    				for (SplitValue sv : entry.getValue().getValues()) {
+	    					sv.setVerison(flt_version);
+	    				}
+	    			}
+	    			SFileLocation sfl = entry.getValue().getLocations().get(0);
+	    			String new_location = "/data/" + to_dc + "/" + tableName + "/" + 
+	    					rand.nextInt(Integer.MAX_VALUE);
+	    			String sourceNode = null;
+	    			String sourceFile = null;
+	    			try {
+	    				if (sfl.getNode_name().contains(";")) {
+	    					// NAS device
+	    					sourceNode = sfl.getNode_name().split(";")[0];
+	    					sourceFile = sfl.getLocation();
+	    				} else {
+	    					// local device
+	    					sourceNode = sfl.getNode_name();
+	    					sourceFile = sfl.getLocation();
+	    				}
+	    			} catch (Exception e) {
+	    				e.printStackTrace();
+	    			}
+	    			String targetFile = tunnel_out + new_location;
+	    			// create the target directory now
+	    			File tf = new File(targetFile);
+	    			System.out.println("#Create DIR " + "@" + tunnel_node + ": " + tf.getParent());
+	    			String cmd = "ssh " + tunnel_node + " 'mkdir -p " + tf.getAbsolutePath() + "; " + 
+	    					"chmod ugo+rw " + tf.getAbsolutePath() + ";'";
+	    			System.out.println(cmd);
+	    			
+	    			// do copy now
+	    			System.out.println("#Copy by TUNNEL: " + sourceNode + ":" + sourceFile
+	    					+ " -> " + 
+	    					tunnel_node + ":" + targetFile);
+	    			if (tunnel_user == null)
+	    				tunnel_user = "metastore";
+	    			cmd = "#scp -rp " + sourceNode + ":" + sourceFile + " " + tunnel_user + "@" + 
+	    					tunnel_node + ":" + tf.getAbsolutePath() + ";";
+	    			cmd = "ssh " + sourceNode + " 'rsync --bwlimit=" + bwlimit + " -rpzP " + sourceFile + "/* " + tunnel_user + "@" +
+	    					tunnel_node + ":" + tf.getAbsolutePath() + "/;'";
+	    			System.out.println(cmd);
+	    		}
+	    	}
+	    	if (o.flag.equals("-mbf")) {
+	    		Random rand = new Random(System.currentTimeMillis());
+	    		System.out.println("#USE SEED: " + seed);
+	    		
+	    		// migrate by rsync, stage 1 and 2, create metadata in remote db
+	    		if (dbName == null || tableName == null || to_dc == null || devid == null ||
+	    				bdate == null || edate == null ||
+	    				tunnel_node == null || remoteUri == null || ng == null || fimportPath == null) {
+	    			System.out.println("Please set dbName,tableName,to_dc,devid,tunnel_node,remoteUri,ng");
+	    			MetaStoreClient.__EXIT(0);
+	    		}
+	    		Map<Long, SFile> targets = __get_files_by_external_file_4mig(dbName, 
+	    				tableName, fimportPath);
+	    		HashMap<Long, SFileLocation> fileMap = new HashMap<Long, SFileLocation>();
+	    		
+	    		// get all files, generate rsync string
+	    		for (Map.Entry<Long, SFile> entry : targets.entrySet()) {
+	    			System.out.print("#" + entry.getKey() + ",");
+	    			
+	    			if (entry.getValue().getValues() != null) {
+	    				for (SplitValue sv : entry.getValue().getValues()) {
+	    					sv.setVerison(flt_version);
+	    				}
+	    			}
+	    			SFileLocation sfl = entry.getValue().getLocations().get(0);
+	    			String new_location = "/data/" + to_dc + "/" + tableName + "/" + 
+	    					rand.nextInt(Integer.MAX_VALUE);
+	    			String sourceNode = null;
+	    			String sourceFile = null;
+	    			try {
+	    				if (sfl.getNode_name().contains(";")) {
+	    					// NAS device
+	    					sourceNode = sfl.getNode_name().split(";")[0];
+	    					sourceFile = sfl.getLocation();
+	    				} else {
+	    					// local device
+	    					sourceNode = sfl.getNode_name();
+	    					sourceFile = sfl.getLocation();
+	    				}
+	    			} catch (Exception e) {
+	    				e.printStackTrace();
+	    			}
+	    			String targetFile = tunnel_out + new_location;
+	    			// create the target directory now
+	    			File tf = new File(targetFile);
+	    			System.out.println("#Create DIR " + "@" + tunnel_node + ": " + tf.getParent());
+	    			String cmd = "ssh " + tunnel_node + " 'mkdir -p " + tf.getAbsolutePath() + "; " + 
+	    					"chmod ugo+rw " + tf.getAbsolutePath() + ";'";
+	    			System.out.println(cmd);
+	    			
+	    			// do copy now
+	    			System.out.println("#Copy by TUNNEL: " + sourceNode + ":" + sourceFile
+	    					+ " -> " + 
+	    					tunnel_node + ":" + targetFile);
+	    			if (tunnel_user == null)
+	    				tunnel_user = "metastore";
+	    			cmd = "#scp -rp " + sourceNode + ":" + sourceFile + " " + tunnel_user + "@" + 
+	    					tunnel_node + ":" + tf.getAbsolutePath() + ";";
+	    			cmd = "ssh " + sourceNode + " 'rsync --bwlimit=" + bwlimit + " -rpzP " + sourceFile + "/* " + tunnel_user + "@" +
+	    					tunnel_node + ":" + tf.getAbsolutePath() + "/;'";
+	    			System.out.println(cmd);
+	    			
+	    			// update to fileMap
+	    			sfl.setNode_name(tunnel_node);
+	    			sfl.setLocation(new_location);
 	    			fileMap.put(entry.getKey(), sfl);
 	    		}
 	    		
