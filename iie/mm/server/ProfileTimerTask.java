@@ -3,10 +3,8 @@ package iie.mm.server;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -22,7 +20,6 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisException;
-import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class ProfileTimerTask extends TimerTask {
 	private ServerConf conf;
@@ -34,7 +31,6 @@ public class ProfileTimerTask extends TimerTask {
 	private long lastTs = System.currentTimeMillis();
 	private long lastRecycleTs = System.currentTimeMillis();
 	private String profileDir = "log/";
-	private Jedis jedis;
 	private String hbkey;
 	private DatagramSocket client = null;
 	private PubSubThread pst = null;
@@ -47,10 +43,13 @@ public class ProfileTimerTask extends TimerTask {
 		}
 
 		public void run() {
-			Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+			Jedis jedis = StorePhoto.getRpL1(conf).getResource();
 			if (jedis != null) {
-				jedis.psubscribe(mps, "mm.info.*");
-				RedisFactory.putInstance(jedis);
+				try {
+					jedis.psubscribe(mps, "mm.info.*");
+				} finally {
+					StorePhoto.getRpL1(conf).putInstance(jedis);
+				}
 			}
 		}
 	}
@@ -63,63 +62,69 @@ public class ProfileTimerTask extends TimerTask {
 			dir.mkdirs();
 		
 		// 向redis的数据库1中插入心跳信息
-		jedis = new RedisFactory(conf).getDefaultInstance();
+		Jedis jedis = StorePhoto.getRpL1(conf).getResource();
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
 		
-		hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
-		Pipeline pi = jedis.pipelined();
-		pi.set(hbkey, "1");
-		pi.expire(hbkey, period + 5);
-		pi.sync();
-		
-		// update mm.dns for IP info
-		if (conf.getOutsideIP() != null) {
-			jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getServerPort(), conf.getOutsideIP() + ":" + conf.getServerPort());
-			// BUG-XXX: add HTTP port dns service
-			jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getHttpPort(), conf.getOutsideIP() + ":" + conf.getHttpPort());
-			System.out.println("Update mm.dns for " + conf.getNodeName() + " -> " + conf.getOutsideIP());
-		}
+		try {
+			hbkey = "mm.hb." + conf.getNodeName() + ":" + conf.getServerPort();
+			Pipeline pi = jedis.pipelined();
+			pi.set(hbkey, "1");
+			pi.expire(hbkey, period + 5);
+			pi.sync();
 
-		// determine the ID of ourself, register ourself
-		String self = conf.getNodeName() + ":" + conf.getServerPort();
-		Long sid;
-		if (jedis.zrank("mm.active", self) == null) {
-			sid = jedis.incr("mm.next.serverid");
-			// FIXME: if two server start with the same port, fail!
-			jedis.zadd("mm.active", sid, self);
-		}
-		// reget the sid
-		sid = jedis.zscore("mm.active", self).longValue();
-		ServerConf.serverId = sid;
-		System.out.println("Got ServerID " + sid + " for Server " + self);
-
-
-		// use the same serverID to register in mm.active.http
-		self = conf.getNodeName() + ":" + conf.getHttpPort();
-		jedis.zadd("mm.active.http", sid, self);
-		System.out.println("Register HTTP server " + self + " done.");
-		
-		Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
-		if (active != null && active.size() > 0) {
-			for (Tuple t : active) {
-				ServerConf.servers.put((long)t.getScore(), t.getElement());
-				System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+			// update mm.dns for IP info
+			if (conf.getOutsideIP() != null) {
+				jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getServerPort(), 
+						conf.getOutsideIP() + ":" + conf.getServerPort());
+				// BUG-XXX: add HTTP port dns service
+				jedis.hset("mm.dns", conf.getNodeName() + ":" + conf.getHttpPort(), 
+						conf.getOutsideIP() + ":" + conf.getHttpPort());
+				System.out.println("Update mm.dns for " + conf.getNodeName() + " -> " + 
+						conf.getOutsideIP());
 			}
-		}
-		
-		// set SS_ID
-		if (conf.isSSMaster()) {
-			jedis.set("mm.ss.id", "" + ServerConf.serverId);
-			System.out.println("Register SS ID to " + ServerConf.serverId);
 
-			// setup pub/sub channel
-			pst = new PubSubThread(new MMSPubSub(conf));
-			pst.start();
-			System.out.println("Setup MM stat info to channel mm.s.info");
-		}
+			// determine the ID of ourself, register ourself
+			String self = conf.getNodeName() + ":" + conf.getServerPort();
+			Long sid;
+			if (jedis.zrank("mm.active", self) == null) {
+				sid = jedis.incr("mm.next.serverid");
+				// FIXME: if two server start with the same port, fail!
+				jedis.zadd("mm.active", sid, self);
+			}
+			// reget the sid
+			sid = jedis.zscore("mm.active", self).longValue();
+			ServerConf.serverId = sid;
+			System.out.println("Got ServerID " + sid + " for Server " + self);
 
-		jedis = RedisFactory.putInstance(jedis);
+
+			// use the same serverID to register in mm.active.http
+			self = conf.getNodeName() + ":" + conf.getHttpPort();
+			jedis.zadd("mm.active.http", sid, self);
+			System.out.println("Register HTTP server " + self + " done.");
+
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					ServerConf.servers.put((long)t.getScore(), t.getElement());
+					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + 
+					t.getElement());
+				}
+			}
+
+			// set SS_ID
+			if (conf.isSSMaster()) {
+				jedis.set("mm.ss.id", "" + ServerConf.serverId);
+				System.out.println("Register SS ID to " + ServerConf.serverId);
+
+				// setup pub/sub channel
+				pst = new PubSubThread(new MMSPubSub(conf));
+				pst.start();
+				System.out.println("Setup MM stat info to channel mm.s.info");
+			}
+		} finally {
+			StorePhoto.getRpL1(conf).putInstance(jedis);	
+		}
 		this.period = period;
 		if (conf.getSysInfoServerName() != null && conf.getSysInfoServerPort() != -1) {
 			try {
@@ -179,10 +184,10 @@ public class ProfileTimerTask extends TimerTask {
 		lastDl = dl;
 		lastTs = cur;
 		
-		//server的心跳信息
+		// server的心跳信息
+		Jedis jedis = null;
 		try {
-			if (jedis == null)
-				jedis = new RedisFactory(conf).getDefaultInstance();
+			jedis = StorePhoto.getRpL1(conf).getResource();
 			if (jedis == null)
 				info += ", redis down?";
 			else {
@@ -211,12 +216,11 @@ public class ProfileTimerTask extends TimerTask {
 						ServerConf.setCkpt_ts(Long.parseLong(ckpt));
 				} catch (Exception e) {
 				}
-				// FIXME: update memory usage to trigger migration and mm.dedup.info clean
 			}
 		} catch (Exception e) {
-			jedis = RedisFactory.putBrokenInstance(jedis);
+			e.printStackTrace();
 		} finally {
-			jedis = RedisFactory.putInstance(jedis);
+			StorePhoto.getRpL1(conf).putInstance(jedis);
 		}
 		
 		// Report current state to SysInfoStat Server
@@ -237,11 +241,12 @@ public class ProfileTimerTask extends TimerTask {
 			}
 		}
 
-		//把统计信息写入文件,每一天的信息放在一个文件里
-		String profileName = conf.getNodeName() + "." + conf.getServerPort() + "." + s.substring(0, 10) + ".log";
+		// 把统计信息写入文件,每一天的信息放在一个文件里
+		String profileName = conf.getNodeName() + "." + conf.getServerPort() + "." + 
+				s.substring(0, 10) + ".log";
 		FileWriter fw = null;
 		try {
-			//追加到文件尾
+			// 追加到文件尾
 			fw = new FileWriter(new File(profileDir + profileName), true);
 			BufferedWriter w = new BufferedWriter(fw);
 			w.write(line);

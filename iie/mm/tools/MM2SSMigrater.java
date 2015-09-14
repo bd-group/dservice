@@ -1,6 +1,9 @@
 package iie.mm.tools;
 
 import iie.mm.client.ClientAPI;
+import iie.mm.common.RedisPool;
+import iie.mm.common.RedisPoolSelector.RedisConnection;
+import iie.mm.server.StorePhoto;
 
 import java.io.File;
 import java.text.DateFormat;
@@ -96,7 +99,7 @@ public class MM2SSMigrater {
 	     public Option(String flag, String opt) { this.flag = flag; this.opt = opt; }
 	}
 	
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 		List<String> argsList = new ArrayList<String>();  
 	    List<Option> optsList = new ArrayList<Option>();
 	    List<String> doubleOptsList = new ArrayList<String>();
@@ -216,34 +219,45 @@ public class MM2SSMigrater {
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
 		DateFormat df2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		Date d = df.parse(dstr);
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
-		if (jedis == null) {
-			throw new Exception("Cound not get avaliable Jedis instance.");
-		}
+		Jedis jedis = null;
+		
 		int err = 0;
 		
 		// get all sets
 		TreeSet<String> temp = new TreeSet<String>();
-		try {
-			Set<String> keys = jedis.keys("*.blk.*");
-			
-			if (keys != null && keys.size() > 0) {
-				String[] keya = keys.toArray(new String[0]);
-				
-				for (int i = 0; i < keya.length; i++) {
-					String set = keya[i].split("\\.")[0];
-					
-					if (Character.isDigit(set.charAt(0))) {
-						temp.add(set);
-					} else {
-						temp.add(set.substring(1));
+		for (Map.Entry<String, RedisPool> entry : ca.getPc().getRPS().getRpL2().entrySet()) {
+			jedis = entry.getValue().getResource();
+			if (jedis != null) {
+				try {
+					Set<String> keys = jedis.keys("*.blk.*");
+
+					if (keys != null && keys.size() > 0) {
+						String[] keya = keys.toArray(new String[0]);
+
+						for (int i = 0; i < keya.length; i++) {
+							String set = keya[i].split("\\.")[0];
+
+							if (Character.isDigit(set.charAt(0))) {
+								temp.add(set);
+							} else {
+								temp.add(set.substring(1));
+							}
+						}
 					}
+				} finally {
+					entry.getValue().putInstance(jedis);
 				}
 			}
-			
+		}
+		
+		try {
 			String[] prefixs = new String[]{"", "i", "t", "a", "v", "o", "s"};
 			boolean should_stop = false;
 			
+			jedis = ca.getPc().getRpL1().getResource();
+			if (jedis == null) {
+				throw new Exception("Cound not get avaliable L1 Jedis instance.");
+			}
 			for (String set : temp) {
 				if (should_stop)
 					break;
@@ -251,18 +265,21 @@ public class MM2SSMigrater {
 					long thistime = Long.parseLong(set);
 					if (d.getTime() > thistime * 1000) {
 						// ok, delete it
-						System.out.println("Migrate Set:\t" + set + "\t" + df2.format(new Date(thistime * 1000)));
+						System.out.println("Migrate Set:\t" + set + "\t" + 
+								df2.format(new Date(thistime * 1000)));
 						
 						for (String prefix : prefixs) {
 							try {
 								if (!migrateSet(ca, prefix + set, mdb, do_delete)) {
 									// we should stop here, admin need to handle the error
-									System.out.println("Migrate should stop because of some errors: " + set);
+									System.out.println("Migrate should stop because of " +
+											"some errors: " + set);
 									should_stop = true;
 									break;
 								}
 							} catch (Exception e) {
-								System.out.println("MEE: on set " + prefix + set + "," + e.getMessage());
+								System.out.println("MEE: on set " + prefix + set + "," + 
+										e.getMessage());
 							}
 						}
 						// ok, update ckpt timestamp: if > ts, check redis, else check lmdb.
@@ -286,22 +303,11 @@ public class MM2SSMigrater {
 					System.out.println("NFE: on set " + set);
 				}
 			}
-		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
-			temp = null;
 		} catch (Exception e) {
 			e.printStackTrace();
-			err = -1;
 			temp = null;
 		} finally {
-			if (err < 0)
-				ca.getPc().getRf().putBrokenInstance(jedis);
-			else
-				ca.getPc().getRf().putInstance(jedis);
+			ca.getPc().getRpL1().putInstance(jedis);
 		}
 		
 	}
@@ -309,12 +315,14 @@ public class MM2SSMigrater {
 	private static boolean migrateSet(ClientAPI ca, String set, MM2SSMigrater mdb, 
 			boolean do_delete) throws Exception {
 		boolean r = false;
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
-		int err = 0, nr = 0;
+		RedisConnection rc = ca.getPc().getRPS().getL2(set, false);
+		int nr = 0;
 		
-		if (jedis == null) {
-			throw new Exception("Could not get avaliable Jedis instance.");
+		if (rc.rp == null || rc.jedis == null) {
+			throw new Exception("Could not get avaliable L2 pool " + rc.id + 
+					" instance.");
 		}
+		Jedis jedis = rc.jedis;
 
 		try {
 			// Save all the server info for this set
@@ -367,12 +375,9 @@ public class MM2SSMigrater {
 		} catch (LMDBException le) {
 			System.out.println("LMDBException: " + le.getLocalizedMessage());
 		} catch (JedisException je) {
-			err = -1;
+			je.printStackTrace();
 		} finally {
-			if (err < 0)
-				jedis = ca.getPc().getRf().putBrokenInstance(jedis);
-			else
-				jedis = ca.getPc().getRf().putInstance(jedis);
+			ca.getPc().getRPS().putL2(rc);
 		}
 		System.out.println("Mig Set '" + set + "' complete, mig=" + nr);
 		

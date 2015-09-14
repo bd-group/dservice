@@ -6,6 +6,9 @@ import iie.mm.client.ImagePHash;
 import iie.mm.client.Feature.FeatureType;
 import iie.mm.client.ResultSet;
 import iie.mm.client.ResultSet.Result;
+import iie.mm.common.RedisPool;
+import iie.mm.common.RedisPoolSelector;
+import iie.mm.common.RedisPoolSelector.RedisConnection;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -41,27 +44,53 @@ import redis.clients.jedis.exceptions.JedisException;
 public class StorePhoto {
 	private ServerConf conf;
 	private String localHostName;
-	private int serverport;							//本机监听的端口,在这里的作用就是构造存图片时返回值
+	// 本机监听的端口,在这里的作用就是构造存图片时返回值
+	private int serverport;
 	private Set<String> storeArray = new HashSet<String>();
-	private String[] diskArray;						//代表磁盘的数组
-	private long blocksize;							//文件块的大小，单位是B
+	// 磁盘的数组
+	private String[] diskArray;
+	// 文件块的大小，单位是B
+	private long blocksize;
 	private static long writeTo = -1;
 	private static long readTo = -1;
 	
-	//一级的hash,集合 + 磁盘->上下文
-	//不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
-	private static ConcurrentHashMap<String, StoreSetContext> writeContextHash = new ConcurrentHashMap<String, StoreSetContext>();
-	//读文件时的随机访问流，用哈希来缓存
-	private static ConcurrentHashMap<String, ReadContext> readRafHash = new ConcurrentHashMap<String, ReadContext>();
-	private final ThreadLocal<Jedis> jedis =
-         new ThreadLocal<Jedis>() {
-             @Override protected Jedis initialValue() {
-                 return null;
-         }
-	};
+	// 一级的hash,集合 + 磁盘->上下文
+	// 不能放在构造函数里初始化,不然会每次创建一个storephoto类时,它都被初始化一遍
+	private static ConcurrentHashMap<String, StoreSetContext> writeContextHash = 
+			new ConcurrentHashMap<String, StoreSetContext>();
+	// 读文件时的随机访问流，用哈希来缓存
+	private static ConcurrentHashMap<String, ReadContext> readRafHash = 
+			new ConcurrentHashMap<String, ReadContext>();
 	private static String sha = null;
 	
-	private TimeLimitedCacheMap lookupCache = new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
+	private TimeLimitedCacheMap lookupCache = 
+			new TimeLimitedCacheMap(10, 60, 300, TimeUnit.SECONDS);
+	
+	private static RedisPool rpL1 = null;
+	private static RedisPoolSelector rps = null;
+	
+	public RedisPool getRpL1() {
+		return rpL1;
+	}
+	
+	public static RedisPool getRpL1(ServerConf conf) {
+		if (rpL1 == null) {
+			rpL1 = new RedisPool(conf, "l1.master");
+			try {
+				rps = new RedisPoolSelector(conf, rpL1);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		return rpL1;
+	}
+	
+	public static RedisPoolSelector getRPS(ServerConf conf) throws Exception {
+		if (rps == null) {
+			rps = new RedisPoolSelector(conf, rpL1);
+		}
+		return rps;
+	}
 	
 	public static class RedirectException extends Exception {
 		/**
@@ -181,12 +210,12 @@ public class StorePhoto {
 		
 		public AtomicLong bref = new AtomicLong(0);
 		public long openTs = -1;
-		//当前可写的块
+		// 当前可写的块
 		private long curBlock = -1;
 		private long offset = 0;
-		//代表要写的块的文件
+		// 代表要写的块的文件
 		private File newf = null;
-		//写当前的块的随机访问流
+		// 写当前的块的随机访问流
 		private RandomAccessFile raf = null;
 		
 		private String path = null;
@@ -200,7 +229,7 @@ public class StorePhoto {
 			sb.append(set);
 			sb.append("/");
 			path = sb.toString();
-			//存储文件的文件夹的相对路径，不包含文件名
+			// 存储文件的文件夹的相对路径，不包含文件名
 			File dir = new File(path);
 			if (!dir.exists()) 
 				dir.mkdirs();
@@ -210,7 +239,7 @@ public class StorePhoto {
 		}
 	}
 	
-	public StorePhoto(ServerConf conf) {
+	public StorePhoto(ServerConf conf) throws Exception {
 		this.conf = conf;
 		serverport = conf.getServerPort();
 		blocksize = conf.getBlockSize();
@@ -219,19 +248,40 @@ public class StorePhoto {
 			storeArray.add(".");
 		}
 		diskArray = storeArray.toArray(new String[0]);
-		//jedis = new RedisFactory(conf).getDefaultInstance();
-
 		localHostName = conf.getNodeName();
 		writeTo = conf.getWrite_fd_recycle_to();
 		readTo = conf.getRead_fd_recycle_to();
+		if (rpL1 == null) {
+			rpL1 = new RedisPool(conf, "l1.master");
+			rpL1.setPid("L1.0");
+		}
+		if (rps == null)
+			rps = new RedisPoolSelector(conf, rpL1);
 	}
 	
-	public void reconnectJedis() throws IOException {
-		if (jedis.get() == null) {
-			jedis.set(new RedisFactory(conf).getDefaultInstance());
+	private void loadScripts() {
+		String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
+					+ "if temp then "
+					+ "temp = temp..\"#\"..ARGV[2] ;"
+					+ "redis.call('hset',KEYS[1],ARGV[1],temp);"
+					+ "return temp;"
+					+ "else "
+					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
+					+ "return ARGV[2] end";
+		
+		// try to load scripts to each L2 pool
+		for (Map.Entry<String, RedisPool> entry : rps.getRpL2().entrySet()) {
+			Jedis jedis = entry.getValue().getResource();
+			if (jedis != null) {
+				try {
+					sha = jedis.scriptLoad(script);
+					System.out.println("Load script as " + sha + 
+							" in L2 pool " + entry.getKey());
+				} finally {
+					entry.getValue().putInstance(jedis);
+				}
+			}
 		}
-		if (jedis.get() == null)
-			throw new IOException("Connection to MMM Server failed.");
 	}
 
 	/**
@@ -246,27 +296,24 @@ public class StorePhoto {
 	public String storePhoto(String set, String md5, byte[] content, int coff, 
 			int clen) {
 		String returnStr = "#FAIL: unknown error.";
-		int err = 0;
+		
+		if (sha == null) {
+			loadScripts();
+		}
+		
+		RedisConnection rc = null;
 		
 		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			return "#FAIL: MMM Server can not be reached.";
+			rc = rps.getL2(set, false);
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
-		if (sha == null) {
-			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
-					+ "if temp then "
-					+ "temp = temp..\"#\"..ARGV[2] ;"
-					+ "redis.call('hset',KEYS[1],ARGV[1],temp);"
-					+ "return temp;"
-					+ "else "
-					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
-					+ "return ARGV[2] end";
-			sha = jedis.get().scriptLoad(script);
-			System.out.println("Load script as " + sha);
+		if (rc.rp == null || rc.jedis == null) {
+			return "#FAIL: L2 pool " + rc.id + " can not be reached.";
 		}
-		
+		Jedis jedis = rc.jedis;
 		StringBuffer rVal = new StringBuffer(128);
+		int err = 0;
 		
 		// 随机选一个磁盘
 		int diskid = new Random().nextInt(diskArray.length);
@@ -288,7 +335,7 @@ public class StorePhoto {
 			try {
 				if (ssc.curBlock < 0) {
 					// 需要通过节点名字来标示不同节点上相同名字的集合
-					String reply = jedis.get().get(set + ".blk." + 
+					String reply = jedis.get(set + ".blk." + 
 							ServerConf.serverId + "." + ssc.disk);
 					if (reply != null) {
 						ssc.curBlock = Long.parseLong(reply);
@@ -299,8 +346,8 @@ public class StorePhoto {
 						ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 						// 把集合和它所在节点记录在redis的set里,方便删除,
 						// set.srvs表示set所在的服务器的位置
-						jedis.get().sadd(set + ".srvs", localHostName + ":" + serverport);
-						jedis.get().set(set + ".blk." + ServerConf.serverId + "." + 
+						jedis.sadd(set + ".srvs", localHostName + ":" + serverport);
+						jedis.set(set + ".blk." + ServerConf.serverId + "." + 
 								ssc.disk, "" + ssc.curBlock);
 						ssc.offset = 0;
 					}
@@ -317,7 +364,7 @@ public class StorePhoto {
 					// 当前可写的块号加一
 					do {
 						if (ssc.bref.get() == 0) {
-							jedis.get().incr(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
+							jedis.incr(set + ".blk." + ServerConf.serverId + "." + ssc.disk);
 							break;
 						}
 						Thread.yield();
@@ -359,24 +406,26 @@ public class StorePhoto {
 				// 统计写入的字节数
 				ServerProfile.addWrite(clen);
 			} catch (JedisConnectionException e) {
-				System.out.println("Jedis connection broken in storeObject.");
-				try {
-					Thread.sleep(1000);
-				} catch (InterruptedException e1) {
-				}
-				err = -1;
+				System.out.println(set + "@" + md5 + 
+						": Jedis connection broken in storeObject.");
+				e.printStackTrace();
 				returnStr = "#FAIL:" + e.getMessage();
+				err = -1;
 			} catch (JedisException e) {
+				System.out.println(set + "@" + md5 +
+						": Jedis exception: " + e.getMessage());
 				e.printStackTrace();
-				err = -1;
 				returnStr = "#FAIL:" + e.getMessage();
+				err = -1;
 			} catch (Exception e) {
+				System.out.println(set + "@" + md5 +
+						": Exception: " + e.getMessage());
 				e.printStackTrace();
-				err = -1;
 				returnStr = "#FAIL:" + e.getMessage();
+				err = -1;
 			} finally {
 				if (err < 0) {
-					jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
+					rps.putL2(rc);
 					ServerProfile.writeErr.incrementAndGet();
 					ssc.bref.decrementAndGet();
 					return returnStr;
@@ -386,33 +435,33 @@ public class StorePhoto {
 		
 		try {
 			returnStr = rVal.toString();
-			returnStr = jedis.get().evalsha(sha, 1, set, md5, returnStr).toString();
+			returnStr = jedis.evalsha(sha, 1, set, md5, returnStr).toString();
 		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken in storeObject.");
+			System.out.println(set + "@" + md5 + 
+					": Jedis connection broken in storeObject.");
 			e.printStackTrace();
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
 			err = -1;
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (JedisException e) {
+			System.out.println(set + "@" + md5 +
+					": Jedis exception: " + e.getMessage());
 			e.printStackTrace();
 			err = -1;
 			if (e.getMessage().startsWith("NOSCRIPT"))
 				sha = null;
 			returnStr = "#FAIL:" + e.getMessage();
 		} catch (Exception e) {
+			System.out.println(set + "@" + md5 +
+					": Exception: " + e.getMessage());
 			e.printStackTrace();
 			err = -1;
 			returnStr = "#FAIL:" + e.getMessage();
 		} finally {
 			ssc.bref.decrementAndGet();
+			rps.putL2(rc);
 			if (err < 0) {
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
-			} else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
+			}
 		}
 		try {
 			FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
@@ -433,29 +482,27 @@ public class StorePhoto {
 	public String[] mstorePhoto(String set, String[] md5, byte[][] content) {
 		int err = 0;
 		
-		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			e2.printStackTrace();
-			return null;
-		}
-
 		if (!(md5.length == content.length && md5.length == content.length)) {
 			System.out.println("Array lengths in arguments mismatch.");
 			return null;
 		}
 		if (sha == null) {
-			String script = "local temp = redis.call('hget', KEYS[1], ARGV[1]);"
-					+ "if temp then "
-					+ "temp = temp..\"#\"..ARGV[2];"
-					+ "redis.call('hset',KEYS[1],ARGV[1],temp);"
-					+ "return temp;"
-					+ "else "
-					+ "redis.call('hset',KEYS[1],ARGV[1],ARGV[2]);"
-					+ "return ARGV[2] end";
-			sha = jedis.get().scriptLoad(script);
-//			System.out.println(sha);
+			loadScripts();
 		}
+		
+		RedisConnection rc = null;
+		
+		try {
+			rc = rps.getL2(set, false);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		if (rc.rp == null || rc.jedis == null) {
+			System.out.println("mstorePhoto " + set + 
+					" fail: L2 pool " + rc.id + " can't be reached.");
+			return null;
+		}
+		Jedis jedis = rc.jedis;
 		
 		String[] returnVal = new String[content.length];
 		int diskid = new Random().nextInt(diskArray.length);
@@ -474,19 +521,12 @@ public class StorePhoto {
 		
 		synchronized (ssc) {
 			for (int i = 0; i < content.length; i++) {
-				try {
-					reconnectJedis();
-				} catch (IOException e2) {
-					e2.printStackTrace();
-					return null;
-				}
-				
 				StringBuffer rVal = new StringBuffer(128);
 
 				try {
 					if (ssc.curBlock < 0) {
 						// 需要通过节点名字来标示不同节点上相同名字的集合
-						String reply = jedis.get().get(set + ".blk." + ServerConf.serverId
+						String reply = jedis.get(set + ".blk." + ServerConf.serverId
 								+ "." + ssc.disk);
 						if (reply != null) {
 							ssc.curBlock = Long.parseLong(reply);
@@ -496,9 +536,9 @@ public class StorePhoto {
 							ssc.curBlock = 0;
 							ssc.newf = new File(ssc.path + "b" + ssc.curBlock);
 							// 把集合和它所在节点记录在redis的set里,方便删除,set.srvs表示set所在的服务器的位置
-							jedis.get().sadd(set + ".srvs", localHostName + ":"
+							jedis.sadd(set + ".srvs", localHostName + ":"
 									+ serverport);
-							jedis.get().set(set + ".blk." + ServerConf.serverId + "."
+							jedis.set(set + ".blk." + ServerConf.serverId + "."
 									+ ssc.disk, "" + ssc.curBlock);
 							ssc.offset = 0;
 						}
@@ -517,7 +557,7 @@ public class StorePhoto {
 							baos.reset();
 						}
 						// 当前可写的块号加一
-						jedis.get().incr(set + ".blk." + ServerConf.serverId + "."
+						jedis.incr(set + ".blk." + ServerConf.serverId + "."
 								+ ssc.disk);
 						ssc.offset = 0;
 						ssc.raf = new RandomAccessFile(ssc.newf, "rw");
@@ -550,21 +590,20 @@ public class StorePhoto {
 						init_offset = ssc.offset;
 					ssc.offset += content[i].length;
 				} catch (JedisConnectionException e) {
-					System.out.println("Jedis connection broken in mstoreObject.");
-					try {
-						Thread.sleep(1000);
-					} catch (InterruptedException e1) {
-					}
-					err = -1;
-				} catch (JedisException e) {
+					System.out.println(set + ": Jedis connection broken in mstoreObject.");
 					e.printStackTrace();
 					err = -1;
+				} catch (JedisException e) {
+					System.out.println(set + ": Jedis exception: " + e.getMessage());
+					e.printStackTrace();					
+					err = -1;
 				} catch (Exception e) {
+					System.out.println(set + ": Exception: " + e.getMessage());
 					e.printStackTrace();
 					err = -1;
 				} finally {
 					if (err < 0) {
-						jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
+						rps.putL2(rc);
 						ServerProfile.writeErr.incrementAndGet();
 						return null;
 					}
@@ -582,7 +621,7 @@ public class StorePhoto {
 				e.printStackTrace();
 				// Rollback SSC offset
 				ssc.offset = init_offset;
-				jedis.set(RedisFactory.putInstance(jedis.get()));
+				rps.putL2(rc);
 				ServerProfile.writeErr.incrementAndGet();
 				return null;
 			} 
@@ -590,36 +629,33 @@ public class StorePhoto {
 		
 		try {
 			for (int i = 0; i < content.length; i++) {
-				returnVal[i] = jedis.get().evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
+				returnVal[i] = jedis.evalsha(sha, 1, set, md5[i], returnVal[i]).toString();
 				FeatureSearch.add(conf, new FeatureSearch.ImgKeyEntry(
 						conf.getFeatures(), 
 						content[i], 0, content[i].length, set, md5[i]));
 			}
 		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken in mstoreObject.");
+			System.out.println(set + ": Jedis connection broken in mstoreObject.");
 			e.printStackTrace();
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
 			err = -1;
 			returnVal = null;
 		} catch (JedisException e) {
+			System.out.println(set + ": Jedis exception: " + e.getMessage());
 			e.printStackTrace();
 			err = -1;
 			if (e.getMessage().startsWith("NOSCRIPT"))
 				sha = null;
 			returnVal = null;
 		} catch (Exception e) {
+			System.out.println(set + ": Exception: " + e.getMessage());
 			e.printStackTrace();
 			err = -1;
 			returnVal = null;
 		} finally {
 			if (err < 0) {
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 				ServerProfile.writeErr.incrementAndGet();
-			} else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
+			}
+			rps.putL2(rc);
 		}
 		return returnVal;
 	}
@@ -674,27 +710,32 @@ public class StorePhoto {
 	 * @return			该图片的内容,与storePhoto中的参数content对应
 	 */
 	public ObjectContent getPhoto(String set, String md5) throws RedirectException {
-		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			return null;
-		}
+		RedisConnection rc = null;
 		String info = null;
 		int err = 0;
 
+		try {
+			rc = rps.getL2(set, false);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return null;
+		}
+		if (rc.rp == null || rc.jedis == null) {
+			System.out.println("MM getPhoto: " + set + "@" + md5 + 
+					": get L2 pool " + rc.id + " failed.");
+			return null;
+		}
+		Jedis jedis = rc.jedis;
+		
 		// Step 1: check the local lookup cache
 		info = (String) lookupCache.get(set + "." + md5);
 		if (info == null) {
 			try {
 				if (isInRedis(set))
-					info = jedis.get().hget(set, md5);
+					info = jedis.hget(set, md5);
 				else
 					return getPhotoFromSS(set, md5);
 			} catch (JedisConnectionException e) {
-				try {
-					Thread.sleep(1000);
-				} catch (InterruptedException e1) {
-				}
 				err = -1;
 				return null;
 			} catch (JedisException e) {
@@ -702,14 +743,14 @@ public class StorePhoto {
 				return null;
 			} finally {
 				if (err < 0) {
-					jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
 					ServerProfile.readErr.incrementAndGet();
-				} else
-					jedis.set(RedisFactory.putInstance(jedis.get()));
+				}
+				rps.putL2(rc);
 			}
 			
 			if (info == null) {
-				System.out.println("MM: md5:" + md5 + " doesn't exist in set:" + set + ".");
+				System.out.println("MM getPhoto: md5: " + md5 + 
+						" doesn't exist in set: " + set + ".");
 				return null;
 			} else {
 				// append this entry to lookup cache
@@ -803,22 +844,23 @@ public class StorePhoto {
 	}
 	
 	public void delSet(String set) {
-		for (String d : diskArray)		//删除每个磁盘上的该集合
+		// 删除每个磁盘上的该集合
+		for (String d : diskArray)
 			delFile(new File(d + "/" + conf.destRoot + set));
-		//删除一个集合后,同时删除关于该集合的全局的上下文
-		for(String d : diskArray)
+		// 删除一个集合后,同时删除关于该集合的全局的上下文
+		for (String d : diskArray)
 			writeContextHash.remove(set+ ":" + d);			
 	}
 	
 	/**
-	 * 删除文件.如果是一个文件,直接删除,如果是文件夹,递归删除子文件夹和文件
+	 * 删除文件. 如果是一个文件,直接删除,如果是文件夹,递归删除子文件夹和文件
 	 * @param f
 	 */
 	private void delFile(File f) {
 
-		if(!f.exists())
+		if (!f.exists())
 			return;
-		if(f.isFile())
+		if (f.isFile())
 			f.delete();
 		else {
 			for (File a : f.listFiles())
@@ -832,30 +874,21 @@ public class StorePhoto {
 	
 	public Set<String> getSetElements(String set) {
 		Set<String> r = null;
-		int err = 0;
+		RedisConnection rc = null;
 		
 		try {
-			reconnectJedis();
-		} catch (IOException e) { 
-			return null;
-		}
-		
-		try {
-			r = jedis.get().hkeys(set);
+			rc = rps.getL2(set, false);
+			Jedis jedis = rc.jedis;
+			if (jedis != null)
+				r = jedis.hkeys(set);
 		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
-		} catch (Exception e) {
+			System.out.println(set + ": Jedis connection broken in getSetElements");
 			e.printStackTrace();
-			err = -1;
+		} catch (Exception e) {
+			System.out.println(set + ": Exception: " + e.getMessage());
+			e.printStackTrace();
 		} finally {
-			if (err < 0)
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
+			rps.putL2(rc);
 		}
 		return r;
 	}
@@ -875,125 +908,112 @@ public class StorePhoto {
 	 * @return
 	 */
 	public TreeMap<String, SetStats> getSetBlks() {
-		int err = 0;
-		
-		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			return null;
-		}
 		TreeMap<String, SetStats> temp = new TreeMap<String, SetStats>();
-		try {
-			Set<String> keys = jedis.get().keys("*.blk.*");
-			
-			if (keys != null && keys.size() > 0) {
-				String[] keya = keys.toArray(new String[0]);
-				List<String> vals = jedis.get().mget(keya);
-				
-				for (int i = 0; i < keya.length; i++) {
-					String set = keya[i].split("\\.")[0];
-					temp.put(set, new SetStats(jedis.get().hlen(set), temp.containsKey(set) ? temp.get(set).fnr + Integer.parseInt(vals.get(i)) + 1 : Integer.parseInt(vals.get(i)) + 1 ));
-				}
-			}
-		} catch (JedisConnectionException e) {
+
+		for (Map.Entry<String, RedisPool> entry : rps.getRpL2().entrySet()) {
+			Jedis jedis = entry.getValue().getResource();
 			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
+				if (jedis != null) {
+					Set<String> keys = jedis.keys("*.blk.*");
+
+					if (keys != null && keys.size() > 0) {
+						String[] keya = keys.toArray(new String[0]);
+						List<String> vals = jedis.mget(keya);
+
+						for (int i = 0; i < keya.length; i++) {
+							String set = keya[i].split("\\.")[0];
+							temp.put(set, new SetStats(jedis.hlen(set), 
+									temp.containsKey(set) ? 
+											temp.get(set).fnr + 
+											Integer.parseInt(vals.get(i)) + 1 : 
+												Integer.parseInt(vals.get(i)) + 1 ));
+						}
+					}
+				}
+			} catch (JedisConnectionException e) {
+				System.out.println("getSetBlks: Jedis connection exception: " + 
+						e.getMessage());
+				temp = null;
+				break;
+			} catch (Exception e) {
+				e.printStackTrace();
+				temp = null;
+				break;
+			} finally {
+				entry.getValue().putInstance(jedis);
 			}
-			err = -1;
-			temp = null;
-		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
-			temp = null;
-		} finally {
-			if (err < 0)
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
-		
 		return temp;
 	}
 	
 	public Map<String,String> getDedupInfo() {
-		int err = 0;
+		for (Map.Entry<String, RedisPool> entry : rps.getRpL2().entrySet()) {
+			Jedis jedis = entry.getValue().getResource();
+			if (jedis != null) {
+				try {
+					Map<String, String> di = new HashMap<String, String>();
+					ScanParams sp = new ScanParams();
+					sp.match("*");
+					boolean isDone = false;
+					String cursor = ScanParams.SCAN_POINTER_START;
 
-		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			e2.printStackTrace();
-			return null;
-		}
-		try {
-			Map<String, String> di = new HashMap<String, String>();
-			ScanParams sp = new ScanParams();
-			sp.match("*");
-			boolean isDone = false;
-			String cursor = ScanParams.SCAN_POINTER_START;
-			
-			while (!isDone) {
-				ScanResult<Entry<String, String>> r = jedis.get().hscan("mm.dedup.info", cursor, sp);
-				for (Entry<String, String> entry : r.getResult()) {
-					di.put(entry.getKey(), entry.getValue());
-				}
-				cursor = r.getStringCursor();
-				if (cursor.equalsIgnoreCase("0")) {
-					isDone = true;
+					while (!isDone) {
+						ScanResult<Entry<String, String>> r = 
+								jedis.hscan("mm.dedup.info", cursor, sp);
+						for (Entry<String, String> entry2 : r.getResult()) {
+							di.put(entry2.getKey(), entry2.getValue());
+						}
+						cursor = r.getStringCursor();
+						if (cursor.equalsIgnoreCase("0")) {
+							isDone = true;
+						}
+					}
+					return di;
+				} catch (JedisConnectionException e) {
+					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
+				} finally {
+					entry.getValue().putInstance(jedis);
 				}
 			}
-			return di;
-		} catch (JedisConnectionException e) {
-			e.printStackTrace();
-			err = -1;
-		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
-		} finally {
-			if (err < 0)
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
 
 		return null;
 	}
 
 	public String getClientConfig(String field) {
-		int err = 0;
+		Jedis jedis = getRpL1().getResource();
 
-		try {
-			reconnectJedis();
-		} catch (IOException e2) {
-			e2.printStackTrace();
-			return null;
-		}
-		try {
-			String di = jedis.get().hget("mm.client.conf", field);
-			return di;
-		} catch (JedisConnectionException e) {
-			e.printStackTrace();
-			err = -1;
-		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
-		} finally {
-			if (err < 0)
-				jedis.set(RedisFactory.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(RedisFactory.putInstance(jedis.get()));
+		if (jedis != null) {
+			try {
+				String di = jedis.hget("mm.client.conf", field);
+				return di;
+			} catch (JedisConnectionException e) {
+				e.printStackTrace();
+			} catch (Exception e) {
+				e.printStackTrace();
+			} finally {
+				getRpL1().putInstance(jedis);
+			}
 		}
 
 		return null;
 	}
 
-	//关闭jedis连接,关闭文件访问流
-	public void close() {
+	// 关闭jedis连接,关闭文件访问流?
+	public static void quit() {
 		try {
+			if (rps != null)
+				rps.quit();
+			if (rpL1 != null)
+				rpL1.quit();
 		} finally {
-			if (jedis.get() != null)
-				jedis.set(RedisFactory.putInstance(jedis.get()));
 		}
+	}
+	
+	// 释放单实例所使用的资源
+	public void close() {
 	}
 	
 	/**

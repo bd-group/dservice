@@ -45,6 +45,7 @@ public class MMRepChecker {
 			}
 		}
 		jedis.quit();
+		jedis.close();
 		this.checkNonStd = checkNonStd;
 	}
 
@@ -270,6 +271,7 @@ public class MMRepChecker {
 			System.out.println(e.getValue());
 		}
 		jedis.quit();
+		jedis.close();
 		
 		return notdup;
 	}

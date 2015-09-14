@@ -7,7 +7,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -42,7 +41,14 @@ public class MMSClient {
 			this.type = type;
 			this.set = set;
 			if (type.equalsIgnoreCase("pthca")) {
-				this.ca = new ClientAPI();
+				try {
+					this.ca = new ClientAPI();
+				} catch (Exception e) {
+					e.printStackTrace();
+					System.out.println("Fallback to use one ClientAPI");
+					this.ca = ca;
+					return;
+				}
 				String uri = "STL://";
 				for(String s : ca.getPc().getConf().getSentinels())
 					uri = uri + s + ";";
@@ -292,9 +298,7 @@ public class MMSClient {
 	        }
 		}
 		
-		String serverName = null, redisHost = null;
 		String set = "default";
-		int serverPort = 0, redisPort = 0;
 		ClientConf.MODE mode = ClientConf.MODE.NODEDUP;
 		long lpt_nr = 1, lpt_size = 1;
 		int lgt_nr = -1, lgt_th = 1, lpt_th = 1, lmgt_th = 1;
@@ -312,10 +316,6 @@ public class MMSClient {
 			if (o.flag.equals("-h")) {
 				// print help message
 				System.out.println("-h    : print this help.");
-				System.out.println("-r    : server host name.");
-				System.out.println("-p    : server port.");
-				System.out.println("-rr   : redis server name.");
-				System.out.println("-rp   : redis server port.");
 				System.out.println("-m    : client operation mode.");
 				System.out.println("-dn   : duplication number.");
 				
@@ -335,14 +335,6 @@ public class MMSClient {
 				System.out.println("-uri  : unified uri for SENTINEL and STANDALONE.");
 				
 				System.exit(0);
-			}
-			if (o.flag.equals("-r")) {
-				// set server host name
-				serverName = o.opt;
-			}
-			if (o.flag.equals("-p")) {
-				// set server port
-				serverPort = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-m")) {
 				// set client mode
@@ -367,14 +359,6 @@ public class MMSClient {
 						System.exit(0);
 					}
 				}
-			}
-			if (o.flag.equals("-rr")) {
-				// set redis server name
-				redisHost = o.opt;
-			}
-			if (o.flag.equals("-rp")) {
-				// set redis server port
-				redisPort = Integer.parseInt(o.opt);
 			}
 			if (o.flag.equals("-set")) {
 				// set the set name

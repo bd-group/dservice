@@ -1,6 +1,5 @@
 package iie.mm.client;
 
-import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry;
 
 import java.io.DataInputStream;
@@ -31,9 +30,8 @@ public class ClientAPI {
 	private PhotoClient pc;
 	private AtomicInteger index = new AtomicInteger(0);				
 	private List<String> keyList = Collections.synchronizedList(new ArrayList<String>());
-	//缓存与服务端的tcp连接,服务端名称到连接的映射
+	// 缓存与服务端的tcp连接,服务端名称到连接的映射
 	private ConcurrentHashMap<String, SocketHashEntry> socketHash;
-	private Jedis jedis;
 	private final Timer timer = new Timer("ActiveMMSRefresher");
 	
 	public ClientAPI(ClientConf conf) {
@@ -112,7 +110,7 @@ public class ClientAPI {
 				if (to > 0)
 					conf.setMgetTimeout(to * 1000);
 			}
-			System.out.println("Auto conf client with: dupMode=" + dupMode + 
+			System.out.println("Auto conf client with: dupMode=" + conf.getMode() + 
 					", dupNum=" + conf.getDupNum() + 
 					", logDupInfo=" + conf.isLogDupInfo() +  
 					", sockPerServer=" + conf.getSockPerServer() +
@@ -126,7 +124,7 @@ public class ClientAPI {
 		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
 			return -1;
 		}
-		// iterate the sentinel set, get master IP:port, save to RedisFactory
+		// iterate the sentinel set, get master IP:port, save to sentinel set
 		if (conf.getSentinels() == null) {
 			if (urls == null) {
 				throw new Exception("Invalid URL or sentinels.");
@@ -139,30 +137,14 @@ public class ClientAPI {
 			}
 			conf.setSentinels(sens);
 		}
-		jedis = pc.getRf().getNewInstance(null);
-		updateClientConf(jedis, conf);
-		
-		return 0;
-	}
-	
-	private int init_by_standalone(ClientConf conf, String urls) throws Exception {
-		String[] x = urls.split(";");
-		for (String url : x) {
-			String[] redishp = url.split(":"); 
-			if (redishp.length != 2)
-				throw new Exception("wrong format of url: " + url);
-			
-			if (pc.getJedis() == null) {
-				pc.getRf();
-				jedis = RedisFactory.getRawInstance(redishp[0], Integer.parseInt(redishp[1]));
-				pc.setJedis(jedis);
-			} else {
-				// Use the Redis Server in conf
-				jedis = pc.getJedis();
-			}
-			conf.setRedisInstance(new RedisInstance(redishp[0], Integer.parseInt(redishp[1])));
+		pc.init();
+		Jedis jedis = pc.getRpL1().getResource();
+		try {
+			if (jedis != null)
+				updateClientConf(jedis, conf);
+		} finally {
+			pc.getRpL1().putInstance(jedis);
 		}
-		updateClientConf(jedis, conf);
 		
 		return 0;
 	}
@@ -235,9 +217,19 @@ public class ClientAPI {
 	}
 	
 	private void getActiveSecondaryServer() {
-		String ss = jedis.get("mm.ss.id");
-		String ckpt = jedis.get("mm.ckpt.ts");
+		Jedis jedis = pc.getRpL1().getResource();
+		if (jedis == null)
+			return;
+		String ss = null, ckpt = null;
 		
+		try {
+			ss = jedis.get("mm.ss.id");
+			ckpt = jedis.get("mm.ckpt.ts");
+		} catch (Exception e) {
+			System.out.println("getActiveSecondaryServer exception: " + e.getMessage());
+		} finally {
+			pc.getRpL1().putInstance(jedis);
+		}
 		try {
 			if (ss != null)
 				pc.setSs_id(Long.parseLong(ss));
@@ -253,51 +245,61 @@ public class ClientAPI {
 	}
 	
 	private boolean getActiveMMS() {
-		Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
-		Set<String> activeMMS = new TreeSet<String>();
+		Jedis jedis = pc.getRpL1().getResource();
+		if (jedis == null) return false;
 		
-		if (active != null && active.size() > 0) {
-			for (Tuple t : active) {
-				// translate ServerName to IP address
-				String ipport = jedis.hget("mm.dns", t.getElement());
+		try {
+			Set<Tuple> active = jedis.zrangeWithScores("mm.active", 0, -1);
+			Set<String> activeMMS = new TreeSet<String>();
 
-				// update server ID->Name map
-				if (ipport == null) {
-					pc.addToServers((long)t.getScore(), t.getElement());
-					ipport = t.getElement();
-				} else
-					pc.addToServers((long)t.getScore(), ipport);
-				
-				String[] c = ipport.split(":");
-				if (c.length == 2 && socketHash.get(ipport) == null) {
-					Socket sock = new Socket();
-					SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
-					activeMMS.add(ipport);
-					try {
-						sock.setTcpNoDelay(true);
-						sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
-						she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
-								new DataOutputStream(sock.getOutputStream()));
-						if (socketHash.putIfAbsent(ipport, she) != null) {
-							she.clear();
+			if (active != null && active.size() > 0) {
+				for (Tuple t : active) {
+					// translate ServerName to IP address
+					String ipport = jedis.hget("mm.dns", t.getElement());
+
+					// update server ID->Name map
+					if (ipport == null) {
+						pc.addToServers((long)t.getScore(), t.getElement());
+						ipport = t.getElement();
+					} else
+						pc.addToServers((long)t.getScore(), ipport);
+
+					String[] c = ipport.split(":");
+					if (c.length == 2 && socketHash.get(ipport) == null) {
+						Socket sock = new Socket();
+						SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+						activeMMS.add(ipport);
+						try {
+							sock.setTcpNoDelay(true);
+							sock.connect(new InetSocketAddress(c[0], Integer.parseInt(c[1])));
+							she.addToSockets(sock, new DataInputStream(sock.getInputStream()),
+									new DataOutputStream(sock.getOutputStream()));
+							if (socketHash.putIfAbsent(ipport, she) != null) {
+								she.clear();
+							}
+						} catch (SocketException e) {
+							e.printStackTrace();
+							continue;
+						} catch (NumberFormatException e) {
+							e.printStackTrace();
+							continue;
+						} catch (IOException e) {
+							e.printStackTrace();
+							continue;
 						}
-					} catch (SocketException e) {
-						e.printStackTrace();
-						continue;
-					} catch (NumberFormatException e) {
-						e.printStackTrace();
-						continue;
-					} catch (IOException e) {
-						e.printStackTrace();
-						continue;
 					}
 				}
 			}
+			synchronized (keyList) {
+				keyList.addAll(activeMMS);
+				keyList.retainAll(socketHash.keySet());
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			pc.getRpL1().putInstance(jedis);
 		}
-		synchronized (keyList) {
-			keyList.addAll(activeMMS);
-			keyList.retainAll(socketHash.keySet());
-		}
+		
 		
 		return true;
 	}
@@ -323,7 +325,6 @@ public class ClientAPI {
 	 * @throws Exception
 	 */
 	public int init(String urls) throws Exception {
-		//与jedis建立连接
 		if (urls == null) {
 			throw new Exception("The url can not be null.");
 		}
@@ -331,7 +332,6 @@ public class ClientAPI {
 		if (pc.getConf() == null) {
 			pc.setConf(new ClientConf());
 		}
-		pc.getConf().clrRedisIns();
 		if (urls.startsWith("STL://")) {
 			urls = urls.substring(6);
 			pc.getConf().setRedisMode(ClientConf.RedisMode.SENTINEL);
@@ -343,8 +343,12 @@ public class ClientAPI {
 		case SENTINEL:
 			init_by_sentinel(pc.getConf(), urls);
 			break;
+		case CLUSTER:
+			break;
 		case STANDALONE:
-			init_by_standalone(pc.getConf(), urls);
+			System.out.println("MMS do NOT support STA mode now, use STL instead.");
+			break;
+		default:
 			break;
 		}
 		
@@ -596,28 +600,6 @@ public class ClientAPI {
 	}
 	
 	/**
-	 * Simulate directory list
-	 */
-	public String list(String set, String prefix) throws IOException, Exception {
-		if (set == null)
-			throw new Exception("Invalid set name.");
-		if (prefix == null)
-			prefix = "/";
-		return pc.list(set, prefix);
-	}
-	
-	/**
-	 * Simulate directory make
-	 */
-	public int mkdir(String set, String dir_full_path) throws IOException, Exception {
-		if (set == null)
-			throw new Exception("Invalid set name.");
-		if (dir_full_path == null)
-			throw new Exception("Invalid directory name.");
-		return pc.mkdir(set, dir_full_path);
-	}
-	
-	/**
 	 * 批量读取某个集合的所有key
 	 * It is thread-safe
 	 *
@@ -697,10 +679,6 @@ public class ClientAPI {
 	 * 退出多媒体客户端，释放内部资源
 	 */
 	public void quit() {
-		if (pc.getRf() != null) {
-			pc.getRf().putInstance(jedis);
-			pc.getRf().quit();
-		}
 		pc.close();
 		timer.cancel();
 	}

@@ -50,7 +50,7 @@ public class HTTPHandler extends AbstractHandler {
 	private ServerConf conf;
 	private StorePhoto sp;
 	
-	public HTTPHandler(ServerConf conf) {
+	public HTTPHandler(ServerConf conf) throws Exception {
 		this.conf = conf;
 		sp = new StorePhoto(conf);
 	}
@@ -195,7 +195,9 @@ public class HTTPHandler extends AbstractHandler {
 		Jedis jedis = null;
 
 		try {
-			jedis = new RedisFactory(conf).getDefaultInstance();
+			jedis = StorePhoto.getRpL1(conf).getResource();
+			if (jedis == null) 
+				throw new IOException("#FAIL: can not connect to L1 pool.");
 			response.setContentType("text/html;charset=utf-8");
 			response.setStatus(HttpServletResponse.SC_OK);
 			baseRequest.setHandled(true);
@@ -237,7 +239,7 @@ public class HTTPHandler extends AbstractHandler {
 			response.getWriter().print("Redis ERROR: " + je.getMessage());
 			response.getWriter().flush();
 		} finally {
-			RedisFactory.putInstance(jedis);
+			StorePhoto.getRpL1(conf).putInstance(jedis);
 		}
 	}
 	

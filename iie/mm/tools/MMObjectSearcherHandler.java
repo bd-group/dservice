@@ -10,7 +10,6 @@ import iie.mm.client.ResultSet.Result;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -47,29 +46,35 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 	public MMObjectSearcherHandler(SearcherConf conf) throws Exception {
 		this.conf = conf;
 		ca.init(conf.serverUri);
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
+		Jedis jedis = ca.getPc().getRpL1().getResource();
 		if (jedis != null) {
-			Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
-			if (active != null && active.size() > 0) {
-				for (Tuple t : active) {
-					// translate ServerName to IP address
-					String ipport = jedis.hget("mm.dns", t.getElement());
+			try {
+				Set<Tuple> active = jedis.zrangeWithScores("mm.active.http", 0, -1);
+				if (active != null && active.size() > 0) {
+					for (Tuple t : active) {
+						// translate ServerName to IP address
+						String ipport = jedis.hget("mm.dns", t.getElement());
 
-					// update server ID->Name map
-					if (ipport == null) {
-						SearcherConf.hservers.put((long)t.getScore(), t.getElement());
-						ipport = t.getElement();
-					} else
-						SearcherConf.hservers.put((long)t.getScore(), ipport);
+						// update server ID->Name map
+						if (ipport == null) {
+							SearcherConf.hservers.put((long)t.getScore(), 
+									t.getElement());
+							ipport = t.getElement();
+						} else
+							SearcherConf.hservers.put((long)t.getScore(), ipport);
 
-					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + ipport);
+						System.out.println("Got HTTP Server " + (long)t.getScore() + 
+								" " + ipport);
+					}
 				}
+			} finally {
+				ca.getPc().getRpL1().putInstance(jedis);
 			}
-			jedis = ca.getPc().getRf().putInstance(jedis);
 		}
 	}
 	
-	private void badResponse(Request baseRequest, HttpServletResponse response, String message) throws IOException {
+	private void badResponse(Request baseRequest, HttpServletResponse response, 
+			String message) throws IOException {
 		response.setContentType("text/html;charset=utf-8");
 		response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 		baseRequest.setHandled(true);
@@ -77,7 +82,8 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 		response.getWriter().flush();
 	}
 	
-	private void notFoundResponse(Request baseRequest, HttpServletResponse response, String message) throws IOException {
+	private void notFoundResponse(Request baseRequest, HttpServletResponse response, 
+			String message) throws IOException {
 		response.setContentType("text/html;charset=utf-8");
 		response.setStatus(HttpServletResponse.SC_NOT_FOUND);
 		baseRequest.setHandled(true);
@@ -85,7 +91,8 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 		response.getWriter().flush();
 	}
 	
-	private void okResponse(Request baseRequest, HttpServletResponse response, byte[] content) throws IOException {
+	private void okResponse(Request baseRequest, HttpServletResponse response, 
+			byte[] content) throws IOException {
 		// FIXME: text/image/audio/video/application/thumbnail/other
 		response.setStatus(HttpServletResponse.SC_OK);
 		baseRequest.setHandled(true);
@@ -93,7 +100,8 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 		response.getOutputStream().flush();
 	}
 	
-	public static BufferedImage readImage(byte[] b, int offset, int length) throws IOException {
+	public static BufferedImage readImage(byte[] b, int offset, int length) 
+			throws IOException {
 		ByteArrayInputStream in = new ByteArrayInputStream(b, offset, length);    
 		BufferedImage image = ImageIO.read(in);     
 		return image;
@@ -184,7 +192,8 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 		return rs;
 	}
 	
-	private void doImageMatch(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+	private void doImageMatch(String target, Request baseRequest, 
+			HttpServletRequest request, HttpServletResponse response)
 			throws IOException, ServletException {
 		if (target.equalsIgnoreCase("/os/index.html")) {
 			ResourceHandler rh = new ResourceHandler();
@@ -211,10 +220,12 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 
 				while (iter.hasNext()) {
 					FileItem item = (FileItem) iter.next();
-					if (item.isFormField()) { 				// 如果是表单域 ，就是非文件上传元素
-						String name = item.getFieldName(); // 获取name属性的值
-						String value = item.getString(); // 获取value属性的值
-						// System.out.println(name+"   "+value);
+					// 如果是表单域 ，就是非文件上传元素
+					if (item.isFormField()) {
+						// 获取name属性的值
+						String name = item.getFieldName();
+						// 获取value属性的值
+						String value = item.getString();
 						if (name.equals("distance"))
 							distance = Integer.parseInt(value);
 						if (name.equals("BitDiff")) 
@@ -248,40 +259,47 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 							}
 						}
 					} else {
-						String fieldName = item.getFieldName(); // 文件域中name属性的值
-						String fileName = item.getName(); // 文件的全路径，绝对路径名加文件名
-						// okResponse(baseRequest, response, item.get());
+						// 文件域中name属性的值
+						String fieldName = item.getFieldName();
+						// 文件的全路径，绝对路径名加文件名
+						String fileName = item.getName();
 						filePath = fileName;
 						try {
 							obj = item.get();
 							img = readImage(item.get());
 						} catch (IOException e) {
-							badResponse(baseRequest, response, "#FAIL:" + e.getMessage());
+							badResponse(baseRequest, response, "#FAIL:" + 
+									e.getMessage());
 							e.printStackTrace();
 							return;
 						}
 						if (img == null) {
-							badResponse(baseRequest, response, "#FAIL:the file uploaded probably is not an image.");
+							badResponse(baseRequest, response, 
+									"#FAIL:the file uploaded probably is not an image.");
 							return;
 						}
 					}
 				}
 
 				long beginTs = System.currentTimeMillis();
-				ResultSet rs = imageSearch(feature, obj, distance, bitDiff, lire_maxhits, lire_searcher, lire_filter, osServers);
+				ResultSet rs = imageSearch(feature, obj, distance, bitDiff, 
+						lire_maxhits, lire_searcher, lire_filter, osServers);
 				long endTs = System.currentTimeMillis();
 				String page = "<HTML><HEAD> <TITLE> Feature based MM Object Search </TITLE> </HEAD>"
 						+ "<BODY><H1>Search Results: </H1><ul>";
 				String spath = saveImage(obj);
 				if (spath != null) {
-					page += "<li> Original Image <br><img width=\"100\" height=\"100\" src=\"" + spath + "\"></li>";
+					page += "<li> Original Image <br><img width=\"100\" height=\"100\" src=\"" + 
+							spath + "\"></li>";
 				}
-				page += "</ul><H2>File '" + filePath + "' matches " + rs.getSize() + " files in " + (endTs - beginTs) + " ms.</H2><UL>";
+				page += "</ul><H2>File '" + filePath + "' matches " + rs.getSize() + 
+						" files in " + (endTs - beginTs) + " ms.</H2><UL>";
 				if (rs.getSize() > 0) {
 					Iterator<Result> iter2 = rs.getResults().iterator();
 					while (iter2.hasNext()) {
 						Result r = iter2.next();
-						page += "<li> " + String.format("%.4f", r.getScore()) + " -> " + r.getValue() + "<br><img width=\"100\" height=\"100\" src=\"http://"
+						page += "<li> " + String.format("%.4f", r.getScore()) + " -> " 
+								+ r.getValue() + "<br><img width=\"100\" height=\"100\" src=\"http://"
 								+ SearcherConf.getHttpServer() + "/get?key="
 								+ r.getValue() + "\"> </li>";
 					}
@@ -320,7 +338,8 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 	}
 
 	private void doReadCache(String target, Request baseRequest,
-			HttpServletRequest request, HttpServletResponse response) throws IOException {
+			HttpServletRequest request, HttpServletResponse response) 
+					throws IOException {
 		File f = new File("." + target);
 		byte[] b = new byte[(int) f.length()];
 		FileInputStream fis;
@@ -339,5 +358,4 @@ public class MMObjectSearcherHandler extends AbstractHandler {
 			badResponse(baseRequest, response, "#FAIL: invalid cache entry=" + target);
 		}
 	}
-
 }

@@ -1,9 +1,11 @@
 package iie.mm.client;
 
-import iie.mm.client.ClientConf.RedisInstance;
 import iie.mm.client.PhotoClient.SocketHashEntry.SEntry;
+import iie.mm.client.XRefGroup.XRef;
+import iie.mm.common.RedisPool;
+import iie.mm.common.RedisPoolSelector;
+import iie.mm.common.RedisPoolSelector.RedisConnection;
 
-import java.awt.image.BufferedImage;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -15,10 +17,8 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -32,108 +32,28 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.Map.Entry;
 
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.ScanParams;
-import redis.clients.jedis.ScanResult;
-import redis.clients.jedis.Tuple;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
 public class PhotoClient {
 	private ClientConf conf;
-	private RedisFactory rf;
+	private static RedisPool rpL1;
+	private static RedisPoolSelector rps;
 	private static AtomicInteger curgrpno = new AtomicInteger(0);
 	private static AtomicInteger curseqno = new AtomicInteger(0);
 	private Map<Integer, XRefGroup> wmap = new ConcurrentHashMap<Integer, XRefGroup>();
 	private long ckpt_ts = 0;
 	private long ss_id = -1; 
 	
-	public RedisFactory getRf() {
-		return rf;
+	public RedisPool getRpL1() {
+		return rpL1;
 	}
 	
-	public static class XRef {
-		int idx;	// orignal index in keys list
-		int seqno;
-		String key;
-		byte[] value = null;
-		
-		public XRef() {
-			seqno = -1;
-			key = null;
-		}
-
-		public XRef(int idx, String key) {
-			this.idx = idx;
-			this.key = key;
-			this.seqno = curseqno.incrementAndGet();
-		}
-		
-		public String toString() {
-			return "ID " + idx + " SEQNO " + seqno + " KEY " + key;
-		}
+	public RedisPoolSelector getRPS() {
+		return rps;
 	}
 	
-	public class XRefGroup {
-		private int gid;
-		private long bts = 0;
-		private AtomicInteger nr = new AtomicInteger(0);
-		private ConcurrentHashMap<Integer, XRef> toWait = new ConcurrentHashMap<Integer, XRef>();
-		private ConcurrentHashMap<Integer, XRef> fina = new ConcurrentHashMap<Integer, XRef>();
-		
-		public XRefGroup() {
-			gid = curgrpno.incrementAndGet();
-			wmap.put(gid, this);
-		}
-		
-		public void addToGroup(XRef xref) {
-			bts = System.currentTimeMillis();
-			toWait.put(xref.seqno, xref);
-			nr.incrementAndGet();
-		}
-		
-		public boolean isTimedout() {
-			if (System.currentTimeMillis() - bts >= conf.getMgetTimeout()) {
-				return true;
-			} else
-				return false;
-		}
-		
-		public void doneXRef(Integer seqno, byte[] value) {
-			XRef x = toWait.remove(seqno);
-			if (x != null) {
-				x.value = value;
-				fina.put(seqno, x);
-			}
-		}
-		
-		public boolean waitAll() {
-			return toWait.isEmpty();
-		}
-		
-		public boolean waitAny() {
-			return !fina.isEmpty();
-		}
-		
-		public Collection<XRef> getAll() {
-			Collection<XRef> tmp = null;
-			
-			if (fina.size() == nr.get()) {
-				tmp = fina.values();
-				fina.clear();
-			}
-			return tmp;
-		}
-		
-		public long getGroupSize() {
-			return nr.get();
-		}
-		
-		public long getAvailableSize() {
-			return fina.size();
-		}
-	}
-	
-	//缓存与服务端的tcp连接,服务端名称到连接的映射
+	// 缓存与服务端的tcp连接,服务端名称到连接的映射
 	public static class SocketHashEntry {
 		String hostname;
 		int port, cnr;
@@ -326,22 +246,18 @@ public class PhotoClient {
 	public Map<Long, String> getServers() {
 		return servers;
 	}
-
-	private final ThreadLocal<Jedis> jedis =
-         new ThreadLocal<Jedis>() {
-             @Override protected Jedis initialValue() {
-                 return null;
-         }
-	};
 	
-	public PhotoClient(){
+	public PhotoClient() {
 		conf = new ClientConf();
-		rf = new RedisFactory(conf);
 	}
 
 	public PhotoClient(ClientConf conf) {
 		this.conf = conf;
-		rf = new RedisFactory(conf);
+	}
+	
+	public void init() throws Exception {
+		rpL1 = new RedisPool(conf, "l1.master");
+		rps = new RedisPoolSelector(conf, rpL1);
 	}
 	
 	public ClientConf getConf() {
@@ -361,57 +277,25 @@ public class PhotoClient {
 	public void setSocketHash(ConcurrentHashMap<String, SocketHashEntry> socketHash) {
 		this.socketHash = socketHash;
 	}
-
-	public Jedis getJedis() {
-		return jedis.get();
-	}
-	
-	public void setJedis(Jedis jedis) {
-		this.jedis.set(jedis);
-	}
-	
-	public void refreshJedis() throws IOException {
-		synchronized (this) {
-			if (jedis.get() == null) {
-				RedisInstance ri = conf.getRedisInstance();
-				jedis.set(rf.getNewInstance(ri));
-			}
-		}
-		if (jedis.get() == null)
-			throw new IOException("Invalid Jedis connection.");
-	}
-	
-	public void recycleJedis() {
-		synchronized (this) {
-			if (jedis.get() != null) {
-				jedis.set(rf.putInstance(jedis.get()));
-			}
-		}
-	}
 	
 	public List<String> getActiveMMSByHB() throws IOException {
 		List<String> ls = new ArrayList<String>();
-		int err = 0;
+		Jedis jedis = rpL1.getResource();
 
-		refreshJedis();
 		try {
-			Set<String> keys = jedis.get().keys("mm.hb.*");
+			Set<String> keys = jedis.keys("mm.hb.*");
 
 			for(String hp : keys) {
-				String ipport = jedis.get().hget("mm.dns", hp.substring(6));
+				String ipport = jedis.hget("mm.dns", hp.substring(6));
 				if (ipport == null)
 					ls.add(hp.substring(6));
 				else
 					ls.add(ipport);
 			}
 		} catch (JedisException e) {
-			err = -1;
 			System.out.println("Get mm.hb.* failed: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			rpL1.putInstance(jedis);
 		}
 
 		return ls;
@@ -473,10 +357,12 @@ public class PhotoClient {
 		}
 	}
 	
-	private String __syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+	private String __syncStorePhoto(String set, String md5, byte[] content, 
+			SocketHashEntry she) throws IOException {
 		long id = she.getFreeSocket();
 		if (id == -1)
-			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
+			throw new IOException("Could not find free socket for server: " + 
+					she.hostname + ":" + she.port);
 		DataOutputStream storeos = she.map.get(id).dos;
 		DataInputStream storeis = she.map.get(id).dis;
 		
@@ -502,7 +388,8 @@ public class PhotoClient {
 			r = __handleInput(storeis);
 			she.setFreeSocket(id);
 		} catch (Exception e) {
-			System.out.println("__syncStore send/recv failed: " + e.getMessage() + " r?null=" + (r == null ? true : false));
+			System.out.println("__syncStore send/recv failed: " + e.getMessage() + 
+					" r?null=" + (r == null ? true : false));
 			// remove this socket do reconnect?
 			she.delFromSockets(id);
 		}
@@ -510,26 +397,24 @@ public class PhotoClient {
 		if (r == null) {
 			// if we can't get reasonable response from redis, report it!
 			String rr = null;
-			int err = 0;
+			RedisConnection rc = null;
 			
-			refreshJedis();
 			try {
-				rr = jedis.get().hget(set, md5);
+				rc = rps.getL2(set, true);
+				Jedis jedis = rc.jedis;
+				if (jedis != null)
+					rr = jedis.hget(set, md5);
 			} catch (JedisConnectionException e) {
-				System.out.println("Jedis connection broken in __syncStoreObject, wait ...");
-				try {
-					Thread.sleep(1000);
-				} catch (InterruptedException e1) {
-				}
-				err = -1;
-				jedis.set(rf.putBrokenInstance(jedis.get()));
+				System.out.println(set + "@" + md5 + 
+						": Jedis connection broken in __syncStoreObject");
 			} catch (JedisException e) {
-				err = -1;
+				System.out.println(set + "@" + md5 + 
+						": Jedis exception: " + e.getMessage());
+			} catch (Exception e) {
+				System.out.println(set + "@" + md5 +
+						": Exception: " + e.getMessage());
 			} finally {
-				if (err < 0)
-					jedis.set(rf.putBrokenInstance(jedis.get()));
-				else
-					jedis.set(rf.putInstance(jedis.get()));
+				rps.putL2(rc);
 			}
 			if (rr == null)
 				throw new IOException("MM Server failed or Metadata connection broken?");
@@ -544,10 +429,12 @@ public class PhotoClient {
 		return s;
 	}
 	
-	private void __asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+	private void __asyncStorePhoto(String set, String md5, byte[] content, 
+			SocketHashEntry she) throws IOException {
 		long id = she.getFreeSocket();
 		if (id == -1)
-			throw new IOException("Could not get free socket for server: " + she.hostname + ":" + she.port);
+			throw new IOException("Could not get free socket for server: " + 
+					she.hostname + ":" + she.port);
 		DataOutputStream storeos = she.map.get(id).dos;
 		
 		//action,set,md5,content的length写过去
@@ -583,88 +470,90 @@ public class PhotoClient {
 	 * @param sock
 	 * @return		
 	 */
-	public String syncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she, boolean nodedup) throws IOException {
+	public String syncStorePhoto(String set, String md5, byte[] content, 
+			SocketHashEntry she, boolean nodedup) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP || nodedup) {
 			return __syncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;
-			int err = 0;
-			
-			refreshJedis();
+			RedisConnection rc = null;
+
 			try {
-				info = jedis.get().hget(set, md5);
+				rc = rps.getL2(set, true);
+				Jedis jedis = rc.jedis;
+				if (jedis != null)
+					info = jedis.hget(set, md5);
 				
 				if (info != null) {
 					// NOTE: the delete unit is SET, thus, do NOT need reference 
 					if (conf.isLogDupInfo())
-						jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
+						jedis.hincrBy("mm.dedup.info", set + "@" + md5, 1);
 
 					return info;
 				}
 			} catch (JedisConnectionException e) {
-				System.out.println("Jedis connection broken, wait ...");
-				try {
-					Thread.sleep(1000);
-				} catch (InterruptedException e1) {
-				}
-				err = -1;
+				System.out.println(set + "@" + md5 +
+						": Jedis connection broken in syncStorePhoto");
 			} catch (JedisException e) {
-				err = -1;
+				System.out.println(set + "@" + md5 +
+						": Jedis exception in syncStorePhoto: " + e.getMessage());
+			} catch (Exception e) {
+				System.out.println(set + "@" + md5 +
+						": Exception in syncStorePhoto: " + e.getMessage());
 			} finally {
-				if (err < 0)
-					jedis.set(rf.putBrokenInstance(jedis.get()));
-				else
-					jedis.set(rf.putInstance(jedis.get()));
+				rps.putL2(rc);
 			}
 			
 			return __syncStorePhoto(set, md5, content, she);
 		}
-		throw new IOException("Invalid Operation Mode.");
+		throw new IOException("Invalid Operation Mode: either NODEDUP or DEDUP.");
 	}
 	
-	public void asyncStorePhoto(String set, String md5, byte[] content, SocketHashEntry she) throws IOException {
+	public void asyncStorePhoto(String set, String md5, byte[] content, 
+			SocketHashEntry she) throws IOException {
 		if (conf.getMode() == ClientConf.MODE.NODEDUP) {
 			__asyncStorePhoto(set, md5, content, she);
 		} else if (conf.getMode() == ClientConf.MODE.DEDUP) {
 			String info = null;
-			int err = 0;
+			RedisConnection rc = null;
 			
-			refreshJedis();
 			try {
-				info = jedis.get().hget(set, md5);
-			} catch (JedisConnectionException e) {
-				System.out.println("Jedis connection broken, wait ...");
-				try {
-					Thread.sleep(1000);
-				} catch (InterruptedException e1) {
+				rc = rps.getL2(set, true);
+				Jedis jedis = rc.jedis;
+				if (jedis != null)
+					info = jedis.hget(set, md5);
+				
+				if (info == null) {
+					__asyncStorePhoto(set, md5, content, she);
+				} else { 
+					// NOTE: log the dup info
+					if (conf.isLogDupInfo())
+						jedis.hincrBy("mm.dedup.info", set + "@" + md5, 1);
 				}
-				err = -1;
+			} catch (JedisConnectionException e) {
+				System.out.println(set + "@" + md5 +
+						": Jedis connection broken in asyncStorePhoto");
 			} catch (JedisException e) {
-				err = -1;
+				System.out.println(set + "@" + md5 +
+						": Jedis exception: " + e.getMessage());
+			} catch (Exception e) {
+				System.out.println(set + "@" + md5 +
+						": Exception: " + e.getMessage());
 			} finally {
-				if (err < 0)
-					jedis.set(rf.putBrokenInstance(jedis.get()));
-				else
-					jedis.set(rf.putInstance(jedis.get()));
-			}
-
-			if (info == null) {
-				__asyncStorePhoto(set, md5, content, she);
-			} else { 
-				// NOTE: log the dup info
-				if (conf.isLogDupInfo())
-					jedis.get().hincrBy("mm.dedup.info", set + "@" + md5, 1);
+				rps.putL2(rc);
 			}
 		} else {
-			throw new IOException("Invalid Operation Mode.");
+			throw new IOException("Invalid Operation Mode: either NODEDUP or DEDUP.");
 		}
 	}
 	
-	//批量存储时没有判断重复
-	public String[] mPut(String set, String[] md5s, byte[][] content, SocketHashEntry she) throws IOException {
+	// 批量存储时没有判断重复
+	public String[] mPut(String set, String[] md5s, byte[][] content, 
+			SocketHashEntry she) throws IOException {
 		long id = she.getFreeSocket();
 		if (id == -1)
-			throw new IOException("Could not find free socket for server: " + she.hostname + ":" + she.port);
+			throw new IOException("Could not find free socket for server: " + 
+					she.hostname + ":" + she.port);
 		DataOutputStream dos = she.map.get(id).dos;
 		DataInputStream dis = she.map.get(id).dis;
 		
@@ -745,7 +634,7 @@ public class PhotoClient {
 					searchSocket = old;
 				}
 			} else 
-				throw new IOException("Invalid server name or port.");
+				throw new IOException("Invalid server name or port: " + server);
 		}
 		
 		// action, set, md5
@@ -755,7 +644,7 @@ public class PhotoClient {
 		header[2] = (byte)md5.getBytes().length;
 		long id = searchSocket.getFreeSocket();
 		if (id == -1)
-			throw new IOException("Could not get free socket for server " + server);
+			throw new IOException("Could not get free socket for server: " + server);
 
 		XSearchResult xsr = null;
 		try {
@@ -773,7 +662,9 @@ public class PhotoClient {
 			searchSocket.delFromSockets(id);
 		}
 
-		if (xsr.result != null) {
+		if (xsr == null) {
+			throw new IOException("Invalid response from mm server:" + server);
+		} else if (xsr.result != null) {
 			return xsr.result;
 		} else if (xsr.redirect_info != null) {
 			// we should redirect the request now
@@ -791,32 +682,33 @@ public class PhotoClient {
 	 */
 	public byte[] getPhoto(String set, String md5) throws IOException {
 		String info = null;
-		int err = 0;
-		
-		refreshJedis();
+		RedisConnection rc = null;
+
 		try {
-			if (isInRedis(set))
-				info = jedis.get().hget(set, md5);
-			else
+			rc = rps.getL2(set, false);
+			Jedis jedis = rc.jedis;
+			if (isInRedis(set)) {
+				if (jedis != null)
+					info = jedis.hget(set, md5);
+			} else {
 				return getPhotoFromSS(set, md5);
-		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken, wait in getObject ...");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
 			}
-			err = -1;
+		} catch (JedisConnectionException e) {
+			System.out.println(set + "@" + md5 + 
+					": Jedis connection broken in getPhoto");
 		} catch (JedisException e) {
-			err = -1;
+			System.out.println(set + "@" + md5 +
+					": Jedis exception in getPhoto: " + e.getMessage());
+		} catch (Exception e) {
+			System.out.println(set + "@" + md5 + 
+					": Exception in getPhoto: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			rps.putL2(rc);
 		}
 		
 		if (info == null) {
-			throw new IOException(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
+			throw new IOException(set + "@" + md5 + 
+					" doesn't exist in MMM server or connection broken.");
 		} else {
 			return searchPhoto(info);
 		}
@@ -841,7 +733,7 @@ public class PhotoClient {
 			}
 		}
 		if (r == null)
-			throw new IOException("Failed to search MM object.");
+			throw new IOException("Failed to search MM object: " + infos);
 		return r;
 	}
 	
@@ -851,7 +743,8 @@ public class PhotoClient {
 	 */
 	public byte[] searchByInfo(String info, String[] infos) throws IOException {
 		if (infos.length != 7) {
-			throw new IOException("Invalid INFO string, info length is " + infos.length);
+			throw new IOException("Invalid INFO string, info length is " + 
+					infos.length);
 		}
 		
 		SocketHashEntry searchSocket = null;
@@ -879,7 +772,7 @@ public class PhotoClient {
 					searchSocket = old;
 				}
 			} else 
-				throw new IOException("Invalid server name or port.");
+				throw new IOException("Invalid server name or port: " + server);
 		}
 
 		//action,info的length写过去
@@ -941,66 +834,64 @@ public class PhotoClient {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+		rps.quit();
+		getRpL1().quit();
 	}
 		
 	public Map<String, String> getNrFromSet(String set) throws IOException {
-		int err = 0;
-		
-		refreshJedis();
+		RedisConnection rc = null;
+
 		try {
-			return jedis.get().hgetAll(set);
+			rc = rps.getL2(set, false);
+			Jedis jedis = rc.jedis;
+			if (jedis != null)
+				return jedis.hgetAll(set);
 		} catch (JedisConnectionException e) {
 			e.printStackTrace();
-			System.out.println("Jedis connection broken in getNr, wait ...");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
+			System.out.println(set + ": Jedis connection broken in getNr");
 		} catch (JedisException e) {
-			err = -1;
+			System.out.println(set + ": Jedis exception: " + e.getMessage());
+		} catch (Exception e) {
+			System.out.println(set + ": Exception: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			rps.putL2(rc);
 		}
-		throw new IOException("Jedis Connection broken.");
+		throw new IOException(set + ": Jedis Connection broken?");
 	}
 	
 	public XRefGroup createXRefGroup() {
-		return new XRefGroup();
+		return new XRefGroup(conf, wmap, curgrpno);
 	}
 	
 	public void removeXRefGroup(XRefGroup g) {
-		wmap.remove(g.gid);
+		wmap.remove(g.getGid());
 	}
 	
 	public int __iget(int gid, int seqno, String set, String md5, long alen) throws IOException, StopException {
 		String info = null;
-		int err = 0;
-		
-		refreshJedis();
+		RedisConnection rc = null;
+
 		try {
-			info = jedis.get().hget(set, md5);
+			rc = rps.getL2(set, false);
+			Jedis jedis = rc.jedis;
+			if (jedis != null)
+				info = jedis.hget(set, md5);
 		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken, wait in getObject ...");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
+			System.out.println(set + "@" + md5 + 
+					": Jedis connection broken in __iget");
 		} catch (JedisException e) {
-			err = -1;
+			System.out.println(set + "@" + md5 +
+					": Jedis exception: " + e.getMessage());
+		} catch (Exception e) {
+			System.out.println(set + "@" + md5 +
+					": Exception: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			rps.putL2(rc);
 		}
-		
+
 		if (info == null) {
-			throw new IOException(set + "@" + md5 + " doesn't exist in MMM server or connection broken.");
+			throw new IOException(set + "@" + md5 + 
+					" doesn't exist in MMM server or connection broken.");
 		} else {
 			return __igetInfo(gid, seqno, info, alen);
 		}
@@ -1022,7 +913,8 @@ public class PhotoClient {
 				r = __igetMMObject(gid, seqno, info, si);
 				if (r) break;
 			} catch (IOException e){
-				System.err.println("GID " + gid + " seqno " + seqno + " infos " + infos + " -> Got IOExcpetion : " + e.getMessage());
+				System.err.println("GID " + gid + " seqno " + seqno + 
+						" infos " + infos + " -> Got IOExcpetion : " + e.getMessage());
 				continue;
 			}
 		}
@@ -1034,7 +926,8 @@ public class PhotoClient {
 	
 	public boolean __igetMMObject(int gid, int seqno, String info, String[] infos) throws IOException {
 		if (infos.length != 7) {
-			throw new IOException("Invalid INFO string, info length is " + infos.length);
+			throw new IOException("Invalid INFO string, info length is " + 
+					infos.length);
 		}
 		
 		SocketHashEntry igetSocket = null;
@@ -1055,7 +948,7 @@ public class PhotoClient {
 						new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
 				igetSH.put(server, igetSocket);
 			} else 
-				throw new IOException("Invalid server name or port.");
+				throw new IOException("Invalid server name or port: " + server);
 		}
 
 		//action,info的length写过去
@@ -1105,10 +998,10 @@ public class PhotoClient {
 	}
 	
 	public long iGet(XRefGroup g, int idx, String set, String md5, long alen) throws IOException, StopException {
-		XRef x = new XRef(idx, set + "@" + md5);
+		XRef x = new XRef(idx, set + "@" + md5, curseqno);
 		
 		// send it to server
-		int len = __iget(g.gid, x.seqno, set, md5, alen);
+		int len = __iget(g.getGid(), x.seqno, set, md5, alen);
 		// put it to group
 		if (len >= 0) {
 			g.addToGroup(x);
@@ -1142,7 +1035,7 @@ public class PhotoClient {
 	
 	public boolean iWaitAll(XRefGroup g) throws IOException {
 		do {
-			if (g.waitAll() || g.nr.get() == g.fina.size())
+			if (g.waitAll() || g.getNr().get() == g.getFina().size())
 				return true;
 
 			// progress inputs
@@ -1153,7 +1046,7 @@ public class PhotoClient {
 						for (SEntry se : she.map.values()) {
 							try {
 								if (__doProgress(se))
-									g.bts = System.currentTimeMillis();
+									g.setBts(System.currentTimeMillis());
 							} catch (IOException e1) {
 								e1.printStackTrace();
 								she.delFromSockets(se.id);
@@ -1189,7 +1082,7 @@ public class PhotoClient {
 		begin = System.nanoTime();
 		for (i = bi; i < keys.size(); i++) {
 			String key = keys.get(i);
-			XRef x = new XRef(i, key);
+			XRef x = new XRef(i, key, curseqno);
 			try {
 				for (String info : key.split("#")) {
 					try {
@@ -1200,12 +1093,12 @@ public class PhotoClient {
 							if (alen <= 0) {
 								throw new StopException();
 							}
-							if (__igetMMObject(g.gid, x.seqno, info, si)) {
+							if (__igetMMObject(g.getGid(), x.seqno, info, si)) {
 								g.addToGroup(x);
 								break;
 							}
 						} else {
-							int len = __iget(g.gid, x.seqno, si[0], si[1], alen);
+							int len = __iget(g.getGid(), x.seqno, si[0], si[1], alen);
 							alen -= len;
 							if (len >= 0) {
 								g.addToGroup(x);
@@ -1227,14 +1120,14 @@ public class PhotoClient {
 		
 		begin = System.nanoTime();
 		if (!iWaitAll(g)) {
-			System.out.println("Wait XRefGroup " + g.gid + " timed out: " + g.nr.get() + " " + g.toWait);
+			System.out.println("Wait XRefGroup " + g.getGid() + " timed out: " + g.getNr().get() + " " + g.getToWait());
 		}
 		end = System.nanoTime();
 		System.out.println(" -> RECV nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + " us.");
 		
 		removeXRefGroup(g);
 		
-		for (XRef x : g.fina.values()) {
+		for (XRef x : g.getFina().values()) {
 			r.set(x.idx - bi, x.value);
 		}
 		
@@ -1243,92 +1136,74 @@ public class PhotoClient {
 		
 	public TreeSet<Long> getSets(String prefix) throws IOException {
 		TreeSet<Long> tranges = new TreeSet<Long>();
-		int err = 0;
-		refreshJedis();
-		
-		try {
-			Set<String> keys = jedis.get().keys(prefix + "*.srvs");
+		Jedis jedis = getRpL1().getResource();
 
-			if (keys != null && keys.size() > 0) {
-				for (String key : keys) {
-					key = key.replaceFirst(".srvs", "");
-					key = key.replaceFirst(prefix, "");
-					try {
-						tranges.add(Long.parseLong(key));
-					} catch (NumberFormatException e) {
+		try {
+			if (jedis != null) {
+				Set<String> keys = jedis.keys("`" + prefix + "*");
+
+				if (keys != null && keys.size() > 0) {
+					for (String key : keys) {
+						key = key.replaceFirst("`", "");
+						key = key.replaceFirst(prefix, "");
+						try {
+							tranges.add(Long.parseLong(key));
+						} catch (NumberFormatException e) {
+						}
 					}
 				}
 			}
 		} catch (JedisException e) {
-			err = -1;
+			System.out.println(prefix + ": Jedis exception: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			getRpL1().putInstance(jedis);
 		}
 		
 		return tranges;
 	}
 
 	public List<String> getSetElements(String set) {
-		List<String> r = null;
-		int err = 0;
+		List<String> r = new ArrayList<String>();
+		RedisConnection rc = null;
 		
 		try {
-			refreshJedis();
-		} catch (IOException e) { 
-			return null;
-		}
-		
-		try {
-			if (conf.isGetkeys_do_sort()) {
-				Map<String, String> kvs = jedis.get().hgetAll(set);
-				TreeMap<String, String> t = new TreeMap<String, String>();
-				r = new ArrayList<String>();
+			rc = rps.getL2(set, false);
+			Jedis jedis = rc.jedis;
+			if (jedis != null) {
+				if (conf.isGetkeys_do_sort()) {
+					Map<String, String> kvs = jedis.hgetAll(set);
+					TreeMap<String, String> t = new TreeMap<String, String>();
 
-				for (Map.Entry<String, String> e : kvs.entrySet()) {
-					String[] v = e.getValue().split("@|#");
-					if (v.length >= 7) {
-						t.put(v[6] + "." + v[3] + "." + (String.format("%015d", Long.parseLong(v[4])) + "." + v[2]),
-								set + "@" + e.getKey());
-					} else {
-						r.add(set + "@" + e.getKey());
+					for (Map.Entry<String, String> e : kvs.entrySet()) {
+						String[] v = e.getValue().split("@|#");
+						if (v.length >= 7) {
+							t.put(v[6] + "." + v[3] + "." + 
+									(String.format("%015d", Long.parseLong(v[4])) + "." + v[2]),
+									set + "@" + e.getKey());
+						} else {
+							r.add(set + "@" + e.getKey());
+						}
 					}
+					r.addAll(t.values());
+					kvs.clear();
+					t.clear();
+				} else {
+					Set<String> t = jedis.hkeys(set);
+
+					for (String v : t) {
+						r.add(set + "@" + v);
+					}
+					t.clear();
 				}
-				r.addAll(t.values());
-				/*int i = 0;
-				for (Map.Entry<String, String> x : t.entrySet()) {
-					if (i > 100)
-						break;
-					System.out.println(x.getKey() + " -> " + x.getValue());
-					i++;
-				}*/
-				kvs.clear();
-				t.clear();
-			} else {
-				Set<String> t = jedis.get().hkeys(set);
-				r = new ArrayList<String>();
-				
-				for (String v : t) {
-					r.add(set + "@" + v);
-				}
-				t.clear();
 			}
 		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
+			System.out.println(set + ": Jedis connection broken in getSetElements");
+		} catch (JedisException e) {
+			System.out.println(set + ": Jedis exception: " + e.getMessage());
 		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
+			System.out.println(set + ": Exception: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			rps.putL2(rc);
 		}
 		return r;
 	}
@@ -1339,14 +1214,14 @@ public class PhotoClient {
 	 * @return
 	 * @throws IOException
 	 */
-	private TreeSet<String> getAllSets() throws IOException {
+	private TreeSet<String> getAllSets(Jedis jedis) throws IOException {
 		TreeSet<String> tranges = new TreeSet<String>();
 
-		Set<String> keys = jedis.get().keys("*.srvs");
+		Set<String> keys = jedis.keys("`*");
 
 		if (keys != null && keys.size() > 0) {
 			for (String key : keys) {
-				key = key.replaceAll("\\.srvs", "");
+				key = key.replaceAll("`", "");
 				tranges.add(key);
 			}
 		}
@@ -1391,49 +1266,56 @@ public class PhotoClient {
 	
 	public void scrubMetadata(String server, int port) throws IOException {
 		String member = server + ":" + port;
-		int err = 0;
+		Jedis jedis = getRpL1().getResource();
+		if (jedis == null)
+			throw new IOException("Invalid RpL1 pool, could not get available connection");
 		
 		try {
-			refreshJedis();
-		} catch (IOException e) {
-			System.err.println("refreshJedis() failed w/ " + e.getMessage());
-			return;
-		}
-		
-		try {
-			Double gd = jedis.get().zscore("mm.active", member);
+			Double gd = jedis.zscore("mm.active", member);
 			if (gd != null) {
 				Long sid = gd.longValue();
-				TreeSet<String> sets = getAllSets();
+				TreeSet<String> sets = getAllSets(jedis);
+				
 				for (String set : sets) {
 					System.out.println("-> Begin Scrub SET " + set + " ... ");
-					Map<String, String> kvs = jedis.get().hgetAll(set);
+					RedisConnection rc = null;
+					
+					try {
+						rc = rps.getL2(set, false);
+						Jedis j = rc.jedis;
+						if (j != null) {
+							Map<String, String> kvs = j.hgetAll(set);
 
-					if (kvs != null) {
-						for (Map.Entry<String, String> e : kvs.entrySet()) {
-							GenValue gv = __gen_value(e.getValue(), sid);
-							if (gv != null) {
-								// ok, do update now
-								if (gv.newValue != null)
-									jedis.get().hset(set, e.getKey(), gv.newValue);
-								else
-									jedis.get().hdel(set, e.getKey());
-								System.out.println("HSET " + set + " " + e.getKey() + " " + gv.newValue + " " + e.getValue());
+							if (kvs != null) {
+								for (Map.Entry<String, String> e : kvs.entrySet()) {
+									GenValue gv = __gen_value(e.getValue(), sid);
+									if (gv != null) {
+										// ok, do update now
+										if (gv.newValue != null)
+											j.hset(set, e.getKey(), gv.newValue);
+										else
+											j.hdel(set, e.getKey());
+										System.out.println("HSET " + set + " " + e.getKey() + " " + gv.newValue + " " + e.getValue());
+									}
+								}
+								kvs.clear();
 							}
 						}
-						kvs.clear();
+					} catch (JedisException e) {
+						System.out.println(set + ": Jedis exception: " + e.getMessage());
+					} catch (Exception e) {
+						System.out.println(set + ": exception: " + e.getMessage());
+					} finally {
+						rps.putL2(rc);
 					}
 				}
 			} else {
 				System.out.println("Find server " + member + " failed.");
 			}
 		} catch (JedisException e) {
-			err = -1;
+			System.out.println("L1 pool: Jedis Exception: " + e.getMessage());
 		} finally {
-			if (err < 0) 
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
+			getRpL1().putInstance(jedis);
 		}
 	}
 	
@@ -1483,7 +1365,7 @@ public class PhotoClient {
 							searchSocket = old;
 						}
 					} else 
-						throw new IOException("Invalid server name or port.");
+						throw new IOException("Invalid server name or port: " + server);
 				}
 
 				byte[] header = new byte[4];
@@ -1565,118 +1447,5 @@ public class PhotoClient {
 
 	public void setSs_id(long ss_id) {
 		this.ss_id = ss_id;
-	}
-	
-	public String list(String set, String prefix) throws IOException {
-		int err = 0;
-		ArrayList<String> files = new ArrayList<String>();
-		ScanParams sp = new ScanParams();
-		boolean isDone = false;
-		String cursor = ScanParams.SCAN_POINTER_START;
-		String match_str = null;
-		String match_str2 = null;
-		if (prefix.endsWith("/"))
-			match_str = prefix + "*";
-		else {
-			match_str = prefix + "/*";
-			match_str2 = prefix;
-		}
-		sp.match(match_str);
-		
-		System.out.println("MATCH: " + match_str);
-		refreshJedis();
-		try {
-			while (!isDone) {
-				ScanResult<Entry<String, String>> r = jedis.get().hscan(set, cursor, sp);
-				for (Entry<String, String> entry : r.getResult()) {
-					String sub = entry.getKey().substring(match_str.length() - 2);
-					System.out.println("-> " + entry.getKey() + ", " + sub);
-					if (sub.matches("/.+") && !sub.matches("/.*/.+")) {
-						files.add(entry.getKey());
-					}
-				}
-				cursor = r.getStringCursor();
-				if (cursor.equalsIgnoreCase("0")) {
-					isDone = true;
-				}
-			}
-			if (match_str2 != null) {
-				String entry = jedis.get().hget(set, match_str2);
-				if (entry != null) {
-					files.add(match_str2);
-				}
-			}
-		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken, wait in getObject ...");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
-		} catch (JedisException e) {
-			err = -1;
-		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
-		}
-		
-		String r = "";
-		for (String f : files) {
-			if (f.endsWith("/"))
-				r += "drw-r--r--   " + f + "\n";
-			else
-				r += "-rw-r--r--   " + f + "\n";
-		}
-		return r;
-	}
-	
-	/**
-	 * 
-	 * @param set
-	 * @param dir_full_path
-	 * @return 0: ok, 1: exist, 2: failed
-	 * @throws IOException
-	 */
-	public int mkdir(String set, String dir_full_path) throws IOException {
-		int err = 0;
-		
-		refreshJedis();
-		
-		if (!dir_full_path.endsWith("/"))
-			dir_full_path += "/";
-		if (dir_full_path.length() == 1)
-			return 1;
-		try {
-			String parent = dir_full_path.substring(0, 
-					dir_full_path.lastIndexOf("/", dir_full_path.length() - 2));
-			System.out.println("parent=" + parent);
-			if (parent.length() > 1) {
-				if (jedis.get().hget(set, parent) == null)
-					return 2;
-			}
-			jedis.get().hget(set, parent);
-			long r = jedis.get().hset(set, dir_full_path, "__IS_DIRECTORY");
-			if (r == 1)
-				return 0;
-			else
-				return 1;
-		} catch (JedisConnectionException e) {
-			System.out.println("Jedis connection broken, wait in getObject ...");
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
-		} catch (JedisException e) {
-			err = -1;
-		} finally {
-			if (err < 0)
-				jedis.set(rf.putBrokenInstance(jedis.get()));
-			else
-				jedis.set(rf.putInstance(jedis.get()));
-		}
-		return 2;
 	}
 }

@@ -1,7 +1,7 @@
 package iie.mm.server;
 
-import iie.mm.tools.MM2SSMigrater;
-
+import iie.mm.common.RedisPool;
+import iie.mm.common.RedisPoolSelector.RedisConnection;
 import java.io.File;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -22,7 +22,6 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.ScanParams;
 import redis.clients.jedis.ScanResult;
-import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
 /**
@@ -40,11 +39,11 @@ public class ServerHealth extends TimerTask {
 	private ServerConf conf;
 	private long lastFetch = System.currentTimeMillis();
 	private long lastScrub = System.currentTimeMillis();
-	private Jedis jedis = null;
 	private long used_memory = 0;
 	private boolean isMigrating = false;
 	private boolean isCleaningDI = false;
 	private boolean isFixingObj = false;
+	private boolean doFetch = false;
 	private int nhours = 1;
 
 	public static class SetInfo {
@@ -67,21 +66,47 @@ public class ServerHealth extends TimerTask {
 		super();
 		this.conf = conf;
 	}
+	
+	private void __do_migrate(String s) {
+		if (!isMigrating && conf.isEnableSSMig()) {
+			isMigrating = true;
+			int err = SSMigrate(s + " [SSMigrate]");
+			if (err < 0) {
+				System.out.println(s + " migrate to SS failed w/ " + err);
+			} else {
+				System.out.println(s + " migrate to SS " + err + " entries.");
+			}
+			isMigrating = false;
+		}
+	}
+	
+	private void __do_clean(String s) throws Exception {
+		if (!isCleaningDI) {
+			isCleaningDI = true;
+			// NOTE: user can set cleanDedupInfo arg(iter) here
+			int err = cleanDedupInfo(s + " [cleanDedupInfo]", 0);
+			if (err < 0) {
+				System.out.println(s + " clean dedupinfo failed w/ " + err);
+			} else {
+				System.out.println(s + " clean dedupinfo " + err + " entries.");
+			}
+			isCleaningDI = false;
+		}
+	}
 
 	@Override
 	public void run() {
 		try {
 			DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 			String s = df.format(new Date());
-			int err = 0;
 			
 			// fetch used_memory every run
 			long cur = System.currentTimeMillis();
 
 			if (cur - lastFetch >= conf.getMemCheckInterval()) {
+				Jedis jedis = null;
 				try {
-					if (jedis == null)
-						jedis = new RedisFactory(conf).getDefaultInstance();
+					jedis = StorePhoto.getRpL1(conf).getResource();
 					if (jedis == null)
 						System.out.println(s + " get redis connection failed.");
 					else {
@@ -101,41 +126,60 @@ public class ServerHealth extends TimerTask {
 						}
 					}
 				} catch (Exception e) {
-					jedis = RedisFactory.putBrokenInstance(jedis);
+					e.printStackTrace();
 				} finally {
-					jedis = RedisFactory.putInstance(jedis);
+					StorePhoto.getRpL1(conf).putInstance(jedis);
 				}
 				lastFetch = cur;
+				doFetch = true;
 			}
 			if (conf.isSSMaster() && 
 					used_memory > conf.getMemorySize() * conf.getMemFullRatio()) {
-				System.out.println(s + " detect used_memory=" + used_memory +
+				System.out.println(s + " detect L1 pool used_memory=" + used_memory +
 						" > " + conf.getMemFullRatio() + "*" + conf.getMemorySize());
-				
-				if (!isMigrating && conf.isEnableSSMig()) {
-					isMigrating = true;
-					err = SSMigrate(s + " [SSMigrate]");
-					if (err < 0) {
-						System.out.println(s + " migrate to SS failed w/ " + err);
-					} else {
-						System.out.println(s + " migrate to SS " + err + " entries.");
+			}
+			if (conf.isSSMaster() && doFetch) {
+				doFetch = false;
+				for (Map.Entry<String, RedisPool> entry : 
+					StorePhoto.getRPS(conf).getRpL2().entrySet()) {
+					long umem = 0;
+					
+					// get info memory
+					Jedis jedis = null;
+					try {
+						jedis = entry.getValue().getResource();
+						if (jedis != null) {
+							String info = jedis.info("memory");
+						
+							if (info != null) {
+								String lines[] = info.split("\r\n");
+
+								if (lines.length >= 9) {
+									String used_mem[] = lines[1].split(":");
+
+									if (used_mem.length == 2 && 
+											used_mem[0].equalsIgnoreCase(
+													"used_memory")) {
+										umem = Long.parseLong(used_mem[1]);
+									}
+								}
+							}
+						}
+					} finally {
+						entry.getValue().putInstance(jedis);
 					}
-					isMigrating = false;
-				}
-				if (!isCleaningDI) {
-					isCleaningDI = true;
-					// NOTE: user can set cleanDedupInfo arg(iter) here
-					err = cleanDedupInfo(s + " [cleanDedupInfo]", 0);
-					if (err < 0) {
-						System.out.println(s + " clean dedupinfo failed w/ " + err);
-					} else {
-						System.out.println(s + " clean dedupinfo " + err + " entries.");
+					// check ration and call migrate/clean
+					if (umem > conf.getMemorySize() * conf.getMemFullRatio()) {
+						System.out.println(s + " detect L2 pool " + entry.getKey() +
+								"used_memory=" + umem + " > " + 
+								conf.getMemFullRatio() + "*" + conf.getMemorySize());
+						__do_migrate(s);
+						__do_clean(s);
+						if (!isFixingObj) {
+							isFixingObj = true;
+							isFixingObj = false;
+						}
 					}
-					isCleaningDI = false;
-				}
-				if (!isFixingObj) {
-					isFixingObj = true;
-					isFixingObj = false;
 				}
 			}
 			if (cur - lastScrub >= conf.getSpaceOperationInterval()) {
@@ -155,8 +199,8 @@ public class ServerHealth extends TimerTask {
 	 * @throws Exception
 	 */
 	private int migrateSet(String set) throws Exception {
-		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
-		int err = 0, nr = 0;
+		Jedis jedis = StorePhoto.getRpL1(conf).getResource();
+		int nr = 0;
 
 		if (jedis == null) {
 			throw new Exception("Could not get avaliable Jedis instance.");
@@ -209,12 +253,9 @@ public class ServerHealth extends TimerTask {
 		} catch (LMDBException le) {
 			System.out.println("LMDBException: " + le.getLocalizedMessage());
 		} catch (JedisException je) { 
-			err = -1;
+			je.printStackTrace();
 		} finally {
-			if (err < 0)
-				jedis = RedisFactory.putBrokenInstance(jedis);
-			else
-				jedis = RedisFactory.putInstance(jedis);
+			StorePhoto.getRpL1(conf).putInstance(jedis);
 		}
 
 		return nr;
@@ -225,94 +266,98 @@ public class ServerHealth extends TimerTask {
 	 */
 	private int recycleSet(int up2xhour) throws Exception {
 		DateFormat df2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
+		Jedis jedis = null;
 		long ckpt_ts = ServerConf.getCkpt_ts();
-		int err = 0, nr = 0;
-		
-		if (jedis == null)
-			throw new Exception("Could not get avaliable Jedis instance.");
+		int nr = 0;
 		
 		// get all sets
 		TreeSet<String> temp = new TreeSet<String>();
-		try {
-			Set<String> keys = jedis.keys("*.blk.*");
-			
-			if (keys != null && keys.size() > 0) {
-				String[] keya = keys.toArray(new String[0]);
-				
-				for (int i = 0; i < keya.length; i++) {
-					String set = keya[i].split("\\.")[0];
-					
-					if (Character.isDigit(set.charAt(0))) {
-						temp.add(set);
-					} else {
-						temp.add(set.substring(1));
-					}
-				}
-			}
-			
-			String[] prefixs = new String[]{"", "i", "t", "a", "v", "o", "s"};
-			
-			for (String set : temp) {
+		for (Map.Entry<String, RedisPool> entry : 
+			StorePhoto.getRPS(conf).getRpL2().entrySet()) {
+			jedis = entry.getValue().getResource();
+			if (jedis != null) {
 				try {
-					long thistime = Long.parseLong(set);
-					
-					if (ckpt_ts < 0)
-						ckpt_ts = thistime;
-					
-					if (ckpt_ts + up2xhour * 3600 >= thistime) {
-						// ok, delete it
-						System.out.println("Migrate Set:\t" + set + "\t" + 
-								df2.format(new Date(thistime * 1000)));
-						
-						for (String prefix : prefixs) {
-							try {
-								System.out.println("\t" + prefix + set + "\t" + migrateSet(prefix + set));
-								
-							} catch (Exception e) {
-								System.out.println("MEE: on set " + prefix + set + "," + e.getMessage());
+					Set<String> keys = jedis.keys("*.blk.*");
+
+					if (keys != null && keys.size() > 0) {
+						for (String k : keys) {
+							String set = k.split("\\.")[0];
+
+							if (Character.isDigit(set.charAt(0))) {
+								temp.add(set);
+							} else {
+								temp.add(set.substring(1));
 							}
 						}
-						// ok, update ckpt timestamp: if > ts, check redis, else check lmdb.
-						String saved = jedis.get("mm.ckpt.ts");
-						long saved_ts = 0, this_ts = 0;
-						if (saved != null) {
-							try {
-								saved_ts = Long.parseLong(saved);
-							} catch (Exception e) {
-							}
-						}
-						try {
-							this_ts = Long.parseLong(set);
-						} catch (Exception e) {
-						}
-						if (this_ts > saved_ts) {
-							jedis.set("mm.ckpt.ts", set);
-							ServerConf.setCkpt_ts(this_ts);
-						}
-						System.out.println("saved=" + saved_ts + ", this=" + this_ts);
-						nr++;
 					}
-				} catch (NumberFormatException nfe) {
-					System.out.println("NFE: on set " + set);
+				} catch (Exception e) {
+					e.printStackTrace();
+				} finally {
+					entry.getValue().putInstance(jedis);
 				}
 			}
-		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
+		}
+		
+		jedis = StorePhoto.getRpL1(conf).getResource();
+		if (jedis == null) {
+			System.out.println("get L1 redis pool failed");
+		} else {
+			try {	
+				String[] prefixs = new String[]{"", "i", "t", "a", "v", "o", "s"};
+
+				for (String set : temp) {
+					try {
+						long thistime = Long.parseLong(set);
+
+						if (ckpt_ts < 0)
+							ckpt_ts = thistime;
+
+						if (ckpt_ts + up2xhour * 3600 >= thistime) {
+							// ok, delete it
+							System.out.println("Migrate Set:\t" + set + "\t" + 
+									df2.format(new Date(thistime * 1000)));
+
+							for (String prefix : prefixs) {
+								try {
+									System.out.println("\t" + prefix + set + "\t" + 
+											migrateSet(prefix + set));
+
+								} catch (Exception e) {
+									System.out.println("MEE: on set " + prefix + set + "," + 
+											e.getMessage());
+								}
+							}
+							// ok, update ckpt timestamp: if > ts, check redis, else 
+							// check lmdb.
+							String saved = jedis.get("mm.ckpt.ts");
+							long saved_ts = 0, this_ts = 0;
+							if (saved != null) {
+								try {
+									saved_ts = Long.parseLong(saved);
+								} catch (Exception e) {
+								}
+							}
+							try {
+								this_ts = Long.parseLong(set);
+							} catch (Exception e) {
+							}
+							if (this_ts > saved_ts) {
+								jedis.set("mm.ckpt.ts", set);
+								ServerConf.setCkpt_ts(this_ts);
+							}
+							System.out.println("saved=" + saved_ts + ", this=" + this_ts);
+							nr++;
+						}
+					} catch (NumberFormatException nfe) {
+						System.out.println("NFE: on set " + set);
+					}
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+				temp.clear();
+			} finally {
+				StorePhoto.getRpL1(conf).putInstance(jedis);
 			}
-			err = -1;
-			temp.clear();
-		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
-			temp.clear();
-		} finally {
-			if (err < 0)
-				RedisFactory.putBrokenInstance(jedis);
-			else
-				RedisFactory.putInstance(jedis);
 		}
 		
 		return nr;
@@ -345,73 +390,75 @@ public class ServerHealth extends TimerTask {
 		return err;
 	}
 
-	private int cleanDedupInfo(String lh, long xiter) {
+	private int cleanDedupInfo(String lh, long xiter) throws Exception {
 		int kdays = conf.getDi_keep_days();
-		long cday = System.currentTimeMillis() / 86400000 * 86400;
-		long bTs;
-		long iter = 300000, j = 0;
 		int deleted = 0;
+		long cday = System.currentTimeMillis() / 86400000 * 86400;
+		long iter = 300000, j = 0, bTs;
+		Jedis jedis = null;
 
 		if (xiter > 0) iter = xiter;
 		bTs = cday - (kdays * 86400);
 		System.out.println(lh + " keep day time is " +
 				new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(bTs * 1000)));
 		
-		try {
-			if (jedis == null)
-				jedis = new RedisFactory(conf).getDefaultInstance();
-			if (jedis == null) {
-				System.out.println(lh + " get jedis connection failed.");
-				deleted = -1;
-			} else {
-				Map<String, String> infos = new HashMap<String, String>();
-				ScanParams sp = new ScanParams();
-				sp.match("*");
-				boolean isDone = false;
-				String cursor = ScanParams.SCAN_POINTER_START;
-				
-				while (!isDone) {
-					ScanResult<Entry<String, String>> r = jedis.hscan("mm.dedup.info", cursor, sp);
-					for (Entry<String, String> entry : r.getResult()) {
-						infos.put(entry.getKey(), entry.getValue());
+		for (Map.Entry<String, RedisPool> rp : StorePhoto.getRPS(conf).getRpL2().entrySet()) {
+			jedis = rp.getValue().getResource();
+			try {
+				if (jedis == null) {
+					System.out.println(lh + " get jedis connection failed.");
+					deleted--;
+				} else {
+					Map<String, String> infos = new HashMap<String, String>();
+					ScanParams sp = new ScanParams();
+					sp.match("*");
+					boolean isDone = false;
+					String cursor = ScanParams.SCAN_POINTER_START;
+
+					while (!isDone) {
+						ScanResult<Entry<String, String>> r = jedis.hscan("mm.dedup.info", 
+								cursor, sp);
+						for (Entry<String, String> entry : r.getResult()) {
+							infos.put(entry.getKey(), entry.getValue());
+						}
+						cursor = r.getStringCursor();
+						if (cursor.equalsIgnoreCase("0")) {
+							isDone = true;
+						}
+						j++;
+						if (j > iter)
+							break;
 					}
-					cursor = r.getStringCursor();
-					if (cursor.equalsIgnoreCase("0")) {
-						isDone = true;
-					}
-					j++;
-					if (j > iter)
-						break;
-				}
-				
-				if (infos != null && infos.size() > 0) {
-					for (Map.Entry<String, String> entry : infos.entrySet()) {
-						String[] k = entry.getKey().split("@");
-						long ts = -1;
-						
-						if (k.length == 2) {
-							try {
-								if (Character.isDigit(k[0].charAt(0))) {
-									ts = Long.parseLong(k[0]);
-								} else {
-									ts = Long.parseLong(k[0].substring(1));
+
+					if (infos != null && infos.size() > 0) {
+						for (Map.Entry<String, String> entry : infos.entrySet()) {
+							String[] k = entry.getKey().split("@");
+							long ts = -1;
+
+							if (k.length == 2) {
+								try {
+									if (Character.isDigit(k[0].charAt(0))) {
+										ts = Long.parseLong(k[0]);
+									} else {
+										ts = Long.parseLong(k[0].substring(1));
+									}
+								} catch (Exception e) {
+									// ignore it
+									System.out.println("Ignore set '" + k[0] + "'.");
 								}
-							} catch (Exception e) {
-								// ignore it
-								System.out.println("Ignore set '" + k[0] + "'.");
+							}
+							if (ts >= 0 && ts < bTs) {
+								jedis.hdel("mm.dedup.info", entry.getKey());
+								deleted++;
 							}
 						}
-						if (ts >= 0 && ts < bTs) {
-							jedis.hdel("mm.dedup.info", entry.getKey());
-							deleted++;
-						}
 					}
 				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			} finally {
+				rp.getValue().putInstance(jedis);
 			}
-		} catch (Exception e) {
-			jedis = RedisFactory.putBrokenInstance(jedis);
-		} finally {
-			jedis = RedisFactory.putInstance(jedis);
 		}
 		
 		return deleted;
@@ -422,7 +469,7 @@ public class ServerHealth extends TimerTask {
 		int err = 0;
 
 		try {
-			jedis = new RedisFactory(conf).getDefaultInstance();
+			jedis = StorePhoto.getRpL1(conf).getResource();
 			if (jedis == null) return -1;
 			Pipeline p = jedis.pipelined();
 
@@ -436,57 +483,41 @@ public class ServerHealth extends TimerTask {
 				}
 			}
 			p.sync();
-		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
 		} catch (Exception e) {
 			e.printStackTrace();
-			err = -1;
 		} finally {
-			if (err < 0)
-				RedisFactory.putBrokenInstance(jedis);
-			else
-				RedisFactory.putInstance(jedis);
+			StorePhoto.getRpL1(conf).putInstance(jedis);
 		}
 
 		return err;
 	}
 	
 	private int scrubSets() throws Exception {
-		Jedis jedis = new RedisFactory(conf).getDefaultInstance();
-		int err = 0;
-
-		// get all sets
 		TreeSet<String> sets = new TreeSet<String>();
-		try {
-			Set<String> keys = jedis.keys("*.blk.*");
+		int err = 0;
+		
+		// get all sets
+		for (Map.Entry<String, RedisPool> entry : 
+			StorePhoto.getRPS(conf).getRpL2().entrySet()) {
+			Jedis jedis = entry.getValue().getResource();
+			if (jedis != null) {
+				try {
+					Set<String> keys = jedis.keys("*.blk.*");
 
-			if (keys != null && keys.size() > 0) {
-				for (String k : keys) {
-					String set = k.split("\\.")[0];
-					
-					sets.add(set);
+					if (keys != null && keys.size() > 0) {
+						for (String k : keys) {
+							String set = k.split("\\.")[0];
+
+							sets.add(set);
+						}
+					}
+				} catch (Exception e) {
+					e.printStackTrace();
+					sets.clear();
+				} finally {
+					entry.getValue().putInstance(jedis);
 				}
 			}
-		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
-			sets.clear();
-		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
-			sets.clear();
-		} finally {
-			if (err < 0)
-				RedisFactory.putBrokenInstance(jedis);
-			else
-				RedisFactory.putInstance(jedis);
 		}
 
 		// scrub for each set
@@ -513,14 +544,16 @@ public class ServerHealth extends TimerTask {
 	}
 
 	private int scrubSetData(String set) throws Exception {
+		RedisConnection rc = null;
 		int err = 0;
 
 		try {
-			if (jedis == null)
-				jedis = new RedisFactory(conf).getDefaultInstance();
-			if (jedis == null) {
-				System.out.println("get jedis connection failed for " + set + " scrub.");
+			rc = StorePhoto.getRPS(conf).getL2(set, false);
+			if (rc.rp == null || rc.jedis == null) {
+				System.out.println("get L2 pool " + rc.id + " : conn failed for " + 
+						set + " scrub.");
 			} else {
+				Jedis jedis = rc.jedis;
 				// Map: disk.block -> refcount
 				Map<String, BlockRef> br = new HashMap<String, BlockRef>();
 				Map<String, Long> blockId = new HashMap<String, Long>();
@@ -529,7 +562,8 @@ public class ServerHealth extends TimerTask {
 				boolean isDone = false;
 				String cursor = ScanParams.SCAN_POINTER_START;
 
-				// BUG-XXX: if we get _blk max after hscan, then we might delete a block file false positive.
+				// BUG-XXX: if we get _blk max after hscan, then we might delete a block 
+				// file false positive.
 				for (String d : conf.getStoreArray()) {
 					String _blk = jedis.get(set + ".blk." + ServerConf.serverId + "." + d);
 					if (_blk != null)
@@ -661,11 +695,11 @@ public class ServerHealth extends TimerTask {
 				}
 			}
 		} catch (JedisException e) {
-			jedis = RedisFactory.putBrokenInstance(jedis);
+			e.printStackTrace();
 		} catch (Exception e) {
 			e.printStackTrace();
 		} finally {
-			jedis = RedisFactory.putInstance(jedis);
+			StorePhoto.getRPS(conf).putL2(rc);
 		}
 
 		return err;

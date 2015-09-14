@@ -1,24 +1,12 @@
 package iie.mm.client;
 
+import iie.mm.common.MMConf;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Random;
 import java.util.Set;
 
-public class ClientConf {
-	public static class RedisInstance {
-		public String hostname;
-		public int port;
-		
-		public RedisInstance(String hostname, int port) {
-			this.hostname = hostname;
-			this.port = port;
-		}
-	}
-	private Set<String> sentinels;
-	private List<RedisInstance> redisIns;
+public class ClientConf extends MMConf {
 	private String serverName;
 	private int serverPort;
 	private int dupNum;			//一个文件存储份数
@@ -34,12 +22,7 @@ public class ClientConf {
 		DEDUP, NODEDUP,
 	};
 	
-	public enum RedisMode {
-		SENTINEL, STANDALONE,
-	};
-	
 	private MODE mode;
-	private RedisMode redisMode;
 	
 	private boolean getkeys_do_sort = true;
 	
@@ -53,8 +36,6 @@ public class ClientConf {
 		if (redisHost == null) {
 			throw new UnknownHostException("Invalid redis server host name.");
 		}
-		redisIns = new ArrayList<RedisInstance>();
-		redisIns.add(new RedisInstance(redisHost, redisPort));
 		this.mode = mode;
 		
 		this.dupNum = dupNum;
@@ -63,7 +44,6 @@ public class ClientConf {
 	}
 	
 	public ClientConf(Set<String> sentinels, MODE mode, int dupNum) throws UnknownHostException {
-		redisIns = new ArrayList<RedisInstance>();
 		this.dupNum = dupNum;
 		this.mode = mode;
 		this.setSockPerServer(5);
@@ -72,28 +52,11 @@ public class ClientConf {
 	}
 	
 	public ClientConf() {
-		redisIns = new ArrayList<RedisInstance>();
 		this.dupNum = 1;
 		this.mode = MODE.NODEDUP;
 		this.setRedisMode(RedisMode.STANDALONE);
 		this.setSockPerServer(5);
 		this.setAutoConf(true);
-	}
-
-	public RedisInstance getRedisInstance() {
-		if (redisIns.size() > 0) {
-			Random r = new Random();
-			return redisIns.get(r.nextInt(redisIns.size()));
-		} else 
-			return null;
-	}
-	
-	public void setRedisInstance(RedisInstance ri) {
-		redisIns.add(ri);
-	}
-	
-	public void clrRedisIns() {
-		redisIns.clear();
 	}
 
 	public String getServerName() {
@@ -134,22 +97,6 @@ public class ClientConf {
 
 	public void setSockPerServer(int sockPerServer) {
 		this.sockPerServer = sockPerServer;
-	}
-
-	public RedisMode getRedisMode() {
-		return redisMode;
-	}
-
-	public void setRedisMode(RedisMode redisMode) {
-		this.redisMode = redisMode;
-	}
-
-	public Set<String> getSentinels() {
-		return sentinels;
-	}
-
-	public void setSentinels(Set<String> sentinels) {
-		this.sentinels = sentinels;
 	}
 
 	public boolean isAutoConf() {

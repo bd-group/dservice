@@ -2,13 +2,10 @@ package iie.mm.server;
 
 import iie.mm.client.Feature;
 import iie.mm.client.ResultSet;
-import iie.mm.client.ResultSet.Result;
 import iie.mm.server.StorePhoto.ObjectContent;
 import iie.mm.server.StorePhoto.RedirectException;
 
 import java.awt.image.BufferedImage;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -18,7 +15,6 @@ import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -29,7 +25,6 @@ import javax.imageio.ImageIO;
 
 import org.hyperic.sigar.SigarException;
 
-import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 
 public class Handler implements Runnable{
@@ -58,7 +53,8 @@ public class Handler implements Runnable{
 				}
 			};
 
-	public Handler(ServerConf conf, Socket s, ConcurrentHashMap<String, BlockingQueue<WriteTask>> sq) throws IOException {
+	public Handler(ServerConf conf, Socket s, 
+			ConcurrentHashMap<String, BlockingQueue<WriteTask>> sq) throws Exception {
 		this.conf = conf;
 		this.s = s;
 		s.setTcpNoDelay(true);
@@ -83,14 +79,15 @@ public class Handler implements Runnable{
 					int md5len = header[2];
 					int contentlen = dis.readInt();
 					
-					//一次把所有的都读出来,减少读取次数
+					// 一次把所有的都读出来,减少读取次数
 					byte[] setmd5content = readBytes(setlen + md5len + contentlen, dis);
 					String set = new String(setmd5content, 0, setlen);
 					String md5 = new String(setmd5content, setlen, md5len);
 					
 					String result = null;
 					try {
-						result = sp.storePhoto(set, md5, setmd5content, setlen + md5len, contentlen);
+						result = sp.storePhoto(set, md5, setmd5content, 
+								setlen + md5len, contentlen);
 					} catch (JedisException e) {
 						result = "#FAIL:" + e.getMessage();
 					}
@@ -108,20 +105,22 @@ public class Handler implements Runnable{
 					int md5len = header[2];
 					int contentlen = dis.readInt();
 					
-					//一次把所有的都读出来,减少读取次数
+					// 一次把所有的都读出来,减少读取次数
 					byte[] setmd5content = readBytes(setlen + md5len + contentlen, dis);
 					String set = new String(setmd5content, 0, setlen);
 					String md5 = new String(setmd5content, setlen, md5len);
 					
-					WriteTask t = new WriteTask(set, md5, setmd5content, setlen + md5len, contentlen);
+					WriteTask t = new WriteTask(set, md5, setmd5content, 
+							setlen + md5len, contentlen);
 					BlockingQueue<WriteTask> bq = sq.get(set);
 
 					if (bq != null)	{
-						//存在这个键,表明该写线程已经存在,直接把任务加到任务队列里即可
+						// 存在这个键,表明该写线程已经存在,直接把任务加到任务队列里即可
 						bq.add(t);
 					} else {
-						//如果不存在这个键,则需要新开启一个写线程
-						BlockingQueue<WriteTask> tasks = new LinkedBlockingQueue<WriteTask>();
+						// 如果不存在这个键,则需要新开启一个写线程
+						BlockingQueue<WriteTask> tasks = 
+								new LinkedBlockingQueue<WriteTask>();
 						tasks.add(t);
 						sq.put(set, tasks);
 						WriteThread wt = new WriteThread(conf,set, sq);
@@ -157,7 +156,7 @@ public class Handler implements Runnable{
 					break;
 				}
 				case ActionType.SEARCH: {
-					//这样能把byte当成无符号的用，拼接的元信息长度最大可以255
+					// 这样能把byte当成无符号的用，拼接的元信息长度最大可以255
 					int infolen = header[1] & 0xff;		
 
 					if (infolen > 0) {
@@ -167,7 +166,8 @@ public class Handler implements Runnable{
 							oc = sp.searchPhoto(infos, null, threadLocalSendBuffer.get());
 						} catch (RedirectException e) {
 						}
-						// FIXME: ?? 有可能刚刚写进redis的时候，还无法马上读出来,这时候会无法找到图片,返回null
+						// FIXME: ??zhaoyang 有可能刚刚写进redis的时候，还无法马上读出来,
+						// 这时候会无法找到图片,返回null
 						if (oc != null && oc.content != null) {
 							dos.writeInt(oc.length);
 							dos.write(oc.content, 0, oc.length);
@@ -216,7 +216,7 @@ public class Handler implements Runnable{
 						
 					}
 					sp.delSet(set);
-					dos.write(1);			//返回一个字节1,代表删除成功
+					dos.write(1);			// 返回一个字节1,代表删除成功
 					break;
 				}
 				case ActionType.SERVERINFO: {
@@ -250,7 +250,8 @@ public class Handler implements Runnable{
 						
 						if (obj_len > 0) {
 							byte[] obj = readBytes(obj_len, dis);
-							ByteArrayInputStream bais = new ByteArrayInputStream(obj, 0, obj_len);
+							ByteArrayInputStream bais = 
+									new ByteArrayInputStream(obj, 0, obj_len);
 							bi = ImageIO.read(bais);
 						}
 						ResultSet rs = sp.featureSearch(bi, features);
@@ -279,7 +280,8 @@ public class Handler implements Runnable{
 						try {
 							oc = sp.getPhoto(set, md5);
 						} catch (RedirectException e) {
-							// ok, this means we should notify the client to retry another server
+							// ok, this means we should notify the client to 
+							// retry another server
 							redirect = e.info;
 						}
 						if (oc != null && oc.content != null) {
@@ -313,7 +315,6 @@ public class Handler implements Runnable{
 			try {
 				s.close();
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}

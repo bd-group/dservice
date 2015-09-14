@@ -2,6 +2,7 @@ package iie.mm.server;
 
 import iie.mm.client.Feature.FeatureType;
 import iie.mm.client.Feature.FeatureTypeString;
+import iie.mm.common.MMConf;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -22,7 +23,7 @@ import redis.clients.jedis.exceptions.JedisException;
  * @author zhaoyang
  * 
  */
-public class ServerConf {
+public class ServerConf extends MMConf {
 	public static int DEFAULT_SERVER_PORT = 30303;
 	public static int DEFAULT_REDIS_PORT = 30308;
 	public static int DEFAULT_BLOCK_SIZE = 64 * 1024 * 1024;
@@ -71,18 +72,10 @@ public class ServerConf {
 	private String sysInfoServerName = null;
 	private int sysInfoServerPort = -1;
 	
-	public enum RedisMode {
-		SENTINEL, STANDALONE,
-	}
-	
-	private RedisMode redisMode;
-	private Set<String> sentinels;
 	private String outsideIP;
 	private boolean isHTTPOnly = false;
 	
 	private boolean indexFeatures = false;
-	
-	private int redisTimeout = 30 * 1000;
 	
 	private boolean isSSMaster = false;
 	
@@ -124,27 +117,32 @@ public class ServerConf {
 		this.blockSize = blockSize;
 		this.period = period;
 		this.httpPort = httpPort;
-		this.sentinels = sentinels;
+		setSentinels(sentinels);
 		setRedisMode(RedisMode.SENTINEL);
 		
 		// ok, get global config if they exist.
-		Jedis jedis = new RedisFactory(this).getDefaultInstance();
+		Jedis jedis = StorePhoto.getRpL1(this).getResource();
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
 		
-		Pipeline p = jedis.pipelined();
-		p.get("mm.conf.blocksize");
-		p.get("mm.conf.period");
-		List<Object> results = p.syncAndReturnAll();
-		if (results.get(0) != null) {
-			this.blockSize = Integer.parseInt(results.get(1).toString());
-			System.out.println("Get blockSize from redis server: " + this.blockSize);
+		try {
+			Pipeline p = jedis.pipelined();
+			p.get("mm.conf.blocksize");
+			p.get("mm.conf.period");
+			List<Object> results = p.syncAndReturnAll();
+			if (results.get(0) != null) {
+				this.blockSize = Integer.parseInt(results.get(1).toString());
+				System.out.println("Get blockSize from redis server: " + 
+						this.blockSize);
+			}
+			if (results.get(1) != null) {
+				this.period = Integer.parseInt(results.get(2).toString());
+				System.out.println("Get period from redis server: " + 
+						this.period);
+			}
+		} finally {
+			StorePhoto.getRpL1(this).putInstance(jedis);
 		}
-		if (results.get(1) != null) {
-			this.period = Integer.parseInt(results.get(2).toString());
-			System.out.println("Get period from redis server: " + this.period);
-		}
-		jedis.disconnect();
 	}
 	
 	public ServerConf(String nodeName, int serverPort, String redisHost, int redisPort, 
@@ -166,23 +164,28 @@ public class ServerConf {
 		setRedisMode(RedisMode.STANDALONE);
 		
 		// ok, get global config if they exist.
-		Jedis jedis = new RedisFactory(this).getDefaultInstance();
+		Jedis jedis = StorePhoto.getRpL1(this).getResource();
 		if (jedis == null)
 			throw new JedisException("Get default jedis instance failed.");
 		
-		Pipeline p = jedis.pipelined();
-		p.get("mm.conf.blocksize");
-		p.get("mm.conf.period");
-		List<Object> results = p.syncAndReturnAll();
-		if (results.get(0) != null) {
-			this.blockSize = Integer.parseInt(results.get(1).toString());
-			System.out.println("Get blockSize from redis server: " + this.blockSize);
+		try {
+			Pipeline p = jedis.pipelined();
+			p.get("mm.conf.blocksize");
+			p.get("mm.conf.period");
+			List<Object> results = p.syncAndReturnAll();
+			if (results.get(0) != null) {
+				this.blockSize = Integer.parseInt(results.get(1).toString());
+				System.out.println("Get blockSize from redis server: " + 
+						this.blockSize);
+			}
+			if (results.get(1) != null) {
+				this.period = Integer.parseInt(results.get(2).toString());
+				System.out.println("Get period from redis server: " + 
+						this.period);
+			}
+		} finally {
+			StorePhoto.getRpL1(this).putInstance(jedis);
 		}
-		if (results.get(1) != null) {
-			this.period = Integer.parseInt(results.get(2).toString());
-			System.out.println("Get period from redis server: " + this.period);
-		}
-		jedis = RedisFactory.putInstance(jedis);
 	}
 
 	public String getNodeName() {
@@ -276,29 +279,8 @@ public class ServerConf {
 		return storeArray;
 	}
 
-
 	public void setStoreArray(Set<String> storeArray) {
 		this.storeArray = storeArray;
-	}
-
-
-	public RedisMode getRedisMode() {
-		return redisMode;
-	}
-
-
-	public void setRedisMode(RedisMode redisMode) {
-		this.redisMode = redisMode;
-	}
-
-
-	public Set<String> getSentinels() {
-		return sentinels;
-	}
-
-
-	public void setSentinels(Set<String> sentinels) {
-		this.sentinels = sentinels;
 	}
 
 	public String getSysInfoServerName() {
@@ -398,14 +380,6 @@ public class ServerConf {
 
 	public void setFaceDetectorXML(String faceDetectorXML) {
 		this.faceDetectorXML = faceDetectorXML;
-	}
-
-	public int getRedisTimeout() {
-		return redisTimeout;
-	}
-
-	public void setRedisTimeout(int redisTimeout) {
-		this.redisTimeout = redisTimeout;
 	}
 
 	public boolean isSSMaster() {

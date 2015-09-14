@@ -1,5 +1,7 @@
 package iie.mm.client;
 
+import iie.mm.common.RedisPoolSelector.RedisConnection;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -30,15 +32,14 @@ public class DeleteSet {
 	public DeleteSet(ClientAPI ca) {
 		this.ca = ca;
 	}
-	
+
 	public void recycleSet(String dstr) throws ParseException, Exception {
 		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
 		Date d = df.parse(dstr);
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
+		Jedis jedis = ca.getPc().getRpL1().getResource();
 		if (jedis == null) {
 			throw new Exception("Cound not get avaliable Jedis instance.");
 		}
-		int err = 0;
 		
 		// get all sets
 		TreeSet<String> temp = new TreeSet<String>();
@@ -79,33 +80,27 @@ public class DeleteSet {
 					System.out.println("NFE: on set " + set);
 				}
 			}
-		} catch (JedisConnectionException e) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e1) {
-			}
-			err = -1;
+		} catch (JedisException e) {
+			System.out.println("recycleSet: Jedis exception: " + e.getMessage());
 			temp = null;
 		} catch (Exception e) {
-			e.printStackTrace();
-			err = -1;
+			System.out.println("recycleSet: Exception: " + e.getMessage());
 			temp = null;
 		} finally {
-			if (err < 0)
-				ca.getPc().getRf().putBrokenInstance(jedis);
-			else
-				ca.getPc().getRf().putInstance(jedis);
+			ca.getPc().getRpL1().putInstance(jedis);
 		}
 	}
 
 	public void delSet(String set) throws Exception {
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
-		if (jedis == null) {
-			throw new Exception("Cound not get avaliable Jedis instance.");
-		}
-		int err = 0;
-
+		RedisConnection rc = null;
+		Jedis l1jedis = null;
+		
 		try {
+			rc = ca.getPc().getRPS().getL2(set, false);
+			if (rc.rp == null || rc.jedis == null) {
+				throw new Exception("get L2 pool " + rc.id + " for set " + set + " failed");
+			}
+			Jedis jedis = rc.jedis;
 			// 向所有拥有该集合的server发送删除请求,删除节点上的文件
 			Iterator<String> ir = jedis.smembers(set + ".srvs").iterator();
 			String info;
@@ -155,15 +150,17 @@ public class DeleteSet {
 			}
 			pipeline1.sync();
 			
-			//删除集合
+			// 删除集合
 			jedis.del(set);
+			
+			// Delete L1 resource
+			l1jedis = ca.getPc().getRpL1().getResource();
+			l1jedis.del("`" + set);
 		} catch (JedisException je) {
-			err = -1;
+			System.out.println("Jedis exception: " + je.getMessage());
 		} finally {
-			if (err < 0)
-				jedis = ca.getPc().getRf().putBrokenInstance(jedis);
-			else
-				jedis = ca.getPc().getRf().putInstance(jedis);
+			ca.getPc().getRPS().putL2(rc);
+			ca.getPc().getRpL1().putInstance(l1jedis);
 		}
 		System.out.println("删除集合'" + set + "'完成");
 	}
@@ -174,12 +171,11 @@ public class DeleteSet {
 	 * @throws Exception 
 	 */
 	public List<String> getAllServerInfo() throws Exception {
-		Jedis jedis = ca.getPc().getRf().getNewInstance(null);
+		Jedis jedis = ca.getPc().getRpL1().getResource();
 		if (jedis == null) {
 			throw new Exception("Cound not get avaliable Jedis instance.");
 		}
 		List<String> ls = new ArrayList<String>();
-		int err = 0;
 
 		try {
 			Set<String> keys = jedis.keys("mm.hb.*");
@@ -189,14 +185,11 @@ public class DeleteSet {
 				ls.add(getServerInfo(hostport[0], Integer.parseInt(hostport[1])));
 			}
 		} catch (JedisException je) {
-			err = -1;
+			System.out.println("Jedis exception: " + je.getMessage());
 		} catch (Exception e) {
 			System.out.println("Get mm.hb.* failed: " + e.getMessage());
 		} finally {
-			if (err < 0)
-				jedis = ca.getPc().getRf().putBrokenInstance(jedis);
-			else
-				jedis = ca.getPc().getRf().putInstance(jedis);
+			ca.getPc().getRpL1().putInstance(jedis);
 		}
 
 		return ls;
@@ -248,7 +241,6 @@ public class DeleteSet {
 				n += istream.read(buf, n, count - n);
 			}
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 		return buf;
