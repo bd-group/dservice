@@ -68,7 +68,8 @@ public class PhotoClient {
 			public DataInputStream dis;
 			public DataOutputStream dos;
 			
-			public SEntry(Socket sock, long id, boolean used, DataInputStream dis, DataOutputStream dos) {
+			public SEntry(Socket sock, long id, boolean used, DataInputStream dis, 
+					DataOutputStream dos) {
 				this.sock = sock;
 				this.id = id;
 				this.used = used;
@@ -136,10 +137,12 @@ public class PhotoClient {
 									new DataOutputStream(socket.getOutputStream()));
 									//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
 									//new DataOutputStream(new BufferedOutputStream(socket.getOutputStream())));
-							System.out.println("[GFS] New connection @ " + id + " for " + hostname + ":" + port);
+							System.out.println("[GFS] New connection @ " + id + " for " + 
+									hostname + ":" + port);
 						} catch (SocketException e) {
 							xnr.getAndDecrement();
-							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + 
+									" failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -147,7 +150,8 @@ public class PhotoClient {
 							throw e;
 						} catch (Exception e) {
 							xnr.getAndDecrement();
-							System.out.println("[GFS] Connect to " + hostname + ":" + port + " failed w/ " + e.getMessage());
+							System.out.println("[GFS] Connect to " + hostname + ":" + port + 
+									" failed w/ " + e.getMessage());
 							try {
 								Thread.sleep(1000);
 							} catch (InterruptedException e1) {
@@ -177,7 +181,8 @@ public class PhotoClient {
 			return id;
 		}
 		
-		public long addToSocketsAsUsed(Socket sock, DataInputStream dis, DataOutputStream dos) {
+		public long addToSocketsAsUsed(Socket sock, DataInputStream dis, 
+				DataOutputStream dos) {
 			SEntry e = new SEntry(sock, nextId.getAndIncrement(), true, dis, dos);
 			synchronized (this) {
 				map.put(e.id, e);
@@ -185,7 +190,8 @@ public class PhotoClient {
 			return e.id;
 		}
 		
-		public void addToSockets(Socket sock, DataInputStream dis, DataOutputStream dos) {
+		public void addToSockets(Socket sock, DataInputStream dis, 
+				DataOutputStream dos) {
 			SEntry e = new SEntry(sock, nextId.getAndIncrement(), false, dis, dos);
 			synchronized (this) {
 				map.put(e.id, e);
@@ -239,8 +245,10 @@ public class PhotoClient {
 		}
 	}
 	
-	private ConcurrentHashMap<String, SocketHashEntry> socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
-	private ConcurrentHashMap<String, SocketHashEntry> igetSH = new ConcurrentHashMap<String, SocketHashEntry>();
+	private ConcurrentHashMap<String, SocketHashEntry> socketHash = 
+			new ConcurrentHashMap<String, SocketHashEntry>();
+	private ConcurrentHashMap<String, SocketHashEntry> igetSH = 
+			new ConcurrentHashMap<String, SocketHashEntry>();
 	private Map<Long, String> servers = new ConcurrentHashMap<Long, String>();
 
 	public Map<Long, String> getServers() {
@@ -256,7 +264,14 @@ public class PhotoClient {
 	}
 	
 	public void init() throws Exception {
-		rpL1 = new RedisPool(conf, "l1.master");
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			rpL1 = new RedisPool(conf, "l1.master");
+			break;
+		case STANDALONE:
+			rpL1 = new RedisPool(conf, "nomaster");
+			break;
+		}
 		rps = new RedisPoolSelector(conf, rpL1);
 	}
 	
@@ -621,7 +636,8 @@ public class PhotoClient {
 				Socket socket = new Socket(); 
 				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 				socket.setTcpNoDelay(true);
-				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), 
+						conf.getSockPerServer());
 				searchSocket.addToSocketsAsUsed(socket,
 						new DataInputStream(socket.getInputStream()),
 						new DataOutputStream(socket.getOutputStream()));
@@ -759,7 +775,8 @@ public class PhotoClient {
 				Socket socket = new Socket(); 
 				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 				socket.setTcpNoDelay(true);
-				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), 
+						conf.getSockPerServer());
 				searchSocket.addToSocketsAsUsed(socket,
 						new DataInputStream(socket.getInputStream()),
 						new DataOutputStream(socket.getOutputStream()));
@@ -867,7 +884,8 @@ public class PhotoClient {
 		wmap.remove(g.getGid());
 	}
 	
-	public int __iget(int gid, int seqno, String set, String md5, long alen) throws IOException, StopException {
+	public int __iget(int gid, int seqno, String set, String md5, long alen) 
+			throws IOException, StopException {
 		String info = null;
 		RedisConnection rc = null;
 
@@ -897,7 +915,8 @@ public class PhotoClient {
 		}
 	}
 	
-	public int __igetInfo(int gid, int seqno, String infos, long alen) throws IOException, StopException {
+	public int __igetInfo(int gid, int seqno, String infos, long alen) 
+			throws IOException, StopException {
 		boolean r = false;
 		int len = 0;
 
@@ -924,7 +943,8 @@ public class PhotoClient {
 			return -1;
 	}
 	
-	public boolean __igetMMObject(int gid, int seqno, String info, String[] infos) throws IOException {
+	public boolean __igetMMObject(int gid, int seqno, String info, String[] infos) 
+			throws IOException {
 		if (infos.length != 7) {
 			throw new IOException("Invalid INFO string, info length is " + 
 					infos.length);
@@ -941,7 +961,8 @@ public class PhotoClient {
 				Socket socket = new Socket(); 
 				socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 				socket.setTcpNoDelay(true);
-				igetSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+				igetSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), 
+						conf.getSockPerServer());
 				igetSocket.addToSocketsAsUsed(socket, 
 						new DataInputStream(socket.getInputStream()), 
 						//new DataInputStream(new BufferedInputStream(socket.getInputStream())), 
@@ -997,7 +1018,8 @@ public class PhotoClient {
 		return r;
 	}
 	
-	public long iGet(XRefGroup g, int idx, String set, String md5, long alen) throws IOException, StopException {
+	public long iGet(XRefGroup g, int idx, String set, String md5, long alen) 
+			throws IOException, StopException {
 		XRef x = new XRef(idx, set + "@" + md5, curseqno);
 		
 		// send it to server
@@ -1064,7 +1086,8 @@ public class PhotoClient {
 		private static final long serialVersionUID = -7120649613556817964L;
 	}
 	
-	public List<byte[]> mget(List<String> keys, Map<String, String> cookies) throws IOException {
+	public List<byte[]> mget(List<String> keys, Map<String, String> cookies) 
+			throws IOException {
 		String bidx_s = cookies.get("idx");
 		String alen_s = cookies.get("accept_len");
 		int bi = 0, i;
@@ -1074,7 +1097,8 @@ public class PhotoClient {
 			bi = Integer.parseInt(bidx_s);
 		if (alen_s != null)
 			alen = Integer.parseInt(alen_s);
-		ArrayList<byte[]> r = new ArrayList<byte[]>(Collections.nCopies(keys.size() - bi, (byte[])null));
+		ArrayList<byte[]> r = new ArrayList<byte[]>(Collections.nCopies(keys.size() - bi, 
+				(byte[])null));
 		XRefGroup g = createXRefGroup();
 		
 		// do info get here
@@ -1115,15 +1139,18 @@ public class PhotoClient {
 			}
 		}
 		end = System.nanoTime();
-		System.out.println(" -> SEND nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + " us.");
+		System.out.println(" -> SEND nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + 
+				" us.");
 		cookies.put("idx", i + "");
 		
 		begin = System.nanoTime();
 		if (!iWaitAll(g)) {
-			System.out.println("Wait XRefGroup " + g.getGid() + " timed out: " + g.getNr().get() + " " + g.getToWait());
+			System.out.println("Wait XRefGroup " + g.getGid() + " timed out: " + 
+					g.getNr().get() + " " + g.getToWait());
 		}
 		end = System.nanoTime();
-		System.out.println(" -> RECV nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + " us.");
+		System.out.println(" -> RECV nr " + (i - bi) + " -> " + ((end - begin) / 1000.0) + 
+				" us.");
 		
 		removeXRefGroup(g);
 		
@@ -1295,7 +1322,8 @@ public class PhotoClient {
 											j.hset(set, e.getKey(), gv.newValue);
 										else
 											j.hdel(set, e.getKey());
-										System.out.println("HSET " + set + " " + e.getKey() + " " + gv.newValue + " " + e.getValue());
+										System.out.println("HSET " + set + " " + e.getKey() + 
+												" " + gv.newValue + " " + e.getValue());
 									}
 								}
 								kvs.clear();
@@ -1319,7 +1347,8 @@ public class PhotoClient {
 		}
 	}
 	
-	private final static Comparator<Entry<String, Integer>> comp = new Comparator<Entry<String, Integer>>() {
+	private final static Comparator<Entry<String, Integer>> comp = 
+			new Comparator<Entry<String, Integer>>() {
 		@Override
 		public int compare(Entry<String, Integer> o1, Entry<String, Integer> o2) {
 			return (o2.getValue() - o1.getValue()) > 0 ? 1 : -1;
@@ -1332,8 +1361,8 @@ public class PhotoClient {
 		private ResultSet rs;
 		private byte[] obj;
 		
-		public ObjectSearchThread(byte[] obj, List<Feature> features, Entry<Long, String> entry, 
-				ResultSet rs) {
+		public ObjectSearchThread(byte[] obj, List<Feature> features, 
+				Entry<Long, String> entry, ResultSet rs) {
 			this.obj = obj;
 			this.features = features;
 			this.entry = entry;
@@ -1352,7 +1381,8 @@ public class PhotoClient {
 						Socket socket = new Socket(); 
 						socket.connect(new InetSocketAddress(s[0], Integer.parseInt(s[1])));
 						socket.setTcpNoDelay(true);
-						searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), conf.getSockPerServer());
+						searchSocket = new SocketHashEntry(s[0], Integer.parseInt(s[1]), 
+								conf.getSockPerServer());
 						searchSocket.addToSocketsAsUsed(socket,
 								new DataInputStream(socket.getInputStream()),
 								new DataOutputStream(socket.getOutputStream()));
@@ -1378,7 +1408,8 @@ public class PhotoClient {
 					searchSocket.map.get(id).dos.write(header);
 					searchSocket.map.get(id).dos.writeInt(features.size());
 					searchSocket.map.get(id).dos.writeInt(obj.length);
-					ObjectOutputStream oos = new ObjectOutputStream(searchSocket.map.get(id).dos);
+					ObjectOutputStream oos = new ObjectOutputStream(
+							searchSocket.map.get(id).dos);
 					for (Feature f : features) {
 						oos.writeObject(f);
 					}
@@ -1401,7 +1432,8 @@ public class PhotoClient {
 		}
 	}
 	
-	public ResultSet objectSearch(List<Feature> features, byte[] obj, List<String> specified_servers) throws IOException {
+	public ResultSet objectSearch(List<Feature> features, byte[] obj, 
+			List<String> specified_servers) throws IOException {
 		List<ObjectSearchThread> ost = new ArrayList<ObjectSearchThread>();
 		ResultSet rs = new ResultSet(ResultSet.ScoreMode.PROD);
 		Map<Long, String> sToSearch = null;

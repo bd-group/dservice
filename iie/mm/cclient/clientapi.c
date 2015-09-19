@@ -1,32 +1,11 @@
-#include "mmcc.h"
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <arpa/inet.h>
-#include <netinet/in.h> 
-#include "hiredis.h"
-#include <netdb.h>
-#include <unistd.h>
-#include "hvfs_u.h"
-#include "memory.h"
+/*
+ * Client API for high level client
+ */
+#include "mmcc_ll.h"
 
-#define HVFS_TRACING
-#include "tracing.h"
-
-#define DUPNUM 2
-
-extern char *g_uris;
-extern char *redisHost;
-extern int redisPort;
-extern atomic_t g_master_connect_err;
 extern unsigned int hvfs_mmcc_tracing_flags;
 
-struct redisConnection;
-
 int client_config(mmcc_config_t *);
-int client_init();
 int __client_load_scripts(struct redisConnection *rc, int idx);
 int client_fina();
 int update_mmserver2();
@@ -35,8 +14,6 @@ int get_ss_object(char *set, char *md5, void **buf, size_t *length);
 int __is_in_redis(char *set);
 int get_mm_object(char* set, char* md5, void **buf, size_t* length);
 int search_mm_object(char *infos, void **buf, size_t *length);
-struct redisConnection *getRC();
-void putRC(struct redisConnection *rc);
 int del_mm_set(char *set);
 
 static char *g_err_str[] = {
@@ -58,219 +35,135 @@ char *mmcc_strerr(int err)
         return "Invalid Error Number Input";
 }
 
-static inline void __fetch_from_sentinel(char *uris)
-{
-    char *dup = strdup(uris), *p, *n = NULL, *q, *m = NULL;
-    int inited = 0;
-
-    p = dup;
-    do {
-        p = strtok_r(p, ";", &n);
-        if (p) {
-            /* parse sentinel server */
-
-            char *rh = NULL;
-            int rp;
-
-            q = p;
-            q = strtok_r(q, ":", &m);
-            if (q) {
-                rh = strdup(p);
-            } else {
-                hvfs_err(mmcc, "parse hostname failed.\n");
-                continue;
-            }
-            q = strtok_r(NULL, ":", &m);
-            if (q) {
-                rp = atol(q);
-            } else {
-                hvfs_err(mmcc, "parse port failed.\n");
-                continue;
-            }
-            /* ok, connect to sentinel here */
-            {
-                redisContext *rc = redisConnect(rh, rp);
-                redisReply *r = NULL;
-
-                if (rc->err) {
-                    hvfs_err(mmcc, "can't connect to redis sentinel at %s:%d %s\n",
-                             rh, rp, rc->errstr);
-                    continue;
-                }
-                r = redisCommand(rc, "SENTINEL get-master-addr-by-name mymaster");
-                if (r == NULL) {
-                    hvfs_err(mmcc, "get master failed.\n");
-                    goto free_rc;
-                }
-                if (r->type == REDIS_REPLY_NIL || r->type == REDIS_REPLY_ERROR) {
-                    hvfs_warning(mmcc, "SENTINEL get master from %s:%d failed, "
-                                 "try next one\n", rh, rp);
-                }
-                if (r->type == REDIS_REPLY_ARRAY) {
-                    if (r->elements != 2) {
-                        hvfs_warning(mmcc, "Invalid SENTINEL reply? len=%ld\n",
-                                     r->elements);
-                    } else {
-                        if (redisHost == NULL || redisPort == -1) {
-                            redisHost = strdup(r->element[0]->str);
-                            redisPort = atoi(r->element[1]->str);
-                            hvfs_info(mmcc, "OK, got MM Master Server %s:%d\n",
-                                      redisHost, redisPort);
-                            inited = 1;
-                        } else {
-                            if ((strcmp(r->element[0]->str, redisHost) != 0) ||
-                                atoi(r->element[1]->str) != redisPort) {
-                                hvfs_info(mmcc, "Change MM Master Server from "
-                                          "%s:%d to %s:%s\n",
-                                          redisHost, redisPort,
-                                          r->element[0]->str,
-                                          r->element[1]->str);
-                                xfree(redisHost);
-                                redisHost = strdup(r->element[0]->str);
-                                redisPort = atoi(r->element[1]->str);
-                                inited = 1;
-                            }
-                        }
-                    }
-                }
-                freeReplyObject(r);
-            free_rc:                
-                redisFree(rc);
-            }
-            xfree(rh);
-            if (inited)
-                break;
-        } else
-            break;
-    } while (p = NULL, 1);
-
-    xfree(dup);
-}
-
-static int init_with_sentinel(char *uris)
-{
-    int err = 0;
-
-    err = client_init();
-    if (err) {
-        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
-        goto out;
-    }
-
-    __fetch_from_sentinel(uris);
-    g_uris = strdup(uris);
-
-out:
-    return err;
-}
-
-static int init_standalone(char *uris)
-{
-    char *dup = strdup(uris), *p, *n = NULL;
-	char *rh = NULL;
-	int rp;
-    int err = 0;
-    
-    err = client_init();
-    if (err) {
-        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
-        goto out;
-    }
-
-    p = dup;
-    p = strtok_r(p, ":", &n);
-    if (p) {
-        rh = strdup(p);
-    } else {
-        hvfs_err(mmcc, "parse hostname failed.\n");
-        err = EMMINVAL;
-        goto out_free;
-    }
-    p = strtok_r(NULL, ":", &n);
-    if (p) {
-        rp = atol(p);
-    } else {
-        hvfs_err(mmcc, "parse port failed.\n");
-        err = EMMINVAL;
-        goto out_free;
-    }
-
-    hvfs_info(mmcc, "Connect to redis server: %s\n", uris);
-    
-    redisHost = rh;
-    redisPort = rp;
-
-    {
-        struct redisConnection *rc = getRC();
-        
-        if (!rc) {
-            hvfs_err(mmcc, "can't connect to redis at %s:%d\n", rh, rp);
-            err = EMMMETAERR;
-            goto out_free;
-        }
-        putRC(rc);
-    }
-
-    xfree(dup);
-
-out:
-    return err;
-
-out_free:
-    xfree(dup);
-    xfree(rh);
-
-    return err;
-}
-
 /* URIs:
- * standalone redis server -> STA://host:port;host:port
+ * standalone redis server -> STA://host:port
  * sentinel   redis server -> STL://host:port;host:port
  */
 int mmcc_init(char *uris)
 {
+    struct redis_pool_config rpc = {
+        .uri = NULL,
+        .master_name = NULL,
+        .ptype = RP_CONF_STL,
+        .max_conn = RP_CONF_MAX_CONN,
+        .min_conn = RP_CONF_MIN_CONN,
+    };
+    int err = 0;
+
     if (!uris)
         return EMMINVAL;
     
     g_client_tick = time(NULL);
 
+    err = client_init();
+    if (err) {
+        hvfs_err(mmcc, "client_init() failed w/ %d\n", err);
+        goto out;
+    }
+
     if (strstr(uris, "STL://")) {
-        int err = 0;
         struct redisConnection *rc = NULL;
 
-        err = init_with_sentinel(uris + 6);
+        rpc.uri = uris + 6;
+        rpc.master_name = "l1.master";
+
+        /* init l1 pool */
+        err = rpool_init_l1(rpc);
         if (err) {
-            hvfs_err(mmcc, "init_with_sentinel(%s) failed w/ %d\n",
-                     uris, err);
-            return err;
+            hvfs_err(mmcc, "rpool_init_l1() failed w/ %d\n", err);
+            goto out;
         }
         
-        rc = getRC();
-        if (!rc) {
-            hvfs_err(mmcc, "getRC() failed\n");
-            return EINVAL;
+        /* do client auto config from l1 */
+        rc = getRC_l1();
+        if (rc == NULL) {
+            hvfs_err(mmcc, "get rc from L1 pool failed, check config\n");
+            err = -EINVAL;
+            goto out_l1;
+        } else {
+            update_g_info(rc);
+            putRC_l1(rc);
         }
 
-        err = __client_load_scripts(rc, -1);
+        /* init l2 pools */
+        err = rpool_init_l2();
         if (err) {
-            hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
-            goto out_put;
+            hvfs_err(mmcc, "rpool_init_l2() failed w/ %d\n", err);
+            goto out_l1;
         }
 
-        update_mmserver2(rc);
+        /* load scripts to l2 pools */
+        {
+            struct redis_pool **rps = NULL;
+            int pnr = 0, i;
 
-        /* FIXME: do auto config */
-        update_g_info(rc);
+            err = get_l2(&rps, &pnr);
+            if (err) {
+                hvfs_err(mmcc, "get_l2() failed w/ %d\n", err);
+                goto out_l2;
+            }
 
-    out_put:
-        putRC(rc);
-
-        return err;
+            for (i = 0; i < pnr; i++) {
+                rc = getRC(rps[i]);
+                if (rc != NULL) {
+                    err = __client_load_scripts(rc, -1);
+                    if (err) {
+                        hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
+                        goto out_put;
+                    }
+                    
+                    update_mmserver2(rc);
+                } else {
+                    hvfs_err(mmcc, "load scripts on L2 pool %ld failed.\n",
+                             rps[i]->pid);
+                }
+            out_put:
+                putRC(rps[i], rc);
+            }
+            if (rps != NULL) {
+                xfree(rps);
+            }
+        }
+        /* reset errno to ZERO */
+        err = 0;
     } else if (strstr(uris, "STA://")) {
-        return init_standalone(uris + 6);
+        rpc.ptype = RP_CONF_STA;
+        rpc.uri = uris + 6;
+        rpc.master_name = "nomaster";
+
+        /* init l1 pool */
+        err = rpool_init_l1(rpc);
+        if (err) {
+            hvfs_err(mmcc, "rpool_init_l1() failed w/ %d\n", err);
+            goto out;
+        }
+        /* load scripts to l1 pool */
+        {
+            struct redisConnection *rc = getRC_l1();
+
+            if (rc != NULL) {
+                err = __client_load_scripts(rc, -1);
+                if (err) {
+                    hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
+                    /* reset errno to ZERO */
+                    err = 0;
+                }
+                update_mmserver2(rc);
+                putRC_l1(rc);
+            }
+        }
     } else {
-        return init_standalone(uris);
+        hvfs_err(mmcc, "Invalid RP type: uri=%s\n", uris);
+        err = -EINVAL;
     }
+
+out:
+    return err;
+out_l2:
+    rpool_fina_l2();
+out_l1:
+    rpool_fina_l1();
+    goto out;
 }
 
 int mmcc_fina()
@@ -282,6 +175,10 @@ int mmcc_fina()
         hvfs_err(mmcc, "client_fina() failed w/ %d\n", err);
         goto out;
     }
+
+    /* close l1/l2 pool */
+    rpool_fina_l2();
+    rpool_fina_l1();
 
 out:
     return err;
@@ -356,15 +253,13 @@ out:
     return err;
 }
 
-void __master_connect_fail_check()
+void __master_connect_fail_check(struct redis_pool *rp)
 {
 #define MASTER_FAIL_CHECK       10
-    atomic_inc(&g_master_connect_err);
-    if (atomic_read(&g_master_connect_err) >= MASTER_FAIL_CHECK) {
-        if (g_uris) {
-            __fetch_from_sentinel(g_uris);
-            atomic_set(&g_master_connect_err, MASTER_FAIL_CHECK >> 2);
-        }
+    atomic_inc(&rp->master_connect_err);
+    if (atomic_read(&rp->master_connect_err) >= MASTER_FAIL_CHECK) {
+        __fetch_from_sentinel(rp);
+        atomic_set(&rp->master_connect_err, MASTER_FAIL_CHECK >> 2);
     }
 }
 

@@ -2,11 +2,17 @@ package iie.mm.common;
 
 import java.util.Set;
 
+import redis.clients.jedis.HostAndPort;
+
 public class MMConf {
 	public enum RedisMode {
 		STANDALONE, SENTINEL, CLUSTER,
 	};
 
+	// for standalone mode
+	private HostAndPort hap;
+	
+	// for sentinel mode
 	private Set<String> sentinels;
 	
 	private RedisMode redisMode;
@@ -35,5 +41,13 @@ public class MMConf {
 
 	public void setRedisTimeout(int redisTimeout) {
 		this.redisTimeout = redisTimeout;
+	}
+
+	public HostAndPort getHap() {
+		return hap;
+	}
+
+	public void setHap(HostAndPort hap) {
+		this.hap = hap;
 	}
 }

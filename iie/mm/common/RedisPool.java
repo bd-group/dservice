@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.exceptions.JedisException;
@@ -11,6 +12,7 @@ import redis.clients.jedis.exceptions.JedisException;
 public class RedisPool {
 	private MMConf conf;
 	private JedisSentinelPool jsp = null;
+	private JedisPool jp = null;
 	private JedisCluster jc = null;
 	private String masterName = null;
 	private AtomicLong alloced = new AtomicLong(0);
@@ -33,6 +35,17 @@ public class RedisPool {
 	
 	public Jedis getResource() throws JedisException {
 		switch (conf.getRedisMode()) {
+		case STANDALONE:
+			if (jp != null)
+				return jp.getResource();
+			else {
+				JedisPoolConfig c = new JedisPoolConfig();
+				jp = new JedisPool(c, conf.getHap().getHost(), conf.getHap().getPort(),
+						conf.getRedisTimeout());
+				System.out.println("New standalone pool @ " + conf.getHap().getHost() + 
+						":" + conf.getHap().getPort());
+				return jp.getResource();
+			}
 		case SENTINEL: {
 			if (jsp != null)
 				return jsp.getResource();
@@ -40,7 +53,7 @@ public class RedisPool {
 				JedisPoolConfig c = new JedisPoolConfig();
 				jsp = new JedisSentinelPool(masterName, conf.getSentinels(), c, 
 						conf.getRedisTimeout());
-				System.out.println("New pool " + masterName);
+				System.out.println("New sentinel pool @ " + masterName);
 				return jsp.getResource();
 			}
 		}
@@ -55,14 +68,24 @@ public class RedisPool {
 			if (j == null)
 				return null;
 			switch (conf.getRedisMode()) {
+			case STANDALONE:
+				if (jp != null)
+					jp.returnResourceObject(j);
+				break;
 			case SENTINEL:
-				jsp.returnResourceObject(j);
+				if (jsp != null)
+					jsp.returnResourceObject(j);
+				break;
 			}
 		} catch (Exception e) {
 			jsp.destroy();
 			jsp = null;
 		}
 		return null;
+	}
+	
+	public void incrAlloced() {
+		alloced.incrementAndGet();
 	}
 
 	public AtomicLong getAlloced() {

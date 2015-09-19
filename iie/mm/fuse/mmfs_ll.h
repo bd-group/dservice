@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-28 14:29:49 macan>
+ * Time-stamp: <2015-09-17 16:05:22 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 #endif
 
 #include "lib.h"
-#include "mmcc.h"
+#include "mmcc_ll.h"
 #include "hiredis.h"
 #include <netdb.h>
 #include <unistd.h>
@@ -327,29 +327,6 @@ struct __mmfs_client_info
 /* Regin for Internal APIs */
 extern u32 hvfs_mmll_tracing_flags;
 extern u32 hvfs_mmcc_tracing_flags;
-
-struct redisConnection
-{
-    time_t born;                /* born time */
-    time_t ttl;                 /* this connection used last time */
-    pid_t tid;
-    struct hlist_node hlist;
-    atomic_t ref;
-
-    redisContext *rc;
-    xlock_t lock;
-};
-
-struct redisConnection *getRC();
-void putRC(struct redisConnection *rc);
-
-static inline void freeRC(struct redisConnection *rc)
-{
-    if (rc->rc) {
-        redisFree(rc->rc);
-        rc->rc = NULL;
-    }
-}
 
 static inline void __mmfs_gset(u64 ino, char *out)
 {

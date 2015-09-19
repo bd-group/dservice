@@ -9,6 +9,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.exceptions.JedisException;
 
 public class RedisPoolSelector {
+	// Note-XXX: in STANDALONE mode, L2 pool is the same as L1 pool
 	public class RedisConnection {
 		public Jedis jedis;
 		public RedisPool rp;
@@ -34,26 +35,36 @@ public class RedisPoolSelector {
 		if (jedis == null)
 			throw new Exception("get RedisPool from L1 failed: get null");
 
-		try {
-			// connect to L1, get all L2 servers to construct a L2 pool
-			Map<String, String> l2mn = jedis.hgetAll("mm.l2");
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			try {
+				// connect to L1, get all L2 servers to construct a L2 pool
+				Map<String, String> l2mn = jedis.hgetAll("mm.l2");
 
-			for (Map.Entry<String, String> entry : l2mn.entrySet()) {
-				// get master redis instance from sentinel by masterName
-				RedisPool rp = new RedisPool(conf, entry.getValue());
-				rp.setPid(entry.getValue() + "." + entry.getKey());
-				rpL2.putIfAbsent(entry.getKey(), rp);
+				for (Map.Entry<String, String> entry : l2mn.entrySet()) {
+					// get master redis instance from sentinel by masterName
+					RedisPool rp = new RedisPool(conf, entry.getValue());
+					rp.setPid(entry.getValue() + "." + entry.getKey());
+					rpL2.putIfAbsent(entry.getKey(), rp);
+				}
+				// get client alloc policy
+				String stype = jedis.get("mm.alloc.policy");
+				if (stype == null || stype.equalsIgnoreCase("round_robin"))
+					type = ALLOC_POLICY.ROUND_ROBIN;
+				else if (stype.equalsIgnoreCase("load_balance"))
+					type = ALLOC_POLICY.LOAD_BALANCE;
+			} catch (JedisException je) {
+				je.printStackTrace();
+			} finally {
+				rpL1.putInstance(jedis);
 			}
-			// get client alloc policy
-			String stype = jedis.get("mm.alloc.policy");
-			if (stype == null || stype.equalsIgnoreCase("round_robin"))
-				type = ALLOC_POLICY.ROUND_ROBIN;
-			else if (stype.equalsIgnoreCase("load_balance"))
-				type = ALLOC_POLICY.LOAD_BALANCE;
-		} catch (JedisException je) {
-			je.printStackTrace();
-		} finally {
-			rpL1.putInstance(jedis);
+			break;
+		case STANDALONE:
+			if (rpL1 != null)
+				rpL2.putIfAbsent("0", rpL1);
+			break;
+		case CLUSTER:
+			break;
 		}
 	}
 	
@@ -113,6 +124,7 @@ public class RedisPoolSelector {
 			if (id != null) {
 				jedis.setnx("`" + set, id);
 				id = jedis.get("`" + set);
+				rpL2.get(id).incrAlloced();
 			}
 		} finally {
 			rpL1.putInstance(jedis);
@@ -139,7 +151,18 @@ public class RedisPoolSelector {
 		return rpL2.get(id);
 	}
 	
-	public RedisConnection getL2(String set, boolean doCreate) throws Exception {
+	private RedisConnection __getL2_standalone(String set, boolean doCreate) {
+		RedisConnection rc = new RedisConnection();
+		rc.rp = rpL2.get("0");
+		rc.id = "STA:0";
+		if (rc.rp != null) {
+			rc.jedis = rc.rp.getResource();
+		}
+		return rc;
+	}
+	
+	private RedisConnection __getL2_sentinel(String set, boolean doCreate) 
+			throws Exception {
 		RedisConnection rc = new RedisConnection();
 		String id = (String)cached.get(set);
 		
@@ -164,6 +187,17 @@ public class RedisPoolSelector {
 		}
 
 		return rc;
+	}
+	
+	public RedisConnection getL2(String set, boolean doCreate) throws Exception {
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			return __getL2_sentinel(set, doCreate);
+		case STANDALONE:
+			return __getL2_standalone(set, doCreate);
+		case CLUSTER:
+		}
+		return null;
 	}
 	
 	public void putL2(RedisConnection rc) {

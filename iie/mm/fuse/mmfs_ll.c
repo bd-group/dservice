@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-08 17:08:43 macan>
+ * Time-stamp: <2015-09-17 15:53:15 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -75,10 +75,10 @@ int __mmfs_load_scripts(int idx)
     redisReply *rpy = NULL;
     int err = 0, i;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for idx=%d\n", idx);
         return -EINVAL;
     }
 
@@ -112,7 +112,7 @@ int __mmfs_load_scripts(int idx)
         }
     }
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -299,10 +299,12 @@ int __mmfs_stat(u64 pino, struct mstat *ms)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for pino %ld "
+                 "(ino=%ld,name=%s)\n", pino, ms->ino,
+                 (ms->ino == 0 ? ms->name : "----"));
         return -EINVAL;
     }
 
@@ -365,7 +367,7 @@ int __mmfs_stat(u64 pino, struct mstat *ms)
     }
     
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -375,10 +377,12 @@ int __mmfs_readlink(u64 pino, struct mstat *ms)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for pino %ld "
+                 "(ino=%ld,name=%s)\n", pino, ms->ino,
+                 (ms->ino == 0 ? ms->name : "----"));
         return -EINVAL;
     }
 
@@ -410,7 +414,7 @@ int __mmfs_readlink(u64 pino, struct mstat *ms)
         err = -EINVAL;
     }
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -421,10 +425,11 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed \n");
+        hvfs_err(mmll, "getRC_l1() failed for pino %ld name %s\n",
+                 pino, ms->name);
         return -EINVAL;
     }
 
@@ -549,7 +554,7 @@ int __mmfs_create(u64 pino, struct mstat *ms, struct mdu_update *mu, u32 flags)
     }
 
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 out_clear:
@@ -584,10 +589,10 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed\n");
         return -EINVAL;
     }
 
@@ -643,7 +648,7 @@ int __mmfs_create_root(struct mstat *ms, struct mdu_update *mu)
     }
 
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -652,7 +657,7 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
 {
     redisReply *rpy = NULL;
     int err = 0;
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
     
     if (!msb->name || strlen(msb->name) == 0) {
         hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
@@ -663,7 +668,7 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
               msb->name);
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for create MSB\n");
         return -EINVAL;
     }
     {
@@ -730,7 +735,7 @@ int __mmfs_create_sb(struct mmfs_sb *msb)
     }
 
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -739,7 +744,7 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
 {
     redisReply *rpy = NULL;
     int err = 0;
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!msb->name || strlen(msb->name) == 0) {
         hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
@@ -747,7 +752,7 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
     }
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for update MSB\n");
         return -EINVAL;
     }
     {
@@ -815,7 +820,7 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
         freeReplyObject(rpy);
     }
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -824,7 +829,7 @@ int __mmfs_get_sb(struct mmfs_sb *msb)
 {
     redisReply *rpy = NULL;
     int err= 0;
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!msb->name || strlen(msb->name) == 0) {
         hvfs_err(mmll, "Invalid file system name: null or empty string.\n");
@@ -832,7 +837,7 @@ int __mmfs_get_sb(struct mmfs_sb *msb)
     }
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for get MSB\n");
         return -EINVAL;
     }
     {
@@ -880,7 +885,7 @@ int __mmfs_get_sb(struct mmfs_sb *msb)
     }
 
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -972,10 +977,11 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
     redisReply *rpy = NULL;
     int err = 0, j;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed \n");
+        hvfs_err(mmll, "getRC_l1() failed for pino %ld name %s\n",
+                 pino, ms->name);
         return -EINVAL;
     }
 
@@ -1160,7 +1166,7 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
         freeReplyObject(rpy);
     }
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1172,10 +1178,10 @@ int __mmfs_is_empty_dir(u64 dino)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed \n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld\n", dino);
         return -EINVAL;
     }
 
@@ -1271,7 +1277,7 @@ int __mmfs_is_empty_dir(u64 dino)
     }
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1281,10 +1287,10 @@ int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu)
     redisReply *rpy = NULL;
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld\n", ms->ino);
         return -EINVAL;
     }
 
@@ -1294,7 +1300,7 @@ int __mmfs_update_inode(struct mstat *ms, struct mdu_update *mu)
 
     err = __update_inode(rc, rpy, ms);
 
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1345,9 +1351,10 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
         return -EINVAL;
     }
 
-    rc = getRC();
+    rc = getRC_l1();
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld chkikd=%ld\n",
+                 ms->ino, chkid);
         return -EINVAL;
     }
 
@@ -1437,7 +1444,7 @@ int __mmfs_fread_chunk(struct mstat *ms, void *data, u64 off, u64 size,
 out_free:
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1503,10 +1510,11 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
     MD5_CTX mdContext;
     int err = 0, i;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld chkid=%ld\n",
+                 ms->ino, chkid);
         return -EINVAL;
     }
 
@@ -1603,7 +1611,7 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
 out_free2:
     xfree(mr.info);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1620,9 +1628,10 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 
     if (iovlen <= 0) return 0;
 
-    rc = getRC();
+    rc = getRC_l1();
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld chkid=%ld\n",
+                 ms->ino, chkid);
         return -EINVAL;
     }
 
@@ -1721,7 +1730,7 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 out_free2:
     xfree(mr.info);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1732,9 +1741,10 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
     redisReply *rpy = NULL;
     int err = 0;
 
-    rc = getRC();
+    rc = getRC_l1();
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld chkid=%ld\n",
+                 ms->ino, chkid);
         return -EINVAL;
     }
 
@@ -1798,7 +1808,7 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
     freeReplyObject(rpy);
     
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -1992,10 +2002,10 @@ int __mmfs_readdir(mmfs_dir_t *dir)
         return -ENOTDIR;
     }
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for ino %ld\n", dir->dino);
         return -EINVAL;
     }
 
@@ -2094,7 +2104,7 @@ int __mmfs_readdir(mmfs_dir_t *dir)
     }
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     /* get inode mode for each dentry now */
     struct dentry_info *di = dir->di;
@@ -2123,10 +2133,10 @@ int __mmfs_inc_shadow_dir(u64 dino)
         return -EINVAL;
     }
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for ino %ld\n", dino);
         return -EINVAL;
     }
 
@@ -2148,7 +2158,7 @@ int __mmfs_inc_shadow_dir(u64 dino)
     }
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -2163,10 +2173,10 @@ int __mmfs_dec_shadow_dir(u64 dino)
         return -EINVAL;
     }
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld\n", dino);
         return -EINVAL;
     }
 
@@ -2249,7 +2259,7 @@ int __mmfs_dec_shadow_dir(u64 dino)
         freeReplyObject(rpy);
     }
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -2266,10 +2276,10 @@ int __mmfs_is_shadow_dir(u64 dino)
         return -EINVAL;
     }
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld\n", dino);
         return -EINVAL;
     }
 
@@ -2298,7 +2308,7 @@ int __mmfs_is_shadow_dir(u64 dino)
     }
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -2310,10 +2320,12 @@ int __mmfs_rename_log(u64 ino, u64 opino, u64 npino)
     char entry[256];
     int err = 0;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld "
+                 "opino %ld npino %ld\n",
+                 ino, opino, npino);
         return -EINVAL;
     }
 
@@ -2343,7 +2355,7 @@ int __mmfs_rename_log(u64 ino, u64 opino, u64 npino)
     }
     freeReplyObject(rpy);
 out:
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 }
@@ -2355,10 +2367,10 @@ int __mmfs_rename_fix(u64 ino)
     char **fields = NULL;
     int err = 0, nr = 0, i, j;
 
-    struct redisConnection *rc = getRC();
+    struct redisConnection *rc = getRC_l1();
 
     if (!rc) {
-        hvfs_err(mmll, "getRC() failed\n");
+        hvfs_err(mmll, "getRC_l1() failed for _IN_%ld\n", ino);
         return -EINVAL;
     }
 
@@ -2461,7 +2473,7 @@ int __mmfs_rename_fix(u64 ino)
 out:
     if (cursor)
         xfree(cursor);
-    putRC(rc);
+    putRC_l1(rc);
 
     return err;
 out_free:
@@ -2525,10 +2537,10 @@ int __mmfs_client_info(struct __mmfs_client_info *ci)
     }
     if (err > 0) {
         redisReply *rpy = NULL;
-        struct redisConnection *rc = getRC();
+        struct redisConnection *rc = getRC_l1();
 
         if (!rc) {
-            hvfs_err(mmll, "getRC() failed\n");
+            hvfs_err(mmll, "getRC_l1() failed for CI\n");
             return -EINVAL;
         }
 
@@ -2571,7 +2583,7 @@ int __mmfs_client_info(struct __mmfs_client_info *ci)
         }
         freeReplyObject(rpy);
     out:
-        putRC(rc);
+        putRC_l1(rc);
         err = 0;
     }
 

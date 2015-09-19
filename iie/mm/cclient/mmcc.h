@@ -101,11 +101,33 @@ typedef struct
 {
     __timer_cb tcb;
     int ti;
-    int rcc;
     int mode;
+    int dupnum;
+    int sockperserver;
 } mmcc_config_t;
 
 int mmcc_config(mmcc_config_t *);
+
+struct redis_pool_config
+{
+    char *uri;
+    char *master_name;
+
+#define RP_CONF_STA             0
+#define RP_CONF_STL             1
+#define RP_CONF_CLUSTER         2
+    int ptype;
+#define RP_CONF_MAX_CONN        50
+#define RP_CONF_MIN_CONN        5
+    int max_conn;
+    int min_conn;
+};
+
+#define redisCMD(rc, a...) ({                    \
+            struct redisReply *__rr = NULL;      \
+            __rr = redisCommand(rc, ## a);       \
+            __rr;                                \
+        })
 
 #ifdef __cplusplus
 }

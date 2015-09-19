@@ -4,9 +4,11 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2014-04-20 17:37:09 macan>
+ * Time-stamp: <2015-09-17 18:27:21 macan>
  *
  */
+
+#define HVFS_TRACING
 
 #include <sys/wait.h>
 #include <stdio.h>
@@ -21,6 +23,8 @@
 #include <libgen.h>
 
 HVFS_TRACING_INIT();
+
+HVFS_TRACING_DEFINE_FILE();
 
 static pthread_t g_timer_thread = 0;
 static pthread_t g_event_thread = 0;

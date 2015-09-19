@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-08 17:08:01 macan>
+ * Time-stamp: <2015-09-17 15:24:42 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4713,12 +4713,8 @@ static void *mmfs_init(struct fuse_conn_info *conn)
     mmcc_config_t mc = {
         .tcb = mmfs_timer_main,
         .ti = 10,
-        .rcc = 300,
-        /* macro definition refer to iie/mm/cclient/client.c -> struct
+        /* macro definition refer to iie/mm/cclient/mmcc_ll.h -> struct
          * MMSConf */
-#define MMSCONF_DEDUP   0x01
-#define MMSCONF_NODUP   0x02
-#define MMSCONF_DUPSET  0x04
         .mode = MMSCONF_DEDUP | MMSCONF_DUPSET,
     };
     int err = 0;

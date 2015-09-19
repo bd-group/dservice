@@ -3,11 +3,8 @@ package iie.mm.tools;
 import iie.mm.client.ClientAPI;
 import iie.mm.common.RedisPool;
 import iie.mm.common.RedisPoolSelector.RedisConnection;
-import iie.mm.server.StorePhoto;
-
 import java.io.File;
 import java.text.DateFormat;
-import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -21,7 +18,6 @@ import org.fusesource.lmdbjni.*;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Pipeline;
-import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisException;
 import static org.fusesource.lmdbjni.Constants.*;
 

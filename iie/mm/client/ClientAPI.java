@@ -1,6 +1,7 @@
 package iie.mm.client;
 
 import iie.mm.client.PhotoClient.SocketHashEntry;
+import iie.mm.common.MMConf;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -23,6 +24,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Tuple;
 
@@ -121,13 +123,13 @@ public class ClientAPI {
 	}
 	
 	private int init_by_sentinel(ClientConf conf, String urls) throws Exception {
-		if (conf.getRedisMode() != ClientConf.RedisMode.SENTINEL) {
+		if (conf.getRedisMode() != MMConf.RedisMode.SENTINEL) {
 			return -1;
 		}
 		// iterate the sentinel set, get master IP:port, save to sentinel set
 		if (conf.getSentinels() == null) {
 			if (urls == null) {
-				throw new Exception("Invalid URL or sentinels.");
+				throw new Exception("Invalid URL(null) or sentinels.");
 			}
 			HashSet<String> sens = new HashSet<String>();
 			String[] s = urls.split(";");
@@ -136,6 +138,36 @@ public class ClientAPI {
 				sens.add(s[i]);
 			}
 			conf.setSentinels(sens);
+		}
+		pc.init();
+		Jedis jedis = pc.getRpL1().getResource();
+		try {
+			if (jedis != null)
+				updateClientConf(jedis, conf);
+		} finally {
+			pc.getRpL1().putInstance(jedis);
+		}
+		
+		return 0;
+	}
+	
+	private int init_by_standalone(ClientConf conf, String urls) throws Exception {
+		if (conf.getRedisMode() != MMConf.RedisMode.STANDALONE) {
+			return -1;
+		}
+		// get IP:port, save it to HaP
+		if (urls == null) {
+			throw new Exception("Invalid URL: null");
+		}
+		String[] s = urls.split(":");
+		if (s != null && s.length == 2) {
+			try {
+				HostAndPort hap = new HostAndPort(s[0], 
+						Integer.parseInt(s[1]));
+				conf.setHap(hap);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
 		}
 		pc.init();
 		Jedis jedis = pc.getRpL1().getResource();
@@ -343,10 +375,12 @@ public class ClientAPI {
 		case SENTINEL:
 			init_by_sentinel(pc.getConf(), urls);
 			break;
-		case CLUSTER:
-			break;
 		case STANDALONE:
-			System.out.println("MMS do NOT support STA mode now, use STL instead.");
+			init_by_standalone(pc.getConf(), urls);
+			break;
+		case CLUSTER:
+			System.out.println("MMS do NOT support CLUSTER mode now, " +
+					"use STL/STA instead.");
 			break;
 		default:
 			break;

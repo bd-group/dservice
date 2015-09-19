@@ -3,7 +3,7 @@
  *                           <macan@ncic.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-05 18:25:12 macan>
+ * Time-stamp: <2015-09-17 18:29:04 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -164,12 +164,14 @@ extern int g_yday;
                 }                                                       \
             } else {                                                    \
                 if (!g_fp) {                                            \
-                    PRINTK("%s.%03ld " lvl # module ": " f,             \
-                           __ct, (long)(__cur.tv_usec / 1000), ## a);   \
+                    PRINTK("%s.%03ld " lvl "[%lx] " # module ": " f,    \
+                           __ct, (long)(__cur.tv_usec / 1000),          \
+                            pthread_self(), ## a);                      \
                     FFLUSH(stdout);                                     \
                 } else {                                                \
-                    FPRINTK(g_fp, "%s.%03ld " lvl # module ": " f,      \
-                            __ct, (long)(__cur.tv_usec / 1000), ## a);  \
+                    FPRINTK(g_fp, "%s.%03ld " lvl "[%lx] " # module ": " f, \
+                            __ct, (long)(__cur.tv_usec / 1000),         \
+                            pthread_self(), ## a);                      \
                     FFLUSH(g_fp);                                       \
                 }                                                       \
             }                                                           \

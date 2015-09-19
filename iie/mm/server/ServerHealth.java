@@ -444,7 +444,8 @@ public class ServerHealth extends TimerTask {
 									}
 								} catch (Exception e) {
 									// ignore it
-									System.out.println("Ignore set '" + k[0] + "'.");
+									if (conf.isVerbose(1))
+										System.out.println("Ignore set '" + k[0] + "'.");
 								}
 							}
 							if (ts >= 0 && ts < bTs) {
