@@ -848,8 +848,22 @@ public class StorePhoto {
 		for (String d : diskArray)
 			delFile(new File(d + "/" + conf.destRoot + set));
 		// 删除一个集合后,同时删除关于该集合的全局的上下文
-		for (String d : diskArray)
-			writeContextHash.remove(set+ ":" + d);			
+		for (String d : diskArray) {
+			StoreSetContext ssc = writeContextHash.get(set + ":" + d);
+			if (ssc != null) {
+				synchronized (ssc) {
+					if (ssc.raf != null) {
+						try {
+							ssc.raf.close();
+							ssc.raf = null;
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					}
+					writeContextHash.remove(ssc);
+				}
+			}
+		}
 	}
 	
 	/**

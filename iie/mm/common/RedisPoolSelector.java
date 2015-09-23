@@ -122,9 +122,12 @@ public class RedisPoolSelector {
 				break;
 			}
 			if (id != null) {
-				jedis.setnx("`" + set, id);
-				id = jedis.get("`" + set);
-				rpL2.get(id).incrAlloced();
+				long r = jedis.setnx("`" + set, id);
+				if (r == 0) {
+					id = jedis.get("`" + set);
+				}
+				if (id != null)
+					rpL2.get(id).incrAlloced();
 			}
 		} finally {
 			rpL1.putInstance(jedis);

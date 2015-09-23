@@ -28,6 +28,7 @@ struct MMSConf g_conf = {
     .sockperserver = 5,
     .logdupinfo = 1,
     .redistimeout = 60,
+    .alloc_policy = MMS_ALLOC_RR,
     .tcb = NULL,
 };
 
@@ -1394,6 +1395,19 @@ static void __sort_array_by_fratio(struct MMSConnection **a, int nr)
     return qsort(a, nr, sizeof(struct MMSConnection *), fratio_compare);
 }
 
+static void __sort_array_by_rr(struct MMSConnection **a, int nr)
+{
+    struct MMSConnection *_t = NULL;
+    static int last_idx = 0;
+
+    if (last_idx >= nr) last_idx = 0;
+    /* swap 0 and last_idx */
+    _t = a[0];
+    a[0] = a[last_idx];
+    a[last_idx] = _t;
+    last_idx++;
+}
+
 static int __select_mms(int *ids, int dupnum)
 {
     time_t cur = time(NULL);
@@ -1438,7 +1452,14 @@ static int __select_mms(int *ids, int dupnum)
 
     /* sort the array by free ratio as needed */
     if (c > dupnum) {
-        __sort_array_by_fratio(tids, c);
+        switch (g_conf.alloc_policy) {
+        default:
+        case MMS_ALLOC_RR:
+            __sort_array_by_rr(tids, c);
+            break;
+        case MMS_ALLOC_FR:
+            __sort_array_by_fratio(tids, c);
+        }
     }
 
     /* copy top dupnum id to result array */
@@ -1487,8 +1508,9 @@ int __mmcc_put(char *set, char *name, void *buffer, size_t len,
         
         lerr = do_put(ids[i], set, name, buffer, len, &out);
         if (lerr) {
-            hvfs_err(mmcc, "do_put() on Server %d failed w/ %d, ignore\n",
-                     ids[i], lerr);
+            hvfs_err(mmcc, "do_put() on Server %d failed w/ %d(%s),"
+                     " ignore\n",
+                     ids[i], lerr, out);
             if (!err)
                 err = lerr;
         } else {

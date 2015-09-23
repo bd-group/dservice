@@ -128,6 +128,9 @@ struct MMSConf
     int sockperserver;
     int logdupinfo;
     int redistimeout;
+#define MMS_ALLOC_RR    0x00    /* by round-robin */
+#define MMS_ALLOC_FR    0x01    /* by free ratio */
+    int alloc_policy;
     __timer_cb tcb;
 };
 

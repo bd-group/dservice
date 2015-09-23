@@ -203,6 +203,11 @@ void putRC(struct redis_pool *rp, struct redisConnection *rc)
     __put_rc(rp, rc);
 }
 
+static int inline __is_l1_pool(struct redis_pool *rp)
+{
+    return rp->pid == 0;
+}
+
 static int update_mmserver(struct redisConnection *rc)
 {
     redisReply *rpy = NULL, *_rr = NULL;
@@ -276,7 +281,7 @@ static int update_mmserver(struct redisConnection *rc)
                 xlock_unlock(&c->lock);
             }
 
-            hvfs_info(mmcc, "Update MMServer ID=%ld %s:%d\n", c->sid,
+            hvfs_info(mmcc, "Update MMServer ID=%ld %s:%d\n", sid,
                       hostname, port);
 
             xlock_lock(&c->lock);
@@ -336,12 +341,14 @@ struct redisConnection *getRC(struct redis_pool *rp)
                      (int)tv.tv_sec, err);
         }
         atomic_set(&rp->master_connect_err, 0);
-        err = update_mmserver(rc);
-        if (err) {
-            hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
-            redisFree(rc->rc);
-            __put_rc(rp, rc);
-            goto out;
+        if (__is_l1_pool(rp)) {
+            err = update_mmserver(rc);
+            if (err) {
+                hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
+                redisFree(rc->rc);
+                __put_rc(rp, rc);
+                goto out;
+            }
         }
         __get_rc(rc);
     } else {
@@ -365,11 +372,13 @@ struct redisConnection *getRC(struct redis_pool *rp)
                          (int)tv.tv_sec, err);
             }
             /* update server array */
-            err = update_mmserver(rc);
-            if (err) {
-                __put_rc(rp, rc);
-                hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
-                goto out;
+            if (__is_l1_pool(rp)) {
+                err = update_mmserver(rc);
+                if (err) {
+                    __put_rc(rp, rc);
+                    hvfs_err(mmcc, "update_mmserver() failed w/ %d\n", err);
+                    goto out;
+                }
             }
             atomic_set(&rp->master_connect_err, 0);
         } else {
@@ -650,6 +659,9 @@ int rpool_init_l2()
     out_free:
         freeReplyObject(rpy);
     }
+    /* random set last alloc id in [1, g_max_pid] */
+    if (g_max_pid > 0)
+        g_last_alloc = random() % g_max_pid + 1;
 out_put:
     putRC_l1(rc);
 
@@ -758,12 +770,13 @@ static long __create_set(char *set)
 {
     long pid = __create_set_rr(set);
     struct redisConnection *rc = NULL;
+    int need_get = 0;
 
     if (pid > 0) {
         /* create set indicator to L1 pool */
         rc = getRC_l1();
         if (rc != NULL) {
-            redisReply *rpy = redisCMD(rc->rc, "set `%s %ld",
+            redisReply *rpy = redisCMD(rc->rc, "setnx `%s %ld",
                                        set, pid);
 
             if (rpy == NULL) {
@@ -778,11 +791,35 @@ static long __create_set(char *set)
                 pid = -1L;
                 goto out_free;
             }
-            if (rpy->type == REDIS_REPLY_STRING) {
-                /* it must be ok */
+            if (rpy->type == REDIS_REPLY_INTEGER) {
+                if (rpy->integer == 0) {
+                    /* already exists */
+                    need_get = 1;
+                }
             }
         out_free:
             freeReplyObject(rpy);
+
+            if (need_get) {
+                rpy = redisCMD(rc->rc, "get `%s", set);
+                if (rpy == NULL) {
+                    hvfs_err(mmcc, "invalid redis status, connection broken?\n");
+                    redisFree(rc->rc);
+                    rc->rc = NULL;
+                    pid = -1L;
+                    goto out_put;
+                }
+                if (rpy->type == REDIS_REPLY_ERROR) {
+                    hvfs_err(mmcc, "redis error to set `%s: %s\n", set, rpy->str);
+                    pid = -1L;
+                    goto out_free2;
+                }
+                if (rpy->type == REDIS_REPLY_STRING) {
+                    pid = atol(rpy->str);
+                }
+            out_free2:
+                freeReplyObject(rpy);
+            }
         }
     out_put:
         putRC_l1(rc);

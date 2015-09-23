@@ -82,6 +82,7 @@ int mmcc_init(char *uris)
             goto out_l1;
         } else {
             update_g_info(rc);
+            update_mmserver2(rc);
             putRC_l1(rc);
         }
 
@@ -111,8 +112,6 @@ int mmcc_init(char *uris)
                         hvfs_err(mmcc, "load client scripts failed w/ %d\n", err);
                         goto out_put;
                     }
-                    
-                    update_mmserver2(rc);
                 } else {
                     hvfs_err(mmcc, "load scripts on L2 pool %ld failed.\n",
                              rps[i]->pid);
