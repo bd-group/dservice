@@ -814,12 +814,15 @@ static long __create_set(char *set)
                     pid = -1L;
                     goto out_free2;
                 }
+                pid = -1L;
                 if (rpy->type == REDIS_REPLY_STRING) {
                     pid = atol(rpy->str);
                 }
             out_free2:
                 freeReplyObject(rpy);
             }
+        } else {
+            pid = -1L;
         }
     out_put:
         putRC_l1(rc);

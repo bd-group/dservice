@@ -679,7 +679,7 @@ int do_connect(struct MMSConnection *c)
     s->sock = sock;
     s->state = SOCK_FREE;
     __add_to_mmsc(c, s);
-    hvfs_info(mmcc, "Create new connection for Server ID=%ld.\n",
+    hvfs_info(mmcc, "Create new connection for MMS Server ID=%ld.\n",
               c->sid);
 
     return 0;
@@ -783,7 +783,7 @@ struct MMSCSock *__get_free_sock(struct MMSConnection *c)
                     pos->sock = sock;
                     pos->state = SOCK_INUSE;
                     __add_to_mmsc(c, pos);
-                    hvfs_info(mmcc, "Create new connection for Server ID=%ld.\n",
+                    hvfs_info(mmcc, "Create new connection for MMS Server ID=%ld.\n",
                               c->sid);
                     break;
                 }
