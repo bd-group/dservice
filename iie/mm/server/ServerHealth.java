@@ -45,6 +45,8 @@ public class ServerHealth extends TimerTask {
 	private boolean isFixingObj = false;
 	private boolean doFetch = false;
 	private int nhours = 1;
+	private static long CLEAN_ITER_BASE = 50000;
+	private long cleanIter = CLEAN_ITER_BASE;
 
 	public static class SetInfo {
 		long usedBlocks;
@@ -84,9 +86,15 @@ public class ServerHealth extends TimerTask {
 		if (!isCleaningDI) {
 			isCleaningDI = true;
 			// NOTE: user can set cleanDedupInfo arg(iter) here
-			int err = cleanDedupInfo(s + " [cleanDedupInfo]", 0);
+			int err = cleanDedupInfo(s + " [cleanDedupInfo]", cleanIter);
 			if (err < 0) {
 				System.out.println(s + " clean dedupinfo failed w/ " + err);
+			} else if (err == 0) {
+				cleanIter += CLEAN_ITER_BASE;
+				if (cleanIter > CLEAN_ITER_BASE * 20)
+					cleanIter -= CLEAN_ITER_BASE;
+				System.out.println(s + " clean dedupinfo ZERO, adjust iter to "
+						+ cleanIter);
 			} else {
 				System.out.println(s + " clean dedupinfo " + err + " entries.");
 			}

@@ -387,7 +387,7 @@ public class ClientAPI {
 		}
 		
 		socketHash = new ConcurrentHashMap<String, SocketHashEntry>();
-		//从redis上获取所有的服务器地址
+		// 从redis上获取所有的服务器地址
 		refreshActiveMMS(true);
 		System.out.println("Got active server size=" + keyList.size());
 		pc.setSocketHash(socketHash);
@@ -557,7 +557,8 @@ public class ClientAPI {
 	
 	/**
 	 * 根据info从系统中读取对象内容，重新写入到MMServer上仅当info中活动的MMServer个数小于dupnum时
-	 * （should only be used by system tools）
+	 * 
+	 * (should only be used by system tools)
 	 * 
 	 * @param key
 	 * @param info
@@ -567,20 +568,22 @@ public class ClientAPI {
 	 */
     public String xput(String key, String info) throws IOException, Exception {                                                                                                                                                                       
         if (key == null || keyList.size() == 0) {
-            throw new Exception("Key can not be null or no active MMServer (" + keyList.size() + ").");
+            throw new Exception("Key can not be null or no active MMServer (" + 
+            		keyList.size() + ").");
         }
         String[] keys = key.split("@");
         if (keys.length != 2)
             throw new Exception("Wrong format of key: " + key);
 
         byte[] content = this.get(info);
-        boolean nodedup = false;
+        boolean nodedup = true;
         int dupnum = Math.min(keyList.size(), pc.getConf().getDupNum());
 
         if (content == null) {
         	throw new IOException("Try to get content of KEY: " + key + " failed.");
         }
-        // roundrobin select dupnum servers from keyList, if error in put, random select in remain servers
+        // round-robin select dupnum servers from keyList, if error in put, 
+        // random select in remain servers
         TreeSet<String> targets = new TreeSet<String>();
         Set<String> active = new TreeSet<String>();
         targets.addAll(keyList);

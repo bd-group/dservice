@@ -1,9 +1,13 @@
 package iie.mm.tools;
 
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
+import iie.mm.client.ClientAPI;
+import iie.mm.common.MMConf;
+import iie.mm.common.RedisPool;
+import iie.mm.common.RedisPoolSelector;
+import iie.mm.common.RedisPoolSelector.RedisConnection;
+
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -11,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
+import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Tuple;
 
@@ -19,34 +24,39 @@ import redis.clients.jedis.Tuple;
  * 检查副本分布情况，检查各个节点的数据情况，各个节点故障后可能丢失的数据量有多少
  */
 public class MMRepChecker {
-	private String rr;
-	private int rp;
-	private boolean checkNonStd = false;
-	
+	private MMConf conf;
+	private RedisPool rpL1;
+	private RedisPoolSelector rps;
 	private HashMap<String, String> sidname = new HashMap<String, String>();
 	private HashMap<String, Long> sidnum = new HashMap<String, Long>();
 	
-	public MMRepChecker(String rr, int rp, boolean checkNonStd) {
-		this.rr = rr;
-		this.rp = rp;
+	public MMRepChecker(String uri) throws Exception {
+		this.conf = new MMConf();
+		init(uri);
+
+		Jedis jedis = rpL1.getResource();
 		
-		Jedis jedis = new Jedis(rr, rp);
-		Set<Tuple> re = jedis.zrangeWithScores("mm.active", 0, -1);
-		
-		if (re != null) {
-			for (Tuple t : re) {
-				String ipport = jedis.hget("mm.dns", t.getElement());
-				if (ipport != null)
-					sidname.put(((int)t.getScore()) + "", ipport);
-				else 
-					sidname.put(((int)t.getScore()) + "", t.getElement());
-				sidnum.put(((int)t.getScore()) + "", 0l);
-				System.out.println((int)t.getScore() + "  " + t.getElement());
+		if (jedis != null) {
+			try {
+				Set<Tuple> re = jedis.zrangeWithScores("mm.active", 0, -1);
+
+				if (re != null) {
+					for (Tuple t : re) {
+						String ipport = jedis.hget("mm.dns", t.getElement());
+						if (ipport != null)
+							sidname.put(((int)t.getScore()) + "", ipport);
+						else 
+							sidname.put(((int)t.getScore()) + "", t.getElement());
+						sidnum.put(((int)t.getScore()) + "", 0l);
+						System.out.println((int)t.getScore() + "  " + t.getElement());
+					}
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			} finally {
+				rpL1.putInstance(jedis);
 			}
 		}
-		jedis.quit();
-		jedis.close();
-		this.checkNonStd = checkNonStd;
 	}
 
 	public static class Option {
@@ -96,12 +106,98 @@ public class MMRepChecker {
 
 		return optsList;
 	}
+	
+	public void __init() throws Exception {
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			rpL1 = new RedisPool(conf, "l1.master");
+			break;
+		case STANDALONE:
+			rpL1 = new RedisPool(conf, "nomaster");
+			break;
+		}
+		rps = new RedisPoolSelector(conf, rpL1);
+	}
+	
+	public void quit() {
+		rps.quit();
+		rpL1.quit();
+	}
+	
+	private int init_by_sentinel(MMConf conf, String urls) throws Exception {
+		if (conf.getRedisMode() != MMConf.RedisMode.SENTINEL) {
+			return -1;
+		}
+		// iterate the sentinel set, get master IP:port, save to sentinel set
+		if (conf.getSentinels() == null) {
+			if (urls == null) {
+				throw new Exception("Invalid URL(null) or sentinels.");
+			}
+			HashSet<String> sens = new HashSet<String>();
+			String[] s = urls.split(";");
+			
+			for (int i = 0; i < s.length; i++) {
+				sens.add(s[i]);
+			}
+			conf.setSentinels(sens);
+		}
+		__init();
+
+		return 0;
+	}
+	
+	private int init_by_standalone(MMConf conf, String urls) throws Exception {
+		if (conf.getRedisMode() != MMConf.RedisMode.STANDALONE) {
+			return -1;
+		}
+		// get IP:port, save it to HaP
+		if (urls == null) {
+			throw new Exception("Invalid URL: null");
+		}
+		String[] s = urls.split(":");
+		if (s != null && s.length == 2) {
+			try {
+				HostAndPort hap = new HostAndPort(s[0], 
+						Integer.parseInt(s[1]));
+				conf.setHap(hap);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		__init();
+
+		return 0;
+	}
+	
+	public void init(String urls) throws Exception {
+		if (urls == null) {
+			throw new Exception("The url can not be null.");
+		}
+		if (urls.startsWith("STL://")) {
+			urls = urls.substring(6);
+			conf.setRedisMode(MMConf.RedisMode.SENTINEL);
+		} else if (urls.startsWith("STA://")) {
+			urls = urls.substring(6);
+			conf.setRedisMode(MMConf.RedisMode.STANDALONE);
+		}
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			init_by_sentinel(conf, urls);
+			break;
+		case STANDALONE:
+			init_by_standalone(conf, urls);
+			break;
+		case CLUSTER:
+			System.out.println("MMS do NOT support CLUSTER mode now, " +
+					"use STL/STA instead.");
+			break;
+		default:
+			break;
+		}
+	}
 
 	public static void main(String[] args) {
-		String rr = null;
-		int rp = 0;
-		long from = 0, to = System.currentTimeMillis() / 1000;
-		boolean checkNonStd = false;
+		String uri = null;
 		
 		if (args.length >= 1) {
 			List<Option> ops = parseArgs(args);
@@ -110,61 +206,54 @@ public class MMRepChecker {
 				if (o.flag.equals("-h")) {
 					// print help message
 					System.out.println("-h    : print this help.");
-					System.out.println("-rr   : redis server ip.");
-					System.out.println("-rp   : redis server port.");
-					System.out.println("-tf   : timestamp where checker starts from(included), default is 0.");
-					System.out.println("-tt   : timestamp where checker goes to(excluded), default is current time.");
+					System.out.println("-uri  : unified uri for SENTINEL and STANDALONE.");
 					System.exit(0);
 				}
-				if (o.flag.equals("-rr")) {
-					// set redis server address
+				if (o.flag.equals("-uri")) {
 					if (o.opt == null) {
-						System.out.println("-rr redis server ip. ");
+						System.out.println("-uri URI");
 						System.exit(0);
 					}
-					rr = o.opt;
-				}
-				if (o.flag.equals("-rp")) {
-					if (o.opt == null) {
-						System.out.println("-rp redis server port. ");
-						System.exit(0);
-					}
-					rp = Integer.parseInt(o.opt);
-				}
-				if (o.flag.equals("-tf")) {
-					if (o.opt == null) {
-						System.out.println("-tf timestamp where checker starts from.");
-						System.exit(0);
-					}
-					from = Long.parseLong(o.opt);
-				}
-				if (o.flag.equals("-tt")) {
-					if (o.opt == null) {
-						System.out.println("-tt timestamp where checker goes to. ");
-						System.exit(0);
-					}
-					to = Long.parseLong(o.opt);
-				}
-				if (o.flag.equals("-nsd")) {
-					checkNonStd = true;
+					uri = o.opt;
 				}
 			}
-		} else{
-			rr = "localhost";
-			rp = 30999;
 		}
-		
+
+		if (uri == null) {
+			System.out.println("No valid URI provided.");
+			System.exit(0);
+		}
 		try {
-			MMRepChecker checker = new MMRepChecker(rr, rp, checkNonStd);
-			Map<String, String> undup = checker.check(from, to);
+			MMRepChecker checker = new MMRepChecker(uri);
+			Map<String, String> undup = checker.check();
 			System.out.println("Total unreplicated objects: " + undup.size());
+			checker.fix(uri, undup);
+			checker.quit();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
 	
-	public HashMap<String, String> check(long from) {
-		return check(from, System.currentTimeMillis() / 1000);
+	public void fix(String uri, Map<String, String> toRep) throws Exception {
+		ClientAPI ca = new ClientAPI();
+
+		ca.init(uri);
+		for (Map.Entry<String, String> entry : toRep.entrySet()) {
+			String info = ca.xput(entry.getKey(), entry.getValue());
+			System.out.println("Fix " + entry.getKey() + " -> " + info);
+		}
+		ca.quit();
+	}
+	
+	public HashMap<String, String> check() throws Exception {
+		HashMap<String, String> undup = new HashMap<String, String>();
+		System.out.println("A: only one copy");
+		System.out.println("B: all copies on the same server\n");
+		
+		for (Map.Entry<String, RedisPool> entry : rps.getRpL2().entrySet()) {
+			undup.putAll(check(entry.getValue().getPid()));
+		}
+		return undup;
 	}
 	
 	public class SetStats {
@@ -179,99 +268,98 @@ public class MMRepChecker {
 		}
 		
 		public String toString() {
-			return "Set " + set + " -> Total " + total_nr + " nonRep " + dup_nr + " Health Ratio " + ((double)(total_nr - dup_nr) / total_nr * 100) + "%";
+			return "Set " + set + " -> Total " + total_nr + " nonRep " + dup_nr + 
+					" Health Ratio " + ((double)(total_nr - dup_nr) / total_nr * 100) + "%";
 		}
 	}
 	
-	public HashMap<String, String> check(long from, long to) {
+	public HashMap<String, String> check(String pid) throws Exception {
 		long start = System.currentTimeMillis();
-		System.out.println("Check redis " + rr + ":" + rp);
 		int totalm = 0;
 		HashMap<String, String> notdup = new HashMap<String, String>();
 		TreeMap<String, SetStats> setInfo = new TreeMap<String, SetStats>();
-		Jedis jedis = new Jedis(rr, rp);
+
+		RedisConnection rc = rps.getL2ByPid(pid);
+
+		if (rc == null || rc.rp == null || rc.jedis == null) {
+			throw new Exception("Get redis connection by pid " + pid + " failed.");
+		}
+		Jedis jedis = rc.jedis;
 
 		Set<String> keys = new HashSet<String>();
-		for (String s : jedis.keys("*.srvs")) {
-			s = s.replaceAll("\\.srvs", "");
-			try {
-				if (Character.isDigit(s.charAt(0))) {
-					long ts = Long.parseLong(s);
-					if (ts >= from && ts < to)
-						keys.add(s);
-				} else {
-					long ts = Long.parseLong(s.substring(1));
-					if (ts >= from && ts < to)
-						keys.add(s);
-				}
-			} catch (NumberFormatException e) {
-				if (checkNonStd)
-					keys.add(s);
-				else
-					System.out.println("Ignore timestamp: " + s);
-				continue;
-			}
-		}
-		System.out.println("A: only one copy");
-		System.out.println("B: all copies on the same server\n");
-		for (String set : keys) {
-			long tnr = jedis.hlen(set);
-			
-			totalm += tnr;
 
-			SetStats ss = setInfo.get(set);
-			if (ss == null)
-				ss = new SetStats(set);
-			ss.total_nr = tnr;
-			
-			Map<String, String> setentrys = jedis.hgetAll(set);
-			if (setentrys != null) {
-				for (Map.Entry<String, String> en : setentrys.entrySet()) {
-					String[] infos = en.getValue().split("#");
-					if (infos.length == 1) {
-						notdup.put(set + "@" + en.getKey(), en.getValue());
-						System.out.println("A: " + set + "@"	+ en.getKey() + " --> " + en.getValue());
-						String id = MMRepChecker.getServerid(infos[0]);
-						long n = sidnum.get(id) + 1;
-						sidnum.put(id, n);
-						ss.dup_nr++;
-					} else {
-						String id = MMRepChecker.getServerid(infos[0]);
-						boolean duped = true;
-						for (int i = 1; i < infos.length; i++) {
-							if (!MMRepChecker.getServerid(infos[i]).equals(id)) {
-								duped = false;
-								break;
-							}
-						}
-						if (duped) {
+		try {
+			for (String s : jedis.keys("*.srvs")) {
+				s = s.replaceAll("\\.srvs", "");
+				keys.add(s);
+			}
+
+			for (String set : keys) {
+				long tnr = jedis.hlen(set);
+
+				totalm += tnr;
+
+				SetStats ss = setInfo.get(set);
+				if (ss == null)
+					ss = new SetStats(set);
+				ss.total_nr = tnr;
+
+				Map<String, String> setentrys = jedis.hgetAll(set);
+				if (setentrys != null) {
+					for (Map.Entry<String, String> en : setentrys.entrySet()) {
+						String[] infos = en.getValue().split("#");
+						if (infos.length == 1) {
 							notdup.put(set + "@" + en.getKey(), en.getValue());
-							System.out.println("B: " + set + "@" + en.getKey() + " --> " + en.getValue());
+							System.out.println("A: " + set + "@"	+ en.getKey() + 
+									" --> " + en.getValue());
+							String id = MMRepChecker.getServerid(infos[0]);
 							long n = sidnum.get(id) + 1;
 							sidnum.put(id, n);
 							ss.dup_nr++;
+						} else {
+							String id = MMRepChecker.getServerid(infos[0]);
+							boolean duped = true;
+							for (int i = 1; i < infos.length; i++) {
+								if (!MMRepChecker.getServerid(infos[i]).equals(id)) {
+									duped = false;
+									break;
+								}
+							}
+							if (duped) {
+								notdup.put(set + "@" + en.getKey(), en.getValue());
+								System.out.println("B: " + set + "@" + en.getKey() + 
+										" --> " + en.getValue());
+								long n = sidnum.get(id) + 1;
+								sidnum.put(id, n);
+								ss.dup_nr++;
+							}
 						}
 					}
 				}
+				setInfo.put(set, ss);
 			}
-			setInfo.put(set, ss);
-		}
 
-		System.out.println();
-		DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-		System.out.println("Timestamp: " + from + " -- " + to + ". Date: " + df.format(new Date(from * 1000)) + " -- " + df.format(new Date(to * 1000)));
-		System.out.println("Check meta data takes " + (System.currentTimeMillis() - start) + " ms");
-		System.out.println("Checked objects num: " + totalm + ", unreplicated: " + notdup.size() + ", healthy ratio " + ((double)(totalm - notdup.size()) / totalm * 100) + "%");
-		for (Map.Entry<String, Long> en : sidnum.entrySet()) {
-			System.out.println("If server " + sidname.get(en.getKey()) + " down, " + en.getValue() + " mm objects may be lost.");
+			System.out.println();
+			System.out.println("Check meta data takes " + 
+					(System.currentTimeMillis() - start) + " ms");
+			System.out.println("Checked objects num: " + totalm + ", unreplicated: " + 
+					notdup.size() + ", healthy ratio " + 
+					((double)(totalm - notdup.size()) / totalm * 100) + "%");
+
+			for (Map.Entry<String, Long> en : sidnum.entrySet()) {
+				System.out.println("If server " + sidname.get(en.getKey()) + " down, " + 
+						en.getValue() + " mm objects may be lost.");
+			}
+			System.out.println();
+			System.out.println("Per-Set Replicate info: ");
+			for (Map.Entry<String, SetStats> e : setInfo.descendingMap().entrySet()) {
+				System.out.println(e.getValue());
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			rps.putL2(rc);
 		}
-		System.out.println();
-		System.out.println("Per-Set Replicate info: ");
-		for (Map.Entry<String, SetStats> e : setInfo.descendingMap().entrySet()) {
-			System.out.println(e.getValue());
-		}
-		jedis.quit();
-		jedis.close();
 		
 		return notdup;
 	}

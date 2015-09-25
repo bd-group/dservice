@@ -47,7 +47,7 @@ public class RedisPoolSelector {
 				for (Map.Entry<String, String> entry : l2mn.entrySet()) {
 					// get master redis instance from sentinel by masterName
 					RedisPool rp = new RedisPool(conf, entry.getValue());
-					rp.setPid(entry.getValue() + "." + entry.getKey());
+					rp.setPid(entry.getKey());
 					rpL2.putIfAbsent(entry.getKey(), rp);
 				}
 				// get client alloc policy
@@ -148,7 +148,7 @@ public class RedisPoolSelector {
 			String masterName = jedis.hget("mm.l2", id);
 			if (masterName != null) {
 				RedisPool rp = new RedisPool(conf, masterName);
-				rp.setPid(masterName + "." + id);
+				rp.setPid(id);
 				rpL2.putIfAbsent(id, rp);
 			}
 		} finally {
@@ -160,7 +160,7 @@ public class RedisPoolSelector {
 	private RedisConnection __getL2_standalone(String set, boolean doCreate) {
 		RedisConnection rc = new RedisConnection();
 		rc.rp = rpL2.get("0");
-		rc.id = "STA:0";
+		rc.id = "0";
 		if (rc.rp != null) {
 			rc.jedis = rc.rp.getResource();
 		}
@@ -190,7 +190,7 @@ public class RedisPoolSelector {
 				rp = __lookupL2(id);
 			}
 			rc.rp = rp;
-			rc.id = "L2." + id;
+			rc.id = id;
 		}
 		if (rc.rp != null) {
 			rc.jedis = rc.rp.getResource();
@@ -210,6 +210,32 @@ public class RedisPoolSelector {
 		return null;
 	}
 	
+	public RedisConnection getL2ByPid(String pid) throws Exception {
+		RedisConnection rc = new RedisConnection();
+
+		switch (conf.getRedisMode()) {
+		case SENTINEL:
+			if (pid != null) {
+				RedisPool rp = rpL2.get(pid);
+				if (rp == null) {
+					rp = __lookupL2(pid);
+				}
+				rc.rp = rp;
+				rc.id = pid;
+			}
+			break;
+		case STANDALONE:
+			rc.rp = rpL2.get("0");
+			rc.id = "0";
+			break;
+		case CLUSTER:
+			break;
+		}
+		if (rc.rp != null)
+			rc.jedis = rc.rp.getResource();
+		return rc;
+	}
+
 	public void putL2(RedisConnection rc) {
 		if (rc != null && rc.jedis != null)
 			rc.rp.putInstance(rc.jedis);

@@ -253,7 +253,7 @@ public class StorePhoto {
 		readTo = conf.getRead_fd_recycle_to();
 		if (rpL1 == null) {
 			rpL1 = new RedisPool(conf, "l1.master");
-			rpL1.setPid("L1.0");
+			rpL1.setPid("0");
 		}
 		if (rps == null)
 			rps = new RedisPoolSelector(conf, rpL1);
