@@ -103,6 +103,7 @@ public class ServerConf extends MMConf {
 		this.nodeName = InetAddress.getLocalHost().getHostName();
 		this.httpPort = httpPort;
 		setRedisMode(RedisMode.SENTINEL);
+		setRpsUseCache(true);
 	}
 	
 	public ServerConf(String nodeName, int serverPort, Set<String> sentinels, 
@@ -119,6 +120,7 @@ public class ServerConf extends MMConf {
 		this.httpPort = httpPort;
 		setSentinels(sentinels);
 		setRedisMode(RedisMode.SENTINEL);
+		setRpsUseCache(true);
 		
 		// ok, get global config if they exist.
 		Jedis jedis = StorePhoto.getRpL1(this).getResource();
@@ -162,6 +164,7 @@ public class ServerConf extends MMConf {
 		this.period = period;
 		this.httpPort = httpPort;
 		setRedisMode(RedisMode.STANDALONE);
+		setRpsUseCache(true);
 		
 		// ok, get global config if they exist.
 		Jedis jedis = StorePhoto.getRpL1(this).getResource();

@@ -860,7 +860,10 @@ public class StorePhoto {
 							e.printStackTrace();
 						}
 					}
-					writeContextHash.remove(ssc);
+					writeContextHash.remove(set + ":" + d);
+					// clean up the RPS cached set->pid entry
+					if (rps != null)
+						rps.__cleanup_cached(set);
 				}
 			}
 		}
