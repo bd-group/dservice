@@ -15,9 +15,14 @@ public class MMConf {
 	// for sentinel mode
 	private Set<String> sentinels;
 	
+	// redis mode: sentinel or standalone
 	private RedisMode redisMode;
-	
+
+	// redis connect timeout in 30s
 	private int redisTimeout = 30 * 1000;
+
+	// should RPS use cache?
+	private boolean rpsUseCache = false;
 
 	public Set<String> getSentinels() {
 		return sentinels;
@@ -49,5 +54,13 @@ public class MMConf {
 
 	public void setHap(HostAndPort hap) {
 		this.hap = hap;
+	}
+
+	public boolean isRpsUseCache() {
+		return rpsUseCache;
+	}
+
+	public void setRpsUseCache(boolean rpsUseCache) {
+		this.rpsUseCache = rpsUseCache;
 	}
 }

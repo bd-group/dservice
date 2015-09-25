@@ -27,6 +27,7 @@ public class RedisPoolSelector {
 			new ConcurrentHashMap<String, RedisPool>();
 	private TimeLimitedCacheMap cached = 
 			new TimeLimitedCacheMap(270, 60, 300, TimeUnit.SECONDS);
+	private boolean useCache = false;
 	
 	public RedisPoolSelector(MMConf conf, RedisPool rpL1) throws Exception {
 		this.conf = conf;
@@ -34,6 +35,8 @@ public class RedisPoolSelector {
 		Jedis jedis = rpL1.getResource();
 		if (jedis == null)
 			throw new Exception("get RedisPool from L1 failed: get null");
+
+		setUseCache(conf.isRpsUseCache());
 
 		switch (conf.getRedisMode()) {
 		case SENTINEL:
@@ -84,7 +87,7 @@ public class RedisPoolSelector {
 		
 		try {
 			id = jedis.get("`" + set);
-			if (id != null) {
+			if (id != null && isUseCache()) {
 				cached.put(set, id);
 			}
 		} finally {
@@ -164,6 +167,10 @@ public class RedisPoolSelector {
 		return rc;
 	}
 	
+	public void __cleanup_cached(String set) {
+		cached.remove(set);
+	}
+
 	private RedisConnection __getL2_sentinel(String set, boolean doCreate) 
 			throws Exception {
 		RedisConnection rc = new RedisConnection();
@@ -217,5 +224,13 @@ public class RedisPoolSelector {
 	
 	public ConcurrentHashMap<String, RedisPool> getRpL2() {
 		return rpL2;
+	}
+
+	public boolean isUseCache() {
+		return useCache;
+	}
+
+	public void setUseCache(boolean useCache) {
+		this.useCache = useCache;
 	}
 }
