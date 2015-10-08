@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-17 15:53:15 macan>
+ * Time-stamp: <2015-10-08 11:20:14 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,45 +62,38 @@ struct __mmfs_r_op g_ops[] = {
     },
     {
         "update_block",
-        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then local d=redis.call('hincrby', '_DUPSET_', y, -1); if d < 0 then redis.call('hdel', '_DUPSET_', y); end; return 2; end; local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]); end; end; local i, z, K, F; i=0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F=z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hset', KEYS[1], ARGV[1], ARGV[2]);"
+        "local r = {}; local x = redis.call('hexists', KEYS[1], ARGV[1]); local y = nil; if x == 1 then y=redis.call('hget', KEYS[1], ARGV[1]); if y == ARGV[2] then return {2,y}; end; end; x=redis.call('hset', KEYS[1], ARGV[1], ARGV[2]); return {x,y};",
     },
     {
         "clear_block",
-        "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); local b=redis.call('hexists', '_DUPSET_', y); if b == 1 then local c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); else return redis.call('hdel', KEYS[1], ARGV[1]); end; end; local i, z, K, F; i = 0; for z in string.gmatch(y, '[^@]+') do if (i == 0) then K=z end; if (i == 1) then F = z end; i = i + 1; end; redis.call('hdel', K, F); end; return redis.call('hdel', KEYS[1], ARGV[1]);"
+        "local r = {}; local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then local y=redis.call('hget', KEYS[1], ARGV[1]); local b=redis.call('hexists', '_DUPSET_', y); local c=0; if b == 1 then c=redis.call('hincrby', '_DUPSET_', y, -1); if c < 0 then redis.call('hdel', '_DUPSET_', y); end; end; redis.call('hdel', KEYS[1], ARGV[1]); if c < 0 then r = {2, y}; else r = {1, y}; end; else r = {0}; end; return r;"
     },
 };
 
-int __mmfs_load_scripts(int idx)
+int __mmfs_load_scripts_4each(struct redisConnection *rc, int idx)
 {
     redisReply *rpy = NULL;
     int err = 0, i;
-
-    struct redisConnection *rc = getRC_l1();
-
-    if (!rc) {
-        hvfs_err(mmll, "getRC_l1() failed for idx=%d\n", idx);
-        return -EINVAL;
-    }
 
     for (i = 0; i < sizeof(g_ops) / sizeof(struct __mmfs_r_op); i++) {
         if (idx == -1 || i == idx) {
             rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
             if (rpy == NULL) {
-                hvfs_err(mmll, "read from MM Meta failed: %s\n", 
-                         rc->rc->errstr);
+                hvfs_err(mmll, "read from MM Meta failed: %s(pid: %ld)\n", 
+                         rc->rc->errstr, rc->pid);
                 freeRC(rc);
                 err = -EMMMETAERR;
                 goto out;
             }
             if (rpy->type == REDIS_REPLY_ERROR) {
-                hvfs_err(mmll, "script %d load failed w/ \n%s.\n", 
-                         i, rpy->str);
+                hvfs_err(mmll, "script %d load failed w/ \n%s(pid: %ld).\n", 
+                         i, rpy->str, rc->pid);
                 err = -EINVAL;
                 goto out_free;
             }
             if (rpy->type == REDIS_REPLY_STRING) {
-                hvfs_info(mmll, "Script %d %s \tloaded as '%s'.\n",
-                          i, g_ops[i].opname, rpy->str);
+                hvfs_info(mmll, "[%ld] Script %d %s \tloaded as '%s'.\n",
+                          rc->pid, i, g_ops[i].opname, rpy->str);
                 xfree(g_ops[i].sha);
                 g_ops[i].sha = strdup(rpy->str);
             } else {
@@ -111,9 +104,60 @@ int __mmfs_load_scripts(int idx)
             freeReplyObject(rpy);
         }
     }
+
 out:
+    return err;
+}
+
+int __mmfs_load_scripts(int idx)
+{
+    struct redisConnection *rc = getRC_l1();
+    int err = 0;
+
+    if (!rc) {
+        hvfs_err(mmll, "getRC_l1() failed for load scripts.\n");
+        return -EINVAL;
+    }
+
+    err = __mmfs_load_scripts_4each(rc, idx);
+    if (err) {
+        hvfs_err(mmll, "do scripts loads on pool %ld failed w/ %d\n",
+                 rc->pid, err);
+        putRC_l1(rc);
+        goto out;
+    }
     putRC_l1(rc);
 
+    {
+        struct redis_pool **rps = NULL;
+        int pnr = 0, i;
+
+        err = get_l2(&rps, &pnr);
+        if (err) {
+            hvfs_err(mmll, "get_l2() failed w/ %d\n", err);
+            goto out;
+        }
+
+        for (i = 0; i < pnr; i++) {
+            struct redisConnection *rc0 = getRC(rps[i]);
+            if (rc0 != NULL) {
+                err = __mmfs_load_scripts_4each(rc0, idx);
+                if (err) {
+                    hvfs_err(mmll, "load scripts on pool %ld failed w/ %d\n",
+                             rc0->pid, err);
+                    goto out_put;
+                }
+            } else {
+                hvfs_err(mmll, "load scripts on L2 pool %ld failed.\n",
+                         rps[i]->pid);
+            }
+        out_put:
+            putRC(rps[i], rc0);
+        }
+        xfree(rps);
+    }
+
+out:
     return err;
 }
 
@@ -1126,6 +1170,47 @@ int __mmfs_unlink(u64 pino, struct mstat *ms, u32 flags)
                         }
                     }
                 }
+                if (rpy->type == REDIS_REPLY_ARRAY && rpy->elements >= 1 &&
+                    rpy->element[0]->type == REDIS_REPLY_INTEGER) {
+                    switch (rpy->element[0]->integer) {
+                    case 0:
+                        /* not exist */
+                        hvfs_err(mmll, "clear _IN_%ld block CHK=%d not exist.\n", 
+                                 ms->mdu.ino, j);
+                        break;
+                    case 1:
+                    {
+                        int retried = 0;
+
+                        /* deleted, clean MMCC ref */
+                        hvfs_err(mmll, "clear _IN_%ld block CHK=%d with ref %s\n",
+                                 ms->mdu.ino, j, rpy->element[1]->str);
+                    retry:
+                        err = mmcc_del(rpy->element[1]->str);
+                        if (err < 0) {
+                            if (err == -EAGAIN && !retried) {
+                                retried = 1;
+                                goto retry;
+                            }
+                            if (err == EMMMETAERR)
+                                hvfs_err(mmll, "MMCC delete %s failed w/ %d\n",
+                                         rpy->element[1]->str, err);
+                            else
+                                hvfs_debug(mmll, "MMCC delete %s still has ref %d\n",
+                                           rpy->element[1]->str, -err);
+                            err = 0;
+                        } else if (err == 0) {
+                            hvfs_debug(mmll, "MMCC delete %s no ref, not exist\n",
+                                       rpy->element[1]->str);
+                        } else {
+                            hvfs_debug(mmll, "MMCC delete %s, deleted (%d)\n",
+                                       rpy->element[1]->str, err);
+                            err = 0;
+                        }
+                        break;
+                    }
+                    }
+                }
                 freeReplyObject(rpy);
             }
 
@@ -1550,8 +1635,8 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         err = EMMMMSERR;
         goto out;
     }
-    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
-               ms->ino, key, mr.info, mr.flag);
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d pid=%ld\n",
+               ms->ino, key, mr.info, mr.flag, rc->pid);
 
     if (likely(chkid == 0)) {
         rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
@@ -1587,8 +1672,9 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
         freeReplyObject(rpy);
         goto out_free2;
     }
-    if (rpy->type == REDIS_REPLY_INTEGER) {
-        switch (rpy->integer) {
+    if (rpy->type == REDIS_REPLY_ARRAY && rpy->elements == 2 &&
+        rpy->element[0]->type == REDIS_REPLY_INTEGER) {
+        switch (rpy->element[0]->integer) {
         case 2:
             /* update, but equal? */
             hvfs_debug(mmll, "_IN_%ld block not update %s\n",
@@ -1601,9 +1687,36 @@ int __mmfs_fwrite(struct mstat *ms, u32 flag, void *data, u64 size, u64 chkid)
             break;
         case 0:
         default:
+        {
+            int retried = 0;
+
             /* updated */
-            hvfs_debug(mmll, "_IN_%ld block update to %s\n",
-                       ms->ino, key);
+            hvfs_debug(mmll, "_IN_%ld block update to %s (old %s)\n",
+                       ms->ino, key, rpy->element[1]->str);
+        retry:
+            err = mmcc_del(rpy->element[1]->str);
+            if (err < 0) {
+                if (err == -EAGAIN && !retried) {
+                    retried = 1;
+                    goto retry;
+                }
+                if (err == EMMMETAERR)
+                    hvfs_err(mmll, "MMCC delete %s failed w/ %d\n",
+                             rpy->element[1]->str, err);
+                else
+                    hvfs_debug(mmll, "MMCC delete %s still has ref %d\n",
+                               rpy->element[1]->str, -err);
+                err = 0;
+            } else if (err == 0) {
+                hvfs_debug(mmll, "MMCC delete %s no ref, not exist\n",
+                           rpy->element[1]->str);
+            } else {
+                hvfs_debug(mmll, "MMCC delete %s, deleted (%d)\n",
+                           rpy->element[1]->str, err);
+                err = 0;
+            }
+            break;
+        }
         }
     }
     freeReplyObject(rpy);
@@ -1664,13 +1777,13 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
 
     mmcc_put_iov_R(key, iov, iovlen, &mr);
     if (!mr.info) {
+        err = EMMMMSERR;
         hvfs_err(mmll, "_IN_%ld block put failed w/ %d\n",
                  ms->ino, err);
-        err = EMMMMSERR;
         goto out;
     }
-    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d\n",
-               ms->ino, key, mr.info, mr.flag);
+    hvfs_debug(mmll, "_IN_%ld block put key=%s info=%s flag=%d pid=%ld\n",
+               ms->ino, key, mr.info, mr.flag, rc->pid);
 
     if (likely(chkid == 0)) {
         rpy = redisCommand(rc->rc, "evalsha %s 1 _IN_%ld %s %s",
@@ -1794,15 +1907,45 @@ int __mmfs_clr_block(struct mstat *ms, u64 chkid)
         freeReplyObject(rpy);
         goto out;
     }
-    if (rpy->type == REDIS_REPLY_INTEGER) {
-        if (rpy->integer == 1) {
-            /* deleted */
-            hvfs_debug(mmll, "_IN_%ld block CHK=%ld deleted\n",
-                       ms->ino, chkid);
-        } else {
+    if (rpy->type == REDIS_REPLY_ARRAY && rpy->elements >= 1 &&
+        rpy->element[0]->type == REDIS_REPLY_INTEGER) {
+        switch (rpy->element[0]->integer) {
+        case 0:
             /* not exist */
             hvfs_debug(mmll, "_IN_%ld block CHK=%ld not exist to deleted\n",
                        ms->ino, chkid);
+            break;
+        case 1:
+        {
+            int retried = 0;
+
+            /* deleted, clean MMCC ref */
+            hvfs_debug(mmll, "_IN_%ld block CHK=%ld with ref %s\n",
+                       ms->ino, chkid, rpy->element[1]->str);
+        retry:
+            err = mmcc_del(rpy->element[1]->str);
+            if (err < 0) {
+                if (err == -EAGAIN && !retried) {
+                    retried = 1;
+                    goto retry;
+                }
+                if (err == EMMMETAERR)
+                    hvfs_err(mmll, "MMCC delete %s failed w/ %d\n",
+                             rpy->element[1]->str, err);
+                else
+                    hvfs_debug(mmll, "MMCC delete %s still has ref %d\n",
+                               rpy->element[1]->str, -err);
+                err = 0;
+            } else if (err == 0) {
+                hvfs_debug(mmll, "MMCC delete %s no ref, not exist\n",
+                           rpy->element[1]->str);
+            } else {
+                hvfs_debug(mmll, "MMCC delete %s, deleted (%d)\n",
+                           rpy->element[1]->str, err);
+                err = 0;
+            }
+            break;
+        }
         }
     }
     freeReplyObject(rpy);
