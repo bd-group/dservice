@@ -29,6 +29,7 @@ public class MMRepChecker {
 	private RedisPoolSelector rps;
 	private HashMap<String, String> sidname = new HashMap<String, String>();
 	private HashMap<String, Long> sidnum = new HashMap<String, Long>();
+	private ClientAPI ca;
 	
 	public MMRepChecker(String uri) throws Exception {
 		this.conf = new MMConf();
@@ -198,6 +199,8 @@ public class MMRepChecker {
 
 	public static void main(String[] args) {
 		String uri = null;
+		boolean doFix = false;
+		int fn = 1;
 		
 		if (args.length >= 1) {
 			List<Option> ops = parseArgs(args);
@@ -216,6 +219,13 @@ public class MMRepChecker {
 					}
 					uri = o.opt;
 				}
+				if (o.flag.equals("-fix")) {
+					doFix = true;
+					if (o.opt != null) {
+						fn = Integer.parseInt(o.opt);
+					}
+					System.out.println("Use " + fn + " threads to do fix");
+				}
 			}
 		}
 
@@ -227,26 +237,79 @@ public class MMRepChecker {
 			MMRepChecker checker = new MMRepChecker(uri);
 			Map<String, String> undup = checker.check();
 			System.out.println("Total unreplicated objects: " + undup.size());
-			checker.fix(uri, undup);
+			if (doFix) {
+				checker.fix_parallel(uri, undup, fn);
+			}
 			checker.quit();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
-	
-	public void fix(String uri, Map<String, String> toRep) throws Exception {
-		ClientAPI ca = new ClientAPI();
 
-		ca.init(uri);
+	public void fix(String uri, Map<String, String> toRep, int id) throws Exception {
 		for (Map.Entry<String, String> entry : toRep.entrySet()) {
 			String info = ca.xput(entry.getKey(), entry.getValue());
-			System.out.println("Fix " + entry.getKey() + " -> " + info);
+			System.out.println("[" + id + "] Fix " + entry.getKey() + " -> " + info);
+		}
+	}
+
+	private class FixThread extends Thread {
+		public MMRepChecker checker;
+		public String uri;
+		public Map<String, String> toRep;
+		public int id;
+
+		public FixThread(int id, MMRepChecker checker, String uri, 
+				Map<String, String> toRep) {
+			this.id = id;
+			this.checker = checker;
+			this.uri = uri;
+			this.toRep = toRep;
+		}
+
+		public void run() {
+			try {
+				checker.fix(uri, toRep, id);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+	}
+
+	public void fix_parallel(String uri, Map<String, String> toRep, int fn) 
+			throws Exception {
+		ArrayList<TreeMap<String, String>> sn = new ArrayList<TreeMap<String, String>>();
+		int i;
+
+		ca = new ClientAPI();
+		ca.init(uri);
+		for (i = 0; i < fn; i++) {
+			sn.add(new TreeMap<String, String>());
+		}
+		i = 0;
+		for (Map.Entry<String, String> e : toRep.entrySet()) {
+			sn.get(i % fn).put(e.getKey(), e.getValue());
+			i++;
+		}
+		ArrayList<FixThread> fts = new ArrayList<FixThread>();
+		for (i = 0; i < fn; i++) {
+			fts.add(new FixThread(i, this, uri, sn.get(i)));
+		}
+		for (FixThread ft : fts) {
+			ft.start();
+		}
+		for (FixThread ft : fts) {
+			try {
+				ft.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 		}
 		ca.quit();
 	}
-	
-	public HashMap<String, String> check() throws Exception {
-		HashMap<String, String> undup = new HashMap<String, String>();
+
+	public TreeMap<String, String> check() throws Exception {
+		TreeMap<String, String> undup = new TreeMap<String, String>();
 		System.out.println("A: only one copy");
 		System.out.println("B: all copies on the same server\n");
 		
@@ -255,7 +318,7 @@ public class MMRepChecker {
 		}
 		return undup;
 	}
-	
+
 	public class SetStats {
 		String set;
 		long total_nr;
