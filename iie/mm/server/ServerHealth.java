@@ -192,7 +192,7 @@ public class ServerHealth extends TimerTask {
 			}
 			if (cur - lastScrub >= conf.getSpaceOperationInterval()) {
 				scrubSets();
-				gatherSpaceInfo();
+				gatherSpaceInfo(conf);
 				lastScrub = cur;
 			}
 		} catch (Exception e) {
@@ -473,7 +473,7 @@ public class ServerHealth extends TimerTask {
 		return deleted;
 	}
 	
-	private int gatherSpaceInfo() throws Exception {
+	public int gatherSpaceInfo(ServerConf conf) throws Exception {
 		Jedis jedis = null;
 		int err = 0;
 

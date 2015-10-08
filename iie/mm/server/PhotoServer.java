@@ -89,9 +89,13 @@ public class PhotoServer {
 
 		// Server Health timer trigger every half interval seconds
 		Timer t2 = new Timer("ServerHealth");
-		t2.schedule(new ServerHealth(conf), 2 * 1000, 
+		ServerHealth sh = new ServerHealth(conf);
+		t2.schedule(sh, 2 * 1000, 
 				Math.min(conf.getMemCheckInterval(), 
 						conf.getSpaceOperationInterval()) / 2);
+		// BUG-XXX: try to update space info ASAP, otherwise smart client 
+		// might not do obj writes.
+		sh.gatherSpaceInfo(conf);
 
 		// 启动http服务
 		Server server = new Server(conf.getHttpPort());

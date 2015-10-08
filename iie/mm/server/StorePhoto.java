@@ -296,11 +296,6 @@ public class StorePhoto {
 	public String storePhoto(String set, String md5, byte[] content, int coff, 
 			int clen) {
 		String returnStr = "#FAIL: unknown error.";
-		
-		if (sha == null) {
-			loadScripts();
-		}
-		
 		RedisConnection rc = null;
 		
 		try {
@@ -311,6 +306,11 @@ public class StorePhoto {
 		if (rc.rp == null || rc.jedis == null) {
 			return "#FAIL: L2 pool " + rc.id + " can not be reached.";
 		}
+
+		if (sha == null) {
+			loadScripts();
+		}
+
 		Jedis jedis = rc.jedis;
 		StringBuffer rVal = new StringBuffer(128);
 		int err = 0;
