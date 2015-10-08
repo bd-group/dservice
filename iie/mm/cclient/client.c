@@ -160,11 +160,16 @@ struct __client_r_op
 };
 
 #define __CLIENT_R_OP_DUP_DETECT        0
+#define __CLIENT_R_OP_DEREF             1
 
 static struct __client_r_op g_ops[] = {
     {
         "dup_detect",
         "local x = redis.call('hexists', KEYS[1], ARGV[1]); if x == 1 then redis.call('hincrby', '_DUPSET_', KEYS[1]..'@'..ARGV[1], 1); return redis.call('hget', KEYS[1], ARGV[1]); else return nil; end",
+    },
+    {
+        "deref",
+        "local x = redis.call('hincrby', '_DUPSET_', KEYS[1]..'@'..ARGV[1], -1); if x < 0 then redis.call('hdel', '_DUPSET_', KEYS[1]..'@'..ARGV[1]); x=redis.call('hdel', KEYS[1], ARGV[1]); else x=-(x+1); end; return x;",
     },
 };
 
@@ -229,21 +234,21 @@ int __client_load_scripts(struct redisConnection *rc, int idx)
         if (idx == -1 || i == idx) {
             rpy = redisCommand(rc->rc, "script load %s", g_ops[i].script);
             if (rpy == NULL) {
-                hvfs_err(mmcc, "read from MM Meta failed: %s\n", 
-                         rc->rc->errstr);
+                hvfs_err(mmcc, "read from MM Meta failed: %s(pid: %ld)\n", 
+                         rc->rc->errstr, rc->pid);
                 freeRC(rc);
                 err = -EMMMETAERR;
                 goto out;
             }
             if (rpy->type == REDIS_REPLY_ERROR) {
-                hvfs_err(mmcc, "script %d load failed w/ \n%s.\n", 
-                         i, rpy->str);
+                hvfs_err(mmcc, "script %d load on pool %ld failed w/ \n%s.\n",
+                         i, rc->pid, rpy->str);
                 err = -EINVAL;
                 goto out_free;
             }
             if (rpy->type == REDIS_REPLY_STRING) {
-                hvfs_info(mmcc, "Script %d %s \tloaded as '%s'.\n",
-                          i, g_ops[i].opname, rpy->str);
+                hvfs_info(mmcc, "[%ld] Script %d %s \tloaded as '%s'.\n",
+                          rc->pid, i, g_ops[i].opname, rpy->str);
                 if (g_ops[i].sha) xfree(g_ops[i].sha);
                 g_ops[i].sha = strdup(rpy->str);
             } else {
@@ -1629,8 +1634,8 @@ int __mmcc_put_iov(char *set, char *name, struct iovec *iov, int iovlen,
             goto local_out;
         }
         if (rpy->type == REDIS_REPLY_NIL || rpy->type == REDIS_REPLY_ERROR) {
-            hvfs_err(mmcc, "%s/%s does not exist or internal error.\n",
-                     set, name);
+            hvfs_err(mmcc, "%s@%s does not exist or internal error(%s).\n",
+                     set, name, rpy->str);
             goto local_out_free;
         }
         if (rpy->type == REDIS_REPLY_STRING) {
@@ -1674,7 +1679,7 @@ static int __dup_detect(char *set, char *name, char **info)
     }
     rc = getRC_l2(set, 1);
     if (!rc) {
-        hvfs_err(mmcc, "getRC() failed\n");
+        hvfs_err(mmcc, "getRC_l2() failed on set %s\n", set);
         err = EMMMETAERR;
         goto out;
     }
@@ -1722,6 +1727,94 @@ static int __dup_detect(char *set, char *name, char **info)
         *info = strdup(rpy->str);
     }
     
+out_free:
+    freeReplyObject(rpy);
+out_put:
+    putRC_l2(rc);
+out:
+    return err;
+}
+
+/* Return value:
+ *
+ * 1     ->  deleted
+ * 0     ->  no ref, not exist
+ * <0    ->  still has other reference
+ */
+int mmcc_del(char *key)
+{
+    char *set = NULL, *name = NULL;
+    redisReply *rpy = NULL;
+    struct redisConnection *rc = NULL;
+    int err = 0;
+
+    /* split by @ */
+    {
+        char *p = strdup(key), *n = NULL;
+        char *q = p;
+        int i = 0;
+
+        for (i = 0; i < 2; i++, p = NULL) {
+            p = strtok_r(p, "@", &n);
+            if (p != NULL) {
+                switch (i) {
+                case 0:
+                    set = strdup(p);
+                    break;
+                case 1:
+                    name = strdup(p);
+                    break;
+                }
+            } else {
+                goto out_free_q;
+            }
+        }
+    out_free_q:
+        xfree(q);
+    }
+
+    rc = getRC_l2(set, 1);
+    if (!rc) {
+        hvfs_err(mmcc, "getRC_l2() failed on set %s\n", set);
+        err = EMMMETAERR;
+        goto out;
+    }
+
+    if ((g_conf.mode & MMSCONF_DUPSET) &&
+        (g_conf.mode & MMSCONF_DEDUP)) {
+        /* detect with deref */
+        rpy = redisCMD(rc->rc, "evalsha %s 1 %s %s",
+                       g_ops[__CLIENT_R_OP_DEREF].sha,
+                       set, name);
+    } else {
+        /* simaple hdel */
+        rpy = redisCMD(rc->rc, "hdel %s %s", set, name);
+    }
+    if (rpy == NULL) {
+        hvfs_err(mmcc, "read from MM Meta failed: %s\n", rc->rc->errstr);
+        err = EMMINVAL;
+        freeRC(rc);
+        goto out_put;
+    }
+    if (rpy->type == REDIS_REPLY_ERROR) {
+        hvfs_warning(mmcc, "%s@%s does not exist or internal error(%s).\n",
+                     set, name, rpy->str);
+        if (rpy->str != NULL && strncmp(rpy->str, "NOSCRIPT", 8) == 0) {
+            err = __client_load_scripts(rc, __CLIENT_R_OP_DEREF);
+            if (err) {
+                hvfs_err(mmcc, "try to load script %s failed: %d\n",
+                         g_ops[__CLIENT_R_OP_DEREF].opname, err);
+            } else {
+                err = -EAGAIN;
+            }
+        }
+        goto out_free;
+    }
+    if (rpy->type == REDIS_REPLY_INTEGER) {
+        err = rpy->integer;
+        hvfs_debug(mmcc, "delete %s@%s w/ %d\n", set, name, err);
+    }
+
 out_free:
     freeReplyObject(rpy);
 out_put:

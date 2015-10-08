@@ -58,6 +58,11 @@ int mmcc_get(char *key, void **buffer, size_t *len);
 int mmcc_get_range(char *key, void *buffer, off_t offset, size_t len);
 
 /*
+ * Delete the specified key (and might value)
+ */
+int mmcc_del(char *key);
+
+/*
  * Delete the whole set, release storage space
  */
 int mmcc_del_set(char *set);
