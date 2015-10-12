@@ -2089,7 +2089,7 @@ int del_mm_set_on_l2(char *set)
 
     if (!rc) {
         hvfs_err(mmcc, "getRC_l2() failed for set %s\n", set);
-        return EMMMETAERR;
+        return EMMNOTFOUND;
     }
 
     /* Step 1: get keys of set.* */
@@ -2201,7 +2201,7 @@ int del_mm_set_on_mms(char *set)
 
     if (!rc) {
         hvfs_err(mmcc, "getRC_l2() failed for set %s.\n", set);
-        return EMMMETAERR;
+        return EMMNOTFOUND;
     }
 
     rpy = redisCMD(rc->rc, "smembers %s.srvs", set);

@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-10-08 11:20:14 macan>
+ * Time-stamp: <2015-10-09 17:40:24 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1833,9 +1833,36 @@ int __mmfs_fwritev(struct mstat *ms, u32 flag, struct iovec *iov, int iovlen,
             break;
         case 0:
         default:
+        {
+            int retried = 0;
+
             /* updated */
-            hvfs_debug(mmll, "_IN_%ld block update to %s\n",
-                       ms->ino, key);
+            hvfs_debug(mmll, "_IN_%ld block update to %s (old %s)\n",
+                       ms->ino, key, rpy->element[1]->str);
+        retry:
+            err = mmcc_del(rpy->element[1]->str);
+            if (err < 0) {
+                if (err == -EAGAIN && !retried) {
+                    retried = 1;
+                    goto retry;
+                }
+                if (err == EMMMETAERR)
+                    hvfs_err(mmll, "MMCC delete %s failed w/ %d\n",
+                             rpy->element[1]->str, err);
+                else
+                    hvfs_debug(mmll, "MMCC delete %s still has ref %d\n",
+                               rpy->element[1]->str, -err);
+                err = 0;
+            } else if (err == 0) {
+                hvfs_debug(mmll, "MMCC delete %s no ref, no exist\n",
+                           rpy->element[1]->str);
+            } else {
+                hvfs_debug(mmll, "MMCC delete %s, deleted (%d)\n",
+                           rpy->element[1]->str, err);
+                err = 0;
+            }
+            break;
+        }
         }
     }
     freeReplyObject(rpy);

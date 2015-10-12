@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-29 15:37:58 macan>
+ * Time-stamp: <2015-10-08 16:04:16 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2705,6 +2705,9 @@ hit:
         goto out;
     }
 
+    hvfs_warning(mmfs, "mkdir %s _IN_%ld pino %ld ok.\n",
+                 name, ms.ino, pino);
+
 out:
     xfree(dup);
     xfree(spath);
@@ -2894,7 +2897,10 @@ hit:
             if (err) {
                 hvfs_err(mmfs, "do MMCC set %s delete failed, manual delete.\n",
                          set);
-                goto out;
+                if (err == EMMNOTFOUND)
+                    err = 0;
+                else
+                    goto out;
             }
             hvfs_debug(mmfs, "MMCC set %s deleted (not shadow).\n", set);
         }
@@ -4636,8 +4642,8 @@ hit:
 
     {
         struct bhhead *bhh = (struct bhhead *)fi->fh;
-        hvfs_warning(mmfs, "in create the file _IN_%ld (size=%ld)!\n",
-                     bhh->ms.ino, bhh->ms.mdu.size);
+        hvfs_warning(mmfs, "in create the file _IN_%ld %s (mdu.size=%ld)!\n",
+                     bhh->ms.ino, name, bhh->ms.mdu.size);
     }
     /* Save the mstat in SOC cache */
     {

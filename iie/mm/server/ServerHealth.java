@@ -179,7 +179,7 @@ public class ServerHealth extends TimerTask {
 					// check ration and call migrate/clean
 					if (umem > conf.getMemorySize() * conf.getMemFullRatio()) {
 						System.out.println(s + " detect L2 pool " + entry.getKey() +
-								"used_memory=" + umem + " > " + 
+								" used_memory=" + umem + " > " + 
 								conf.getMemFullRatio() + "*" + conf.getMemorySize());
 						__do_migrate(s);
 						__do_clean(s);

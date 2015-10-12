@@ -6,7 +6,6 @@ import iie.mm.common.RedisPool;
 import iie.mm.common.RedisPoolSelector;
 import iie.mm.common.RedisPoolSelector.RedisConnection;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -278,7 +277,8 @@ public class MMRepChecker {
 
 	public void fix_parallel(String uri, Map<String, String> toRep, int fn) 
 			throws Exception {
-		ArrayList<TreeMap<String, String>> sn = new ArrayList<TreeMap<String, String>>();
+		ArrayList<TreeMap<String, String>> sn = 
+				new ArrayList<TreeMap<String, String>>();
 		int i;
 
 		ca = new ClientAPI();
@@ -409,9 +409,9 @@ public class MMRepChecker {
 					notdup.size() + ", healthy ratio " + 
 					((double)(totalm - notdup.size()) / totalm * 100) + "%");
 
-			for (Map.Entry<String, Long> en : sidnum.entrySet()) {
-				System.out.println("If server " + sidname.get(en.getKey()) + " down, " + 
-						en.getValue() + " mm objects may be lost.");
+			for (Map.Entry<String, Long> e : sidnum.entrySet()) {
+				System.out.println("If server " + sidname.get(e.getKey()) + " down, " + 
+						e.getValue() + " mm objects may be lost.");
 			}
 			System.out.println();
 			System.out.println("Per-Set Replicate info: ");

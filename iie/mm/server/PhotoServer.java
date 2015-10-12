@@ -57,7 +57,8 @@ public class PhotoServer {
 			if (active != null && active.size() > 0) {
 				for (Tuple t : active) {
 					ServerConf.servers.put((long)t.getScore(), t.getElement());
-					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + t.getElement());
+					System.out.println("Got HTTP Server " + (long)t.getScore() + " " + 
+					t.getElement());
 				}
 			}
 			StorePhoto.getRpL1(conf).putInstance(jedis);
