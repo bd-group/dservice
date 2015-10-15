@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-10-08 16:04:16 macan>
+ * Time-stamp: <2015-10-13 16:42:43 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 
 struct __mmfs_fuse_mgr mmfs_fuse_mgr = {.inited = 0,
                                         .namespace = "default",
+                                        .useltc = 1,
 };
 
 struct mmfs_sb g_msb = {
@@ -2223,6 +2224,9 @@ int __ltc_lookup(char *pathname, void *arg0, void *arg1)
     struct ltc_entry *le;
     struct hlist_node *n;
     int found = 0, idx;
+
+    if (!mmfs_fuse_mgr.useltc)
+        return 0;
 
     idx = __ltc_hash(pathname);
     rh = mmfs_ltc_mgr.ht + idx;

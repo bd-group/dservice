@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-17 16:05:22 macan>
+ * Time-stamp: <2015-10-12 17:16:55 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -242,6 +242,7 @@ struct __mmfs_fuse_mgr
     u32 ismkfs:1;
     u32 perm:1;
     u32 cached_chunk:1;
+    u32 useltc:1;
 
     u32 ttl:8;                  /* lru translate cache ttl */
 

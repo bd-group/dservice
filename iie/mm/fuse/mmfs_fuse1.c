@@ -7,7 +7,7 @@ int main(int argc, char *argv[])
 {
     char *value, *uris = NULL, *namespace = NULL, *rootdir = NULL;
     int noatime = -1, nodiratime = -1, ttl = -1, debug = 0, perm = -1, cc = 0;
-    int err = 0;
+    int useltc = -1, err = 0;
 
     value = getenv("noatime");
     if (value) {
@@ -50,15 +50,21 @@ int main(int argc, char *argv[])
     if (value) {
         cc = atoi(value);
     }
+    value = getenv("useltc");
+    if (value) {
+        useltc = atoi(value);
+    }
 
     if (noatime >= 0 ||
         nodiratime >= 0 ||
-        ttl >= 0 || perm >= 0 || uris || namespace) {
+        ttl >= 0 || perm >= 0 || useltc >= 0 || uris || namespace) {
         /* reset minor value to default value */
         if (noatime < 0)
             noatime = 1;
         if (nodiratime < 0)
             nodiratime = 1;
+        if (useltc < 0)
+            useltc = 1;
         if (ttl < 0)
             ttl = 5;
         if (perm < 0)
@@ -79,6 +85,7 @@ int main(int argc, char *argv[])
         mmfs_fuse_mgr.uris = uris;
         mmfs_fuse_mgr.cached_chunk = (cc > 0 ? 1 : 0);
         mmfs_fuse_mgr.namespace = namespace;
+        mmfs_fuse_mgr.useltc = (useltc > 0 ? 1 : 0);
     }
 
     /* reconstruct the MMFS arguments */
