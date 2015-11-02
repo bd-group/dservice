@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-29 12:47:48 macan>
+ * Time-stamp: <2015-10-30 18:27:14 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,10 @@
 
 #ifndef __MMFS_H__
 #define __MMFS_H__
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include "mmfs_ll.h"
 
