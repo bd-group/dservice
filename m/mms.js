@@ -117,14 +117,18 @@ function display_two(ctr, tname, yname, snames, names, usey) {
                                           '?date=' + datestr + '&last=' + last[i] + '&callback=?', 
                                           function (data) {
                                               var isShift = false;
-                                              if (data[data.length - 1][0] != null) {
+                                              var j = 0;
+                                              if (data.length > 0 && data[data.length - 1][0] != null) {
                                                   last[i] = data[data.length - 1][0] / 1000;
                                                   if (len[i] > 200)
                                                       isShift = true;
                                                   else
                                                       len[i] += data.length;
                                                   data.forEach(function(entry) {
-                                                      dseries[i].addPoint(entry, true, isShift);
+                                                      if (j == data.length - 1)
+                                                          dseries[i].addPoint(entry, true, isShift);
+                                                      else
+                                                          dseries[i].addPoint(entry, false, isShift);
                                                   });
                                               }
                                           });
@@ -171,9 +175,7 @@ function display_two(ctr, tname, yname, snames, names, usey) {
                     }
                 },
                 areaspline: {
-                    fillOpacity: 0.5
-                },
-                area: {
+                    fillOpacity: 0.3,
                     fillColor: {
                         linearGradient: {
                             x1: 0,
@@ -216,7 +218,7 @@ function display_two(ctr, tname, yname, snames, names, usey) {
                           data: data
                       };
                       
-                      if (data[data.length -1][0] != null)
+                      if (data.length > 0 && data[data.length -1][0] != null)
                           last[i] = data[data.length - 1][0] / 1000;
                       len[i] = data.length;
                       
