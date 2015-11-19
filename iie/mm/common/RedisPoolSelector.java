@@ -111,8 +111,10 @@ public class RedisPoolSelector {
 				ids.addAll(rpL2.keySet());
 				if (lastIdx >= ids.size())
 					lastIdx = 0;
-				if (ids.size() > 0)
+				if (ids.size() > 0) {
 					id = ids.get(lastIdx);
+					lastIdx++;
+				}
 				break;
 			case LOAD_BALANCE:
 				Long min = Long.MAX_VALUE;

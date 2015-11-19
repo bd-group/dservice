@@ -273,7 +273,7 @@ public class MMServer {
 			}
 			if (o.flag.equals("-msize")) {
 				if (o.opt == null) {
-					System.out.println("-msize MEMORY_SIZE");
+					System.out.println("-msize MEMORY_SIZE(MB)");
 					System.exit(0);
 				}
 				memorySize = Long.parseLong(o.opt);
