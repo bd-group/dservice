@@ -2,7 +2,7 @@
 # Copyright (c) 2009 Ma Can <ml.macana@gmail.com>
 #                           <macan@ncic.ac.cn>
 #
-# Time-stamp: <2015-06-02 16:11:12 macan>
+# Time-stamp: <2015-09-18 17:17:27 macan>
 #
 # This is the makefile for HVFS project.
 #
@@ -24,7 +24,7 @@ COMPILE_HOST = `hostname`
 
 # TODO: Make sure REMOVE self_test flag when release code
 CFLAGS = -Wall -DNO_LINK -pg -g -O2 -DCOMPILE_DATE="\"$(COMPILE_DATE)\"" -DCOMPILE_HOST="\"$(COMPILE_HOST)\"" -DGIT_SHA="\"$(GIT_SHA)\"" -DSELF_TEST_
-LDFLAGS = -Llib -lhvfs -lpthread -lrt
+LDFLAGS = -Llib -lhvfs -lpthread -lrt -pg -g
 
 include Makefile.profile
 
@@ -46,12 +46,15 @@ METASTORE_RUNTIME = $(METASTORE_API):$(MSHOME)/commons-lang-2.4.jar:$(THRIFT_JAR
 MSCLI_RUNTIME = $(METASTORE_RUNTIME)
 
 LMDB=$(shell pwd)/lib/lmdbjni-all-99-master-20130507.185246-2.jar
+#LMDB=$(shell pwd)/lib/lmdbjni-0.4.0.jar:$(shell pwd)/lib/lmdbjni-linux64-0.4.0.jar
 
-MM_CP = $(shell pwd)/lib/jedis-2.5.1.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.1.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar:$(LMDB)
+MM_CP = $(shell pwd)/lib/jedis-2.7.2.jar:$(shell pwd)/lib/junixsocket-1.3.jar:$(shell pwd)/lib/sigar.jar:$(shell pwd)/lib/jetty-all-7.0.2.v20100331.jar:$(shell pwd)/lib/jetty-server-7.6.17.v20150415.jar:$(shell pwd)/lib/jetty-util-7.6.17.v20150415.jar:$(shell pwd)/lib/servlet-api-2.5.jar:$(shell pwd)/lib/commons-pool2-2.1.jar:$(shell pwd)/lib/commons-io-2.2.jar:$(shell pwd)/lib/commons-fileupload-1.3.1.jar:$(shell pwd)/lib/lire.jar:$(shell pwd)/lib/commons-math3-3.2.jar:$(shell pwd)/lib/JOpenSurf.jar:$(shell pwd)/lib/metadata-extractor-2.3.1.jar:$(shell pwd)/lib/opencv-249.jar:$(LMDB)
 
 CP = $(METASTORE_API):$(LUCENE_JAR):build/devmap.jar:$(LUCENE_TEST_JAR):$(MM_CP):build/:lib/fastjson-1.1.39.jar
 
 MMCC = build/libmmcc.so
+MMCC_V2 = build/libmmcc.2.so
+MMCA = build/libmmcc.a
 MMHC = build/libmmhc.so
 MMFS = build/libmmfs.so
 
@@ -93,10 +96,19 @@ GEN_VERSION_FILE :
 	@echo DIRTY: $(GIT_DIRTY) >> .VERSION
 	@echo $(COMPILE_HOST) @ $(COMPILE_DATE) >> .VERSION
 
+$(MMCC_V2) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c iie/mm/cclient/rpool.c lib/libhvfs.a
+	@$(ECHO) -e " " CC"\t" $@
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/client.c -o build/client.o
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/clientapi.c -o build/clientapi.o
+	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/rpool.c -o build/rpool.o
+	@$(AR) rcs $(MMCA) build/client.o build/clientapi.o build/rpool.o
+	@$(GCC) -Llib build/client.o build/clientapi.o build/rpool.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
+
 $(MMCC) : iie/mm/cclient/client.c iie/mm/cclient/clientapi.c lib/libhvfs.a
 	@$(ECHO) -e " " CC"\t" $@
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/client.c -o build/client.o
 	@$(GCC) -fPIC $(CFLAGS) -Llib -Ilib -Iiie/mm/cclient -Ihiredis -c iie/mm/cclient/clientapi.c -o build/clientapi.o
+	@$(AR) rcs $(MMCA) build/client.o build/clientapi.o
 	@$(GCC) -Llib build/client.o build/clientapi.o -shared -o $(MMCC) -Wl,-soname,libmmcc.so -lhiredis -lrt
 
 version_hdr :
@@ -125,7 +137,8 @@ $(MMHC) : iie/mm/hclient/hclient.c
 demo : $(DEMO)
 
 $(DEMO) : iie/mm/cclient/demo.c
-	@$(GCC) $(CFLAGS) -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
+	#@$(GCC) $(CFLAGS) -Ilib/ -Iiie/mm/cclient/ iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
+	@$(GCC) $(CFLAGS) -Ilib/ -Iiie/mm/cclient/ build/libmmcc.a iie/mm/cclient/demo.c -o build/demo -Lbuild/ -Llib/ -lmmcc -lhiredis -lpthread
 
 $(DSERVICE): $(DSERVICE).c $(HEADERS)
 	@$(ECHO) -e " " CC"\t" $@
@@ -160,14 +173,14 @@ $(IIE): $(IIE)/index/lucene/*.java $(DEVMAP_SO) $(MSCLI)
 	@$(ECHO) -e " " JAVAC"\t" $@
 	@CLASSPATH=$(CP) javac -d build $(IIE)/index/lucene/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/metastore/*.java
+	@if [ -d $(IIE)/mm/common ]; then CLASSPATH=$(CP) javac -d build $(IIE)/mm/common/*.java; fi
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/client/*.java
+	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/tools/MM2SSMigrater.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/server/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/mm/tools/*.java
 	@CLASSPATH=$(CP) javac -d build $(IIE)/monitor/*.java
-	#@CLASSPATH=$(CP):build javac -d build $(IIE)/databak/*.java
 	@$(ECHO) -e " " JAR"\t" iie.jar
-	#@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/databak/*.class 
-	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/mm/tools/*.class; rm -rf $(IIE)/metastore;
+	@cd build; jar cvf iie.jar $(IIE)/index/lucene/*.class $(IIE)/metastore/*.class $(IIE)/mm/common/*.class $(IIE)/mm/client/*.class $(IIE)/mm/server/*.class $(IIE)/monitor/*.class $(IIE)/mm/tools/*.class; rm -rf $(IIE)/metastore;
 
 $(MSCLI) : $(IIE)/metastore/*.java
 	@$(ECHO) -e " " JAVAC"\t" $@
