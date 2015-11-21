@@ -11,7 +11,7 @@ else
 fi
 
 while true; do
-	LD_LIBRARY_PATH=lib/ CLASSPATH=lib/commons-pool2-2.0.jar:lib/jedis-2.5.1.jar:build/iie.jar java iie.mm.tools.RedisInfoMonitor -uri "STL://localhost:26379" $LOG_PATH; 
+	LD_LIBRARY_PATH=lib/ CLASSPATH=lib/commons-pool2-2.1.jar:lib/jedis-2.7.2.jar:build/iie.jar java iie.mm.tools.RedisInfoMonitor -uri "STL://localhost:26379" $LOG_PATH; 
 	sleep $XSEC;
 done
 
