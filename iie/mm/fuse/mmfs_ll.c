@@ -2,7 +2,7 @@
  * Copyright (c) 2015 Ma Can <ml.macana@gmail.com>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-09-08 17:08:43 macan>
+ * Time-stamp: <2015-11-20 16:00:24 macan>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -793,24 +793,33 @@ int __mmfs_update_sb(struct mmfs_sb *msb)
             for (i = 0; i < rpy->elements; i += 2) {
                 char *f = rpy->element[i]->str;
                 char *v = rpy->element[i + 1]->str;
-                int l = strlen(f);
 
-                if (strncmp(f, "version", l > 7 ? 7 : l) == 0)
-                    msb->version = atol(v);
-                else if (strncmp(f, "root_ino", l > 8 ? 8 : l) == 0)
-                    msb->root_ino = atol(v);
-                else if (strncmp(f, "space_quota", l > 11 ? 11 : l) == 0)
-                    msb->space_quota = atol(v);
-                else if (strncmp(f, "space_used", l > 10 ? 10 : l) == 0)
-                    msb->space_used = atol(v);
-                else if (strncmp(f, "inode_quota", l > 11 ? 11 : l) == 0)
-                    msb->inode_quota = atol(v);
-                else if (strncmp(f, "inode_used", l > 10 ? 10 : l) == 0)
-                    msb->inode_used = atol(v);
+                if (f != NULL && v != NULL) {
+                    int l = strlen(f);
+
+                    if (strncmp(f, "version", l > 7 ? 7 : l) == 0)
+                        msb->version = atol(v);
+                    else if (strncmp(f, "root_ino", l > 8 ? 8 : l) == 0)
+                        msb->root_ino = atol(v);
+                    else if (strncmp(f, "space_quota", l > 11 ? 11 : l) == 0)
+                        msb->space_quota = atol(v);
+                    else if (strncmp(f, "space_used", l > 10 ? 10 : l) == 0)
+                        msb->space_used = atol(v);
+                    else if (strncmp(f, "inode_quota", l > 11 ? 11 : l) == 0)
+                        msb->inode_quota = atol(v);
+                    else if (strncmp(f, "inode_used", l > 10 ? 10 : l) == 0)
+                        msb->inode_used = atol(v);
+                } else {
+                    hvfs_err(mmll, "get bad MMFS SB: f %p v %p\n", f, v);
+                    err = -EINVAL;
+                    break;
+                }
             }
-            memset(&msb->d, 0, sizeof(msb->d));
-            msb->d.space_used = msb->space_used;
-            msb->d.inode_used = msb->inode_used;
+            if (!err) {
+                memset(&msb->d, 0, sizeof(msb->d));
+                msb->d.space_used = msb->space_used;
+                msb->d.inode_used = msb->inode_used;
+            }
         }
         freeReplyObject(rpy);
     }
@@ -853,25 +862,34 @@ int __mmfs_get_sb(struct mmfs_sb *msb)
                 for (i = 0; i < rpy->elements; i += 2) {
                     char *f = rpy->element[i]->str;
                     char *v = rpy->element[i + 1]->str;
-                    int l = strlen(f);
 
-                    if (strncmp(f, "version", l > 7 ? 7 : l) == 0)
-                        msb->version = atol(v);
-                    else if (strncmp(f, "root_ino", l > 8 ? 8 : l) == 0)
-                        msb->root_ino = atol(v);
-                    else if (strncmp(f, "space_quota", l > 11 ? 11 : l) == 0)
-                        msb->space_quota = atol(v);
-                    else if (strncmp(f, "space_used", l > 10 ? 10 : l) == 0)
-                        msb->space_used = atol(v);
-                    else if (strncmp(f, "inode_quota", l > 11 ? 11 : l) == 0)
-                        msb->inode_quota = atol(v);
-                    else if (strncmp(f, "inode_used", l > 10 ? 10 : l) == 0)
-                        msb->inode_used = atol(v);
+                    if (f != NULL && v != NULL) {
+                        int l = strlen(f);
+
+                        if (strncmp(f, "version", l > 7 ? 7 : l) == 0)
+                            msb->version = atol(v);
+                        else if (strncmp(f, "root_ino", l > 8 ? 8 : l) == 0)
+                            msb->root_ino = atol(v);
+                        else if (strncmp(f, "space_quota", l > 11 ? 11 : l) == 0)
+                            msb->space_quota = atol(v);
+                        else if (strncmp(f, "space_used", l > 10 ? 10 : l) == 0)
+                            msb->space_used = atol(v);
+                        else if (strncmp(f, "inode_quota", l > 11 ? 11 : l) == 0)
+                            msb->inode_quota = atol(v);
+                        else if (strncmp(f, "inode_used", l > 10 ? 10 : l) == 0)
+                            msb->inode_used = atol(v);
+                    } else {
+                        hvfs_err(mmll, "get bad MMFS SB: f %p v %p\n", f, v);
+                        err = -EINVAL;
+                        break;
+                    }
                 }
-                msb->flags = 0;
-                memset(&msb->d, 0, sizeof(msb->d));
-                msb->d.space_used = msb->space_used;
-                msb->d.inode_used = msb->inode_used;
+                if (!err) {
+                    msb->flags = 0;
+                    memset(&msb->d, 0, sizeof(msb->d));
+                    msb->d.space_used = msb->space_used;
+                    msb->d.inode_used = msb->inode_used;
+                }
             }
         } else {
             err = -EINVAL;
