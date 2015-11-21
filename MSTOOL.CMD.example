@@ -1,0 +1,38 @@
+# CMD for mstool.sh
+
+# Flush existing orders
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 4 -fls_args ";"
+
+# Update orders
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 4 -fls_args "l1;l2"
+
+# Add table to FLS
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 0 -fls_args "node/fair_nodes/ordered_alloc"
+
+# Delete FLS
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 1
+
+# Flush FLS
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 2
+
+# Repnr FLS
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 3 -fls_args NR
+
+# ORDER FLS: ordered alloc advices, default as 'l2;l3;l4'
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 4 -fls_args "l1;l2;l3;l4"
+
+# Round FLS: r1: create_file; r2: rep_thread; r3: do_replicate, default as 'l2;l2;l2'
+./mstool.sh -r node13 -p 10101 -fls -db db1 -table t_cx_rz -fls_op 5 -fls_args "l1;l2;l4"
+
+# Set new dev type and new quota
+./mstool.sh -r node13 -p 10101 -md -node NODE32 -devid nas1-part1 -devtype 1 -devquota 90
+
+# Manual replicate
+./mstool.sh -r node13 -p 10101 -rep FID -devtype [4,0,5,1]
+
+# Add all dx_rz tables to FLS as ordered_alloc tables: sed -n '/--/,${/--/!p;}' or tail -n+13
+./mstool.sh -r node13 -p 10101 -lt .*t_dx_rz_[^q].* | sed -n '/--/,${/--/!p;}' | sed -e 's|\([^.]*\).\(.*\)$|./mstool.sh -r node13 -p 10101 -fls -db \1 -table \2 -fls_op 0 -fls_args ordered_alloc|g' | awk '{system($0);}'
+
+# Add all qydx tables to FLS as fair_nodes tables
+./mstool.sh -r node13 -p 10101 -lt .*t_dx_rz_[q].* | grep qydx | sed -e 's|\([^.]*\).\(.*\)$|./mstool.sh -r node13 -p 10101 -fls -db \1 -table \2 -fls_op 0 -fls_args fair_nodes|g' | awk '{system($0)}'
+

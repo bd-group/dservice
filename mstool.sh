@@ -25,5 +25,8 @@ for f in $MSHOME/*.jar; do
 done
 for f in $HADOOP_HOME/*.jar; do 
     LIBS=$LIBS:$f; done
+for f in $LCHOME/lucene*.jar; do
+    LIBS=$LIBS:$f; done
 
 LD_LIBRARY_PATH=. CLASSPATH=$CLASSPATH:$LIBS:iie.jar java iie/metastore/MetaStoreClient "$@"
+#LD_LIBRARY_PATH=. CLASSPATH=$CLASSPATH:$LIBS:iie.jar java iie/metastore/LuceneFileFilter "$@"

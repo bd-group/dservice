@@ -4,13 +4,15 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-05-13 16:56:58 macan>
+ * Time-stamp: <2015-08-04 20:20:33 macan>
  *
  */
 
 #include "common.h"
 #include "jsmn.h"
 #include "lib/memory.h"
+
+HVFS_TRACING_DEFINE_FILE();
 
 #define MAX_FILTERS     10
 struct dservice_conf
@@ -33,10 +35,16 @@ struct dservice_conf
     char *data_path;
     long rep_max_ticks;
     long del_max_ticks;
+    int statfs_mode;
 };
 
 #define DS_REP_MAX_TICKS     7200
 #define DS_DEL_MAX_TICKS     600
+
+#define DS_STATFS_NONE  0
+#define DS_STATFS_NORM  1
+#define DS_STATFS_QUOTA 2
+
 static struct dservice_conf g_ds_conf = {
     .sdfilter = {
         "sda",
@@ -63,6 +71,7 @@ static struct dservice_conf g_ds_conf = {
     /* set max ticks to 7200, means at least 2 hours */
     .rep_max_ticks = DS_REP_MAX_TICKS,
     .del_max_ticks = DS_DEL_MAX_TICKS,
+    .statfs_mode = DS_STATFS_NORM,
 };
 
 struct dev_scan_context
@@ -506,6 +515,62 @@ out:
     return err;
 }
 
+static inline void __gather_stats(struct disk_part_info *t, int nr)
+{
+    int err = 0;
+
+    switch (g_ds_conf.statfs_mode) {
+    case DS_STATFS_NONE:
+        break;
+    case DS_STATFS_QUOTA:
+    {
+        struct dqblk qb;
+
+        err = quotactl(QCMD(Q_GETQUOTA, USRQUOTA),
+                       NULL,
+                       geteuid(),
+                       (caddr_t)&qb);
+        if (err) {
+            hvfs_err(lib, "quotactl() failed w/ %s\n",
+                     strerror(errno));
+        }
+        break;
+    }
+    case DS_STATFS_NORM:
+    default:
+    {
+        struct statfs s;
+        int i;
+
+        for (i = 0; i < nr; i++) {
+            /* get disk read/write sectors here */
+            err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
+                                 &t[i].err_nr);
+            if (err) {
+                t[i].read_nr = 0;
+                t[i].write_nr = 0;
+                t[i].err_nr = 0;
+            }
+
+            err = statfs(t[i].mount_path, &s);
+            if (err) {
+                hvfs_err(lib, "statfs(%s) failed w/ %s\n",
+                         t[i].mount_path, strerror(errno));
+                /* ignore this dev, do not alloc new files on this dev */
+                t[i].used = 0;
+                t[i].free = 0;
+                /* BUG-fix: ignore this error, only prevent new allocations */
+                err = 0;
+            } else {
+                t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
+                t[i].free = s.f_bsize * s.f_bavail;
+            }
+        }
+        break;
+    }
+    }
+}
+
 int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 {
     char buf[1024];
@@ -621,34 +686,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 
     if (*nr > 0) {
         /* gather stats */
-        struct disk_part_info *t = *dpi;
-        struct statfs s;
-        int i;
-
-        for (i = 0; i < *nr; i++) {
-            /* get disk read/write sectors here */
-            err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
-                                 &t[i].err_nr);
-            if (err) {
-                t[i].read_nr = 0;
-                t[i].write_nr = 0;
-                t[i].err_nr = 0;
-            }
-
-            err = statfs(t[i].mount_path, &s);
-            if (err) {
-                hvfs_err(lib, "statfs(%s) failed w/ %s\n",
-                         t[i].mount_path, strerror(errno));
-                /* ignore this dev, do not alloc new files on this dev */
-                t[i].used = 0;
-                t[i].free = 0;
-                /* BUG-fix: ignore this error, only prevent new allocations */
-                err = 0;
-            } else {
-                t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
-                t[i].free = s.f_bsize * s.f_bavail;
-            }
-        }
+        __gather_stats(*dpi, *nr);
     }
 out:    
     return err;
@@ -2020,7 +2058,7 @@ out:
 void do_help()
 {
     hvfs_plain(lib,
-               "Version 1.0.0e\n"
+               "Version 1.0.0f\n"
                "Copyright (c) 2013-2015 IIE and Ma Can <ml.macana@gmail.com>\n\n"
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
@@ -2043,6 +2081,7 @@ void do_help()
                "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
                "-M, --mkd         Set max keeping days for lingering dirs.\n"
                "-C, --cpcmd       Copy command: rsync or scp.\n"
+               "-q, --statfs      Set statfs mode: 0->none, 1->normal, 2->quota.\n"
                "-h, -?, -help     print this help.\n"
         );
 }
@@ -3017,7 +3056,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:SR:D:C:AK:k:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:SR:D:C:AK:k:q:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -3039,6 +3078,7 @@ int main(int argc, char *argv[])
         {"audit", no_argument, 0, 'A'},
         {"tickR", required_argument, 0, 'K'},
         {"tickD", required_argument, 0, 'k'},
+        {"statfs", required_argument, 0, 'q'},
         {"help", no_argument, 0, 'h'},
     };
 
@@ -3161,6 +3201,20 @@ int main(int argc, char *argv[])
             g_ds_conf.del_max_ticks = atol(optarg);
             if (g_ds_conf.del_max_ticks <= 0)
                 g_ds_conf.del_max_ticks = DS_DEL_MAX_TICKS;
+            break;
+        }
+        case 'q':
+        {
+            switch (atol(optarg)) {
+            case DS_STATFS_NONE:
+                g_ds_conf.statfs_mode = DS_STATFS_NONE;
+                break;
+            case DS_STATFS_QUOTA:
+                g_ds_conf.statfs_mode = DS_STATFS_QUOTA;
+            default:
+                g_ds_conf.statfs_mode = DS_STATFS_NORM;
+            }
+            hvfs_info(lib, "Reset STATFS mode to %d\n", g_ds_conf.statfs_mode);
             break;
         }
         default:
