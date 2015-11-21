@@ -299,7 +299,8 @@ public class ClientAPI {
 					String[] c = ipport.split(":");
 					if (c.length == 2 && socketHash.get(ipport) == null) {
 						Socket sock = new Socket();
-						SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), pc.getConf().getSockPerServer());
+						SocketHashEntry she = new SocketHashEntry(c[0], Integer.parseInt(c[1]), 
+								pc.getConf().getSockPerServer());
 						activeMMS.add(ipport);
 						try {
 							sock.setTcpNoDelay(true);
@@ -310,12 +311,18 @@ public class ClientAPI {
 								she.clear();
 							}
 						} catch (SocketException e) {
+							System.out.println("[WARN] Connect to MMS " + c[0] + ":" + c[1] + 
+									" failed: " + e.getMessage());
 							e.printStackTrace();
 							continue;
 						} catch (NumberFormatException e) {
+							System.out.println("[FAIL] Transform string port(" + c[1] + 
+									") to integer failed: " + e.getMessage());
 							e.printStackTrace();
 							continue;
 						} catch (IOException e) {
+							System.out.println("[WARN] IO Error for MMS " + c[0] + ":" + c[1] +
+									" failed: " + e.getMessage());
 							e.printStackTrace();
 							continue;
 						}

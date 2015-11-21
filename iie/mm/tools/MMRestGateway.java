@@ -4,6 +4,7 @@ import iie.mm.client.ClientAPI;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -24,43 +25,32 @@ import org.eclipse.jetty.server.handler.AbstractHandler;
 public class MMRestGateway {
 
 	public static class RGRequestWrapper extends HttpServletRequestWrapper {
-		private final String body;
+		private final byte[] body;
 		
 		public RGRequestWrapper(HttpServletRequest request) throws IOException {
 			super(request);
-			StringBuilder stringBuilder = new StringBuilder();
-			BufferedReader bufferedReader = null;
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
 			try {
 				InputStream inputStream = request.getInputStream();
 				if (inputStream != null) {
-					bufferedReader = new BufferedReader(
-							new InputStreamReader(inputStream));
-					char[] charBuffer = new char[4096];
+					byte[] b = new byte[4096];
 					int bytesRead = -1;
-					while ((bytesRead = bufferedReader.read(charBuffer)) > 0) {
-						stringBuilder.append(charBuffer, 0, bytesRead);
+					while ((bytesRead = inputStream.read(b)) > 0) {
+						baos.write(b, 0, bytesRead);
 					}
-				} else {
-					stringBuilder.append("");
 				}
 			} catch (IOException ex) {
 				throw ex;
 			} finally {
-				if (bufferedReader != null) {
-					try {
-						bufferedReader.close();
-					} catch (IOException ex) {
-						throw ex;
-					}
-				}
+				baos.close();
 			}
-			body = stringBuilder.toString();
+			body = baos.toByteArray();
 		}
 
 		@Override
 		public ServletInputStream getInputStream() throws IOException {
 			final ByteArrayInputStream byteArrayInputStream = 
-					new ByteArrayInputStream(body.getBytes());
+					new ByteArrayInputStream(body);
 			ServletInputStream servletInputStream = new ServletInputStream() {
 				public int read() throws IOException {
 					return byteArrayInputStream.read();
@@ -74,7 +64,7 @@ public class MMRestGateway {
 			return new BufferedReader(new InputStreamReader(this.getInputStream()));
 		}
 
-		public String getBody() {
+		public byte[] getBody() {
 			return this.body;
 		}
 	}
@@ -106,14 +96,15 @@ public class MMRestGateway {
 
 		private void doOp(String target, Request baseRequest, 
 				HttpServletRequest request, HttpServletResponse response) throws IOException {
-			RGRequestWrapper rgRequestWrapper = 
+			RGRequestWrapper rgRequest = 
 					new RGRequestWrapper((HttpServletRequest) request);
 			String message = null;
 
-			System.out.println("M=" + request.getMethod() + ", PKey=" + request.getParameter("key"));
+			System.out.println("M=" + rgRequest.getMethod() + ", PKey=" + 
+					rgRequest.getParameter("key"));
 
-			if (request.getMethod().equalsIgnoreCase("GET")) {
-				String key = request.getParameter("key");
+			if (rgRequest.getMethod().equalsIgnoreCase("GET")) {
+				String key = rgRequest.getParameter("key");
 
 				if (key == null) {
 					badResponse(baseRequest, response, "#FAIL: invalid key '" + 
@@ -130,14 +121,14 @@ public class MMRestGateway {
 						badResponse(baseRequest, response, 
 								"#FAIL: null reply from MMServer for key=" + key);
 				} catch (Exception e) {
-					message = "[GET] key=" + key + " exception: " + e.getMessage();
+					message = "#FAIL: [GET] key=" + key + " exception: " + e.getMessage();
 					System.out.println(message);
 					badResponse(baseRequest, response, message);
 					return;
 				}
-			} else if (request.getMethod().equalsIgnoreCase("POST") ||
-					request.getMethod().equalsIgnoreCase("PUT")) {
-				String key = request.getParameter("key");
+			} else if (rgRequest.getMethod().equalsIgnoreCase("POST") ||
+					rgRequest.getMethod().equalsIgnoreCase("PUT")) {
+				String key = rgRequest.getParameter("key");
 
 				if (key == null) {
 					badResponse(baseRequest, response, "#FAIL: invalid key '" + 
@@ -146,22 +137,24 @@ public class MMRestGateway {
 				}
 
 				// do POST/PUT the key
-				if (request.getInputStream() != null) {
-					String body = rgRequestWrapper.getBody();
-					System.out.println("GOT DATA LENGTH: " + body.length());
-					try {
-						String info = ca.put(key, body.getBytes());
-						System.out.println("Key=" + key + " info=" + info);
-					} catch (Exception e) {
-						message = "[PUT] key=" + key + " exception: " + e.getMessage();
-						System.out.println(message);
-						badResponse(baseRequest, response, message);
-						return;
-					}
+				byte[] body = rgRequest.getBody();
+				if (body.length != rgRequest.getContentLength()) {
+					System.out.println("-> GOT DATA LENGTH: " + body.length + 
+							", Content LENGTH: " + rgRequest.getContentLength());
 				}
-			} else if (request.getMethod().equalsIgnoreCase("DELETE")) {
-				String key = request.getParameter("key");
-				String set = request.getParameter("set");
+				try {
+					String info = ca.put(key, body);
+					System.out.println("-> Key=" + key + " info=" + info);
+					okResponse(baseRequest, response, info.getBytes());
+				} catch (Exception e) {
+					message = "#FAIL: [PUT] key=" + key + " exception: " + e.getMessage();
+					System.out.println(message);
+					badResponse(baseRequest, response, message);
+					return;
+				}
+			} else if (rgRequest.getMethod().equalsIgnoreCase("DELETE")) {
+				String key = rgRequest.getParameter("key");
+				String set = rgRequest.getParameter("set");
 				
 				if (key == null && set == null) {
 					badResponse(baseRequest, response, "#FAIL: invalid key '" + 
@@ -172,7 +165,7 @@ public class MMRestGateway {
 				badResponse(baseRequest, response, "#FAIL: need to upgrade your MM service");
 			} else {
 				badResponse(baseRequest, response, "#FAIL: unknown OP method: " + 
-						request.getMethod());
+						rgRequest.getMethod());
 			}
 		}
 
