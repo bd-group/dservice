@@ -1,10 +1,10 @@
 /**
- * Copyright (c) 2012 IIE, all rights reserved.
+ * Copyright (c) 2012-2015 IIE, all rights reserved.
  *
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-06-29 16:56:28 macan>
+ * Time-stamp: <2016-01-13 11:06:58 macan>
  *
  */
 
@@ -38,7 +38,6 @@
 #include <dirent.h>
 #include <sys/sysinfo.h>
 #include <sys/quota.h>
-#include <xfs/xqm.h>
 
 HVFS_TRACING_INIT();
 
