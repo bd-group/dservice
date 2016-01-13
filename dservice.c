@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2015-08-04 20:20:33 macan>
+ * Time-stamp: <2016-01-13 17:04:22 macan>
  *
  */
 
@@ -44,6 +44,7 @@ struct dservice_conf
 #define DS_STATFS_NONE  0
 #define DS_STATFS_NORM  1
 #define DS_STATFS_QUOTA 2
+#define DS_STATFS_LEOFS 3
 
 static struct dservice_conf g_ds_conf = {
     .sdfilter = {
@@ -145,7 +146,8 @@ static atomic64_t *g_del_thread_ticks = 0;
 
 static char g_audit_header[128];
 
-static char *g_devtype = NULL;
+static char **g_devtype = NULL;
+static int g_devtype_nr = 0;
 
 static int g_sockfd;
 static struct sockaddr_in g_server;
@@ -354,7 +356,7 @@ out:
     }
 }
 
-int get_disks(struct disk_info **di, int *nr, char *label)
+static int __get_disks(struct disk_info **di, int *nr, char *label)
 {
     char buf[1024];
     char *line = NULL;
@@ -422,6 +424,22 @@ int get_disks(struct disk_info **di, int *nr, char *label)
     }
     pclose(f);
     
+    return err;
+}
+
+int get_disks(struct disk_info **di, int *nr, char *label[], int labelnr)
+{
+    int i, err = 0;
+
+    for (i = 0; i < labelnr; i++) {
+        err = __get_disks(di, nr, label[i]);
+        if (err) {
+            hvfs_err(lib, "__get_disks(%s) failed w/ %d\n",
+                     label[i], err);
+            goto out;
+        }
+    }
+out:
     return err;
 }
 
@@ -840,20 +858,23 @@ out:
     return err;
 }
 
-int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label)
+int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label[], 
+                   int labelnr)
 {
-    int err = 0;
+    int err = 0, i;
 
     *dpi = NULL;
     *nr = 0;
     
-    err = get_disk_parts_sn(dpi, nr, label);
-    if (err) {
-        goto out;
-    }
-    err = get_disk_sn_ext(dpi, nr, label);
-    if (err) {
-        goto out;
+    for (i = 0; i < labelnr; i++) {
+        err = get_disk_parts_sn(dpi, nr, label[i]);
+        if (err) {
+            goto out;
+        }
+        err = get_disk_sn_ext(dpi, nr, label[i]);
+        if (err) {
+            goto out;
+        }
     }
 
 out:
@@ -1327,7 +1348,7 @@ void refresh_map(time_t cur)
 
     /* map refresh interval */
     if (cur - last > g_ds_conf.mr_interval) {
-        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
+        err = get_disk_parts(&dpi, &nr, g_devtype, g_devtype_nr);
         if (err) {
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto update_last;
@@ -2713,7 +2734,7 @@ static int __device_scan(int prob, int level)
     int nr = 0, err = 0, i;
     
     if (!g_specify_dev) {
-        err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
+        err = get_disk_parts(&dpi, &nr, g_devtype, g_devtype_nr);
         if (err) {
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto out;
@@ -3033,6 +3054,32 @@ out:
     return err;
 }
 
+static void __parse_devtypes(char *devtypes)
+{
+    char *p, *sp = NULL, *d = strdup(devtypes);
+    int i;
+
+    for (i = 0, p = d; ++i; p = NULL) {
+        p = strtok_r(p, ",", &sp);
+        if (!p)
+            break;
+        {
+            char **_t;
+
+            _t = xrealloc(g_devtype, (g_devtype_nr + 1) * sizeof(char *));
+            if (!_t) {
+                hvfs_err(lib, "xrealloc devtype failed for %s\n",
+                         p);
+                continue;
+            }
+            _t[g_devtype_nr] = strdup(p);
+            g_devtype_nr++;
+            g_devtype = _t;
+        }
+    }
+    xfree(d);
+}
+
 int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
@@ -3111,7 +3158,7 @@ int main(int argc, char *argv[])
             g_rep_mkdir_on_nosuchfod = 1;
             break;
         case 'T':
-            g_devtype = strdup(optarg);
+            __parse_devtypes(optarg);
             break;
         case 'o':
             g_ds_conf.hb_interval = atoi(optarg);
@@ -3246,6 +3293,12 @@ int main(int argc, char *argv[])
             xfree(g_copy_cmd);
         g_copy_cmd = strdup(__cmd);
         hvfs_info(lib, "Reset g_copy_cmd to '%s'\n", g_copy_cmd);
+    }
+
+    /* set default dev types */
+    if (!g_devtype) {
+        hvfs_info(lib, "Using default device type: scsi,ata\n");
+        __parse_devtypes("scsi,ata");
     }
 
 #if 0
@@ -3465,19 +3518,21 @@ int main(int argc, char *argv[])
         goto out_liveness;
     }
 
-    get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
-    di_free(di, nr);
+    {
+        get_disks(&di, &nr, g_devtype, g_devtype_nr);
+        di_free(di, nr);
     
-    get_disk_parts(&dpi, &nr2, g_devtype == NULL ? "scsi" : g_devtype);
+        get_disk_parts(&dpi, &nr2, g_devtype, g_devtype_nr);
 
-    hvfs_info(lib, "Got NR %d\n", nr);
-    hvfs_info(lib, "Got NR %d\n", nr2);
+        hvfs_info(lib, "Got NR %d\n", nr);
+        hvfs_info(lib, "Got NR %d\n", nr2);
 
-    int fd = open_shm(O_TRUNC);
-    write_shm(fd, dpi, nr2);
-    //fix_disk_parts(dpi, nr2);
-    dpi_free(dpi, nr2);
-//    unlink_shm();
+        int fd = open_shm(O_TRUNC);
+        write_shm(fd, dpi, nr2);
+        //fix_disk_parts(dpi, nr2);
+        dpi_free(dpi, nr2);
+        //unlink_shm();
+    }
 
     /* loop forever */
     while (1) {
