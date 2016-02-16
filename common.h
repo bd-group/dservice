@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-01-13 11:06:58 macan>
+ * Time-stamp: <2016-01-14 15:36:42 macan>
  *
  */
 
@@ -132,9 +132,10 @@ struct verify_args
 {
     struct list_head list;
     struct floc_desc target;
+    void *data;
 #define VERIFY_LEVEL_EXIST      0
-#define VERIFY_LEVEL_META       1
-#define VERIFY_LEVEL_MD5        2
+#define VERIFY_LEVEL_MD5        1
+#define VERIFY_LEVEL_RANDOM     2
     int level;
 };
 

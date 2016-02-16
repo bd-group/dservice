@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-01-13 17:04:22 macan>
+ * Time-stamp: <2016-01-15 15:53:41 macan>
  *
  */
 
@@ -97,6 +97,7 @@ struct dservice_info
 
     atomic64_t tver;            /* total verify SFLs */
     atomic64_t tvyr;            /* total verify reply */
+    atomic64_t tchk;            /* total checked SFLs */
 
     long upts;                  /* startup timestamp */
     long uptime;                /* system uptime */
@@ -1630,6 +1631,41 @@ int handle_commands(char *recv)
                     }
                 }
             }
+        } else if (strncmp(line, "+CHK:", 5) == 0) {
+            /* this means metastore need to check if this file still exists
+             * and correct on this node.
+             */
+            char *p = line + 5, *sp;
+            char fpath[PATH_MAX];
+            int i, len = 0, err;
+
+            /* parse the : seperated string */
+            for (i = 0; ++i; p = NULL) {
+                p = strtok_r(p, ":", &sp);
+                if (!p)
+                    break;
+                hvfs_info(lib, "GOT %d %s\n", i, p);
+                switch (i) {
+                case 1:
+                    /* devid */
+                    break;
+                case 2:
+                    /* mp */
+                    len += sprintf(fpath + len, "%s/", p);
+                    break;
+                case 3:
+                    /* location */
+                    len += sprintf(fpath + len, "%s", p);
+                    break;
+                }
+            }
+            atomic64_inc(&g_di.tchk);
+            atomic_set(&g_di.updated, 1);
+            err = __check_target(fpath);
+            if (err) {
+                hvfs_err(lib, "__check_target(%s) failed w/ %d(%s)\n",
+                         fpath, err, strerror(-err));
+            }
         }
     }
 
@@ -1662,6 +1698,7 @@ static void __free_verify_args(struct verify_args *va)
     xfree(va->target.mp);
     xfree(va->target.devid);
     xfree(va->target.location);
+    xfree(va->data);
 }
 
 void __check_and_drop_reps()
@@ -1827,11 +1864,13 @@ int __do_heartbeat()
             mode = QUICK_HB_MODE2;
             break;
         }
-        hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d\n",
-                  pos3->target.devid, pos3->target.location, pos3->level);
-        len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d\n",
+        hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d data %s\n",
+                  pos3->target.devid, pos3->target.location, 
+                  pos3->level, (char *)pos3->data);
+        len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d,%s\n",
                        g_hostname, pos3->target.devid,
-                       pos3->target.location, pos3->level);
+                       pos3->target.location, pos3->level,
+                       (char *)pos3->data);
         list_del(&pos3->list);
         __free_verify_args(pos3);
         xfree(pos3);
@@ -2096,7 +2135,8 @@ void do_help()
                "-A, --audit       Enable audit logging.(default disabled)\n"
                "-K, --tickR       Set tick for replicate thread\n"
                "-k, --tickD       Set tick for delete thread\n"
-               "-b, --prob        Scan probility for single dir.\n"
+               "-b, --prob        DScan probility for single dir.\n"
+               "-s, --dscan_intr  DScan interval, default as 1800s.\n"
                "-R, --reptn       Set rep thread number.\n"
                "-D, --deltn       Set del thread number.\n"
                "-I, --iph         IP addres hint to translate hostname to IP addr.\n"
@@ -2643,6 +2683,53 @@ void __print_targets(char *path, char *name, int depth, void *data)
     hvfs_info(lib, " -> %s\n", tname);
 }
 
+static int __calc_md5(char *path, struct verify_args *va)
+{
+    char cmd[4096], *digest = NULL;
+    FILE *f;
+    int status = 0, err = 0;
+
+    sprintf(cmd, 
+            "cd %s && find . -type f -exec md5sum {} + | awk '{print $1}'"
+            " | sort | md5sum",
+            path);
+    f = popen(cmd, "r");
+    if (f == NULL) {
+        hvfs_err(lib, "popen(%s) failed w/ %s\n",
+                 cmd, strerror(errno));
+        return -errno;
+    } else {
+        char *line = NULL;
+        size_t len = 0;
+
+        while ((getline(&line, &len, f)) != -1) {
+            if (strstr(line, "  -") != NULL) {
+                char *p, *s;
+                p = strtok_r(line, " -\n", &s);
+                if (p) {
+                    digest = strdup(p);
+                }
+            }
+        }
+        xfree(line);
+    }
+    status = pclose(f);
+    if (WIFEXITED(status)) {
+        err = -WEXITSTATUS(status);
+        hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(status));
+    } else {
+        err = -EINTR;
+        hvfs_info(lib, "CMD(%s) non-exited, raw status=%d\n", cmd, status);
+    }
+
+    if (digest) {
+        hvfs_info(lib, "CALC: %s MD5: %s\n", path, digest);
+        va->data = digest;
+    }
+
+    return err;
+}
+
 void __select_target(char *path, char *name, int depth, void *data)
 {
     struct dev_scan_context *dsc = data;
@@ -2661,7 +2748,29 @@ void __select_target(char *path, char *name, int depth, void *data)
         va->target.devid = strdup(dsc->devid);
         va->target.location = strdup(&tname[strlen(dsc->mp)]);
         va->level = dsc->level;
-    
+    retry:
+        switch (va->level) {
+        default:
+        case VERIFY_LEVEL_EXIST:
+            break;
+        case VERIFY_LEVEL_MD5:
+        {
+            int err = __calc_md5(tname, va);
+
+            if (err) {
+                hvfs_err(lib, "__calc_md5(%s) failed w/ %d(%s)\n",
+                         tname, err, strerror(-err));
+                xfree(va);
+                return;
+            }
+            break;
+        }
+        case VERIFY_LEVEL_RANDOM:
+        {
+            va->level = random() % VERIFY_LEVEL_RANDOM;
+            goto retry;
+        }
+        }
         xlock_lock(&g_verify_lock);
         list_add_tail(&va->list, &g_verify);
         xlock_unlock(&g_verify_lock);
@@ -2794,7 +2903,7 @@ static void *__dscan_thread_main(void *arg)
         if (!last)
             last = cur;
         if (cur - last > g_ds_conf.dscan_interval) {
-            err = __device_scan(g_dev_scan_prob, VERIFY_LEVEL_EXIST);
+            err = __device_scan(g_dev_scan_prob, VERIFY_LEVEL_RANDOM);
             if (err) {
                 hvfs_err(lib, "__device_scan() failed w/ %s\n", strerror(errno));
             }
@@ -3084,6 +3193,8 @@ int main(int argc, char *argv[])
 {
     struct disk_info *di = NULL;
     struct disk_part_info *dpi = NULL;
+    struct thread_args *rta = NULL;
+    struct thread_args *dta = NULL;
     int nr = 0, nr2 = 0;
     int err = 0, m_cc_set = 0;
 
@@ -3103,7 +3214,7 @@ int main(int argc, char *argv[])
     hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
-    char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:SR:D:C:AK:k:q:";
+    char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:Ss:R:D:C:AK:k:q:";
     struct option longflags[] = {
         {"server", required_argument, 0, 'r'},
         {"port", required_argument, 0, 'p'},
@@ -3118,6 +3229,7 @@ int main(int argc, char *argv[])
         {"iph", required_argument, 0, 'I'},
         {"prob", required_argument, 0, 'b'},
         {"dscan", no_argument, 0, 'S'},
+        {"dscan_intr", required_argument, 0, 's'},
         {"mkd", required_argument, 0, 'M'},
         {"reptn", required_argument, 0, 'R'},
         {"deltn", required_argument, 0, 'D'},
@@ -3177,6 +3289,9 @@ int main(int argc, char *argv[])
             break;
         case 'S':
             g_ds_conf.enable_dscan = 1;
+            break;
+        case 's':
+            g_ds_conf.dscan_interval = atoi(optarg);
             break;
         case 'A':
             g_ds_conf.enable_audit = 1;
@@ -3312,15 +3427,17 @@ int main(int argc, char *argv[])
         __convert_host_to_ip(g_hostname, ip);
         hvfs_info(lib, "TEST CONVERTION: host '%s' to ip '%s'\n", 
                   g_hostname, ip);
-        __device_scan(g_dev_scan_prob, VERIFY_LEVEL_EXIST);
+        __device_scan(g_dev_scan_prob, VERIFY_LEVEL_RANDOM);
 
         xlock_lock(&g_verify_lock);
         list_for_each_entry_safe(pos3, n3, &g_verify, list) {
-            hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d\n",
-                      pos3->target.devid, pos3->target.location, pos3->level);
-            len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d\n",
+            hvfs_info(lib, "POS VERIFY dev %s loc %s lvl %d data %s\n",
+                      pos3->target.devid, pos3->target.location, 
+                      pos3->level, (char *)pos3->data);
+            len += sprintf(query + len, "+VERIFY:%s,%s,%s,%d,%s\n",
                            g_hostname, pos3->target.devid,
-                           pos3->target.location, pos3->level);
+                           pos3->target.location, pos3->level,
+                           (char *)pos3->data);
             list_del(&pos3->list);
             __free_verify_args(pos3);
             xfree(pos3);
@@ -3381,18 +3498,17 @@ int main(int argc, char *argv[])
 
     /* setup rep thread */
     {
-        struct thread_args *ta;
         int i;
 
-        ta = xzalloc(g_rep_thread_nr * sizeof(*ta));
-        if (!ta) {
+        rta = xzalloc(g_rep_thread_nr * sizeof(*rta));
+        if (!rta) {
             hvfs_err(lib, "xzalloc(%d) thread_args failed, no memory.\n",
                      g_rep_thread_nr);
             err = -ENOMEM;
             goto out_rep;
         }
         for (i = 0; i < g_rep_thread_nr; i++) {
-            ta[i].tid = i;
+            rta[i].tid = i;
         }
         g_rep_thread_stop = xzalloc(g_rep_thread_nr * sizeof(int));
         if (!g_rep_thread_stop) {
@@ -3421,7 +3537,7 @@ int main(int argc, char *argv[])
 
         for (i = 0; i < g_rep_thread_nr; i++) {
             err = pthread_create(&g_rep_thread[i], NULL, &__rep_thread_main,
-                                 &ta[i]);
+                                 &rta[i]);
             if (err) {
                 hvfs_err(lib, "Create REP thread failed w/ %s\n", strerror(errno));
                 err = -errno;
@@ -3432,18 +3548,17 @@ int main(int argc, char *argv[])
     
     /* setup del thread */
     {
-        struct thread_args *ta;
         int i;
 
-        ta = xzalloc(g_del_thread_nr * sizeof(*ta));
-        if (!ta) {
+        dta = xzalloc(g_del_thread_nr * sizeof(*dta));
+        if (!dta) {
             hvfs_err(lib, "xzalloc(%d) thread_args failed, no memory.\n",
                      g_del_thread_nr);
             err = -ENOMEM;
             goto out_del;
         }
         for (i = 0; i < g_del_thread_nr; i++) {
-            ta[i].tid = i;
+            dta[i].tid = i;
         }
         g_del_thread_stop = xzalloc(g_del_thread_nr * sizeof(int));
         if (!g_del_thread_stop) {
@@ -3473,7 +3588,7 @@ int main(int argc, char *argv[])
 
         for (i = 0; i < g_del_thread_nr; i++) {
             err = pthread_create(&g_del_thread[i], NULL, &__del_thread_main,
-                                 &ta[i]);
+                                 &dta[i]);
             if (err) {
                 hvfs_err(lib, "Create DEL thread failed w/ %s\n", strerror(errno));
                 err = -errno;
@@ -3583,6 +3698,7 @@ int main(int argc, char *argv[])
                 pthread_join(g_rep_thread[i], NULL);
             }
         }
+        xfree(rta);
     }
     {
         int i;
@@ -3598,6 +3714,7 @@ int main(int argc, char *argv[])
                 pthread_join(g_del_thread[i], NULL);
             }
         }
+        xfree(dta);
     }
 
     close(g_sockfd);
