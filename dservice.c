@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-01-15 15:53:41 macan>
+ * Time-stamp: <2016-02-24 14:41:28 macan>
  *
  */
 
@@ -1463,6 +1463,8 @@ out:
     } while (0)
 
 
+static int __check_target(char *devid, char *location, char *fpath);
+
 int handle_commands(char *recv)
 {
     char *line, tok[4096];
@@ -1636,7 +1638,7 @@ int handle_commands(char *recv)
              * and correct on this node.
              */
             char *p = line + 5, *sp;
-            char fpath[PATH_MAX];
+            char fpath[PATH_MAX], devid[128], location[PATH_MAX];
             int i, len = 0, err;
 
             /* parse the : seperated string */
@@ -1648,6 +1650,7 @@ int handle_commands(char *recv)
                 switch (i) {
                 case 1:
                     /* devid */
+                    sprintf(devid, "%s", p);
                     break;
                 case 2:
                     /* mp */
@@ -1656,12 +1659,13 @@ int handle_commands(char *recv)
                 case 3:
                     /* location */
                     len += sprintf(fpath + len, "%s", p);
+                    sprintf(location, "%s", p);
                     break;
                 }
             }
             atomic64_inc(&g_di.tchk);
             atomic_set(&g_di.updated, 1);
-            err = __check_target(fpath);
+            err = __check_target(devid, location, fpath);
             if (err) {
                 hvfs_err(lib, "__check_target(%s) failed w/ %d(%s)\n",
                          fpath, err, strerror(-err));
@@ -2118,7 +2122,7 @@ out:
 void do_help()
 {
     hvfs_plain(lib,
-               "Version 1.0.0f\n"
+               "Version 1.0.0g\n"
                "Copyright (c) 2013-2015 IIE and Ma Can <ml.macana@gmail.com>\n\n"
                "Arguments:\n"
                "-r, --server      DiskManager server IP address.\n"
@@ -2317,6 +2321,10 @@ static void *__del_thread_main(void *args)
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
                     if (strstr(line, "No such file or directory") != NULL) {
                         nosuchfod = 1;
+                    } else if (strstr(line, "Permission denied") != NULL) {
+                        /* Permission denied, Fail quickly */
+                        pos->retries += g_ds_conf.fl_max_retry;
+                        pos->errcode = -EPERM;
                     } else if (strstr(line, "Input/output error") != NULL) {
                         /* IOError, which means target file's disk failed?
                          * Fail quickly */
@@ -2441,7 +2449,6 @@ static void *__rep_thread_main(void *args)
         list_for_each_entry_safe(pos, n, &local, list) {
             FILE *f;
             char cmd[8192];
-            char *dir = strdup(pos->to.location);
             char *digest = NULL;
 
             hvfs_info(lib, "[%d] Handle REP POS to.location %s status %d\n", 
@@ -2486,12 +2493,12 @@ static void *__rep_thread_main(void *args)
                 
                 pos->status = REP_STATE_DOING;
                 pos->latency = time(NULL);
-#if 1
                 sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
                         "ssh %s stat -t %s/%s 2>&1 && "
-                        "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
-                        "cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
-                        pos->to.node, pos->to.mp, dirname(dir),
+                        "%s %s:%s/%s/* %s%s%s/%s/ 2>&1 && "
+                        "cd %s/%s && "
+                        "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
+                        pos->to.node, pos->to.mp, pos->to.location,
                         pos->from.node, pos->from.mp, pos->from.location,
                         g_copy_cmd,
                         pos->from.node, pos->from.mp, pos->from.location,
@@ -2499,27 +2506,6 @@ static void *__rep_thread_main(void *args)
                         (g_is_rsync ? "" : ":"),
                         pos->to.mp, pos->to.location,
                         pos->to.mp, pos->to.location);
-#else
-                sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
-                        "ssh %s stat -t %s/%s 2>&1 && "
-                        "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
-                        "if [ -d %s/%s ]; then cd %s/%s && "
-                        "find . -type f -exec md5sum {} + | awk '{print $1}' | sort | "
-                        "md5sum ; "
-                        "else cd %s && "
-                        "find ./%s -type f -exec md5sum {} + | awk '{print $1}' | sort | "
-                        "md5sum ; fi",
-                        pos->to.node, pos->to.mp, dirname(dir),
-                        pos->from.node, pos->from.mp, pos->from.location,
-                        g_copy_cmd,
-                        pos->from.node, pos->from.mp, pos->from.location,
-                        (g_is_rsync ? "" : pos->to.node),
-                        (g_is_rsync ? "" : ":"),
-                        pos->to.mp, pos->to.location,
-                        pos->to.mp, pos->to.location,
-                        pos->to.mp, pos->to.location,
-                        pos->to.mp, pos->to.location);
-#endif
                 break;
             case REP_STATE_DOING:
                 continue;
@@ -2539,7 +2525,8 @@ static void *__rep_thread_main(void *args)
                     // delete it and report +FAIL
                     pos->status = REP_STATE_ERROR_DONE;
                     pos->latency = time(NULL) - pos->latency;
-                    pos->errcode = -ETIMEDOUT;
+                    if (pos->errcode == 0)
+                        pos->errcode = -ETIMEDOUT;
                     list_del(&pos->list);
                     xlock_lock(&g_rep_lock);
                     list_add_tail(&pos->list, &g_rep);
@@ -2553,7 +2540,6 @@ static void *__rep_thread_main(void *args)
                 }
                 break;
             }
-            free(dir);
             
             f = popen(cmd, "r");
             if (f == NULL) {
@@ -2600,6 +2586,10 @@ static void *__rep_thread_main(void *args)
                             pos->retries += g_ds_conf.fl_max_retry;
                             pos->errcode = -ENOENT;
                         }
+                    } else if (strstr(line, "Permission denied") != NULL) {
+                        /* Permission denied, Fail quickly */
+                        pos->retries += g_ds_conf.fl_max_retry;
+                        pos->errcode = -EPERM;
                     } else if (strstr(line, "Input/output error") != NULL) {
                         /* IOError, which means source file or target file's
                          * disk failed? Fail quickly */
@@ -2675,6 +2665,7 @@ int __ignore_self_parent(char *dir)
     return 1;
 }
 
+static __UNUSED__
 void __print_targets(char *path, char *name, int depth, void *data)
 {
     char tname[PATH_MAX];
@@ -2730,7 +2721,38 @@ static int __calc_md5(char *path, struct verify_args *va)
     return err;
 }
 
-void __select_target(char *path, char *name, int depth, void *data)
+static int __check_target(char *devid, char *location, char *fpath)
+{
+    struct verify_args *va = NULL;
+    int err = 0;
+
+    va = xzalloc(sizeof(*va));
+    if (!va) {
+        hvfs_err(lib, "xzalloc() verify_args failed, no memory\n");
+        return -ENOMEM;
+    }
+    INIT_LIST_HEAD(&va->list);
+
+    va->target.devid = strdup(devid);
+    va->target.location = strdup(location);
+    va->level = VERIFY_LEVEL_MD5;
+
+    err = __calc_md5(fpath, va);
+    if (err) {
+        hvfs_err(lib, "__calc_md5(%s) failed w/ %d(%s)\n",
+                 fpath, err, strerror(-err));
+        xfree(va);
+        goto out;
+    }
+    xlock_lock(&g_verify_lock);
+    list_add_tail(&va->list, &g_verify);
+    xlock_unlock(&g_verify_lock);
+
+out:
+    return err;
+}
+
+static void __select_target(char *path, char *name, int depth, void *data)
 {
     struct dev_scan_context *dsc = data;
     struct verify_args *va;
