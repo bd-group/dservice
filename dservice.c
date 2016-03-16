@@ -2099,6 +2099,64 @@ static void *__async_recv_thread_main(void *args)
     pthread_exit(0);
 }
 
+int remove_from_hdfs(struct del_args *pos)
+{
+    FILE *f;
+    FILE *f2;
+    char cmd[9216];
+    char hdfs_dir_cmd[9216];
+    char *hdfs_root_dir = NULL;
+
+    char *jar_path = "/home/metastore/sotstore/dservice/lib/data_trans.jar";
+    hvfs_info(lib,"libing:debug:step1:go into remove_from_hdfs");
+    sprintf(hdfs_dir_cmd,"java -jar %s 0",jar_path);
+    hvfs_info(lib,"libing:debug:step2:hdfs_dir_cmd:%s",hdfs_dir_cmd);
+
+    f = popen(hdfs_dir_cmd, "r");
+    if(f == NULL)
+        {
+            hvfs_info(lib,"popen(%s) failedw/\n",hdfs_dir_cmd);
+        }else{
+            char *line = NULL;
+            size_t len = 0;
+            while((getline(&line,&len,f)) != -1)
+            {
+                hvfs_info(lib,"libing:debug:step3.2:EXEC(%s):%s",hdfs_dir_cmd,line);
+                hdfs_root_dir = line;
+                hvfs_info(lib,"libing:debug:step3.3 hdfs_root_dir:%s",hdfs_root_dir);
+            }
+
+        }
+    sprintf(cmd,"java -jar %s 4 %s%s",jar_path,hdfs_root_dir,pos->target.location);
+    hvfs_info(lib,"libing:debug:step4:upload cmd is:%s",cmd);
+        
+    f2 = popen(cmd,"r");
+    if(f2 == NULL)
+    {
+      hvfs_info(lib,"popen(%s) failed\n",cmd);
+    }else{
+      char *line = NULL;
+      size_t len =0;
+      while((getline(&line,&len,f2)) != -1){
+     	 hvfs_info(lib,"libing:debug :step4.3:EXEC(%s):%s",cmd,line);
+      }
+     }
+     int result = pclose(f2);
+     if (-1 == result)
+     {
+	hvfs_info(lib,"pclose(%s) failedw/\n",cmd);
+	exit(1);
+      }
+	else
+      {
+	if (WIFEXITED(result))
+	{
+	hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(result));
+	}
+     }
+     return 0;
+}
+
 static void *__del_thread_main(void *args)
 {
     struct thread_args *ta = (struct thread_args *)args;
@@ -2252,7 +2310,18 @@ static void *__del_thread_main(void *args)
                     if (pos->status == DEL_STATE_ERROR)
                         pos->status = DEL_STATE_INIT;
                     else
-                        pos->status = DEL_STATE_DONE;
+		       {
+  			 pos->status = DEL_STATE_DONE;
+			 int ret = remove_from_hdfs(pos);
+                         if(ret != 0)
+                         {
+                            hvfs_info(lib,"remove_from_hdfs is failed");
+                            pos->errcode = EAGAIN;
+                          }else{
+                            hvfs_info(lib,"remove_from_hdfs is successful");
+                          }
+			}
+                      
                 }
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
@@ -2268,13 +2337,27 @@ static void *__del_thread_main(void *args)
 
             /* add to g_del list if needed */
             if (pos->status == DEL_STATE_DONE) {
-                pos->latency = time(NULL) - pos->latency;
-                list_del(&pos->list);
-                xlock_lock(&g_del_lock);
-                list_add_tail(&pos->list, &g_del);
-                xlock_unlock(&g_del_lock);
-                atomic64_dec(&g_di.hdel);
-                atomic64_inc(&g_di.ddel);
+                if(pos->errcode == EAGAIN)
+           	 {
+                   int ret = remove_from_hdfs(pos);
+                   if(ret != 0)
+                   {
+                    	hvfs_info(lib,"remove_from_hdfs is failed");
+                        pos->errcode = EAGAIN;
+                   }else{
+                        hvfs_info(lib,"remove_from_hdfs is successful");
+                        pos->errcode = 0;
+                   }
+            }else
+            {
+             pos->latency = time(NULL) - pos->latency;
+             list_del(&pos->list);
+             xlock_lock(&g_del_lock);
+             list_add_tail(&pos->list, &g_del);
+             xlock_unlock(&g_del_lock);
+             atomic64_dec(&g_di.hdel);
+             atomic64_inc(&g_di.ddel);
+            }
             }
         }
     }
@@ -2297,6 +2380,69 @@ static int __is_dev_mounted(char *devid)
     xlock_unlock(&g_dpi_lock);
 
     return r;
+}
+
+
+int upload_to_hdfs(struct rep_args *pos)
+{
+    FILE *f;
+    FILE *f2;
+    char cmd[9216];
+    char hdfs_dir_cmd[9216];
+    char *hdfs_root_dir = NULL;
+
+    char *jar_path = "/home/metastore/sotstore/dservice/lib/data_trans.jar";
+    hvfs_info(lib,"libing:debug:step1:go into upload_to_hdfs");
+    sprintf(hdfs_dir_cmd,"java -jar %s 0",jar_path);
+    hvfs_info(lib,"libing:debug:step2:hdfs_dir_cmd:%s",hdfs_dir_cmd);
+
+    f = popen(hdfs_dir_cmd, "r");
+    if(f == NULL)
+        {
+            hvfs_info(lib,"popen(%s) failedw/\n",hdfs_dir_cmd);
+
+        }else{
+            char *line = NULL;
+            size_t len = 0;
+            while((getline(&line,&len,f)) != -1)
+            {
+                hvfs_info(lib,"libing:debug:step3.2:EXEC(%s):%s",hdfs_dir_cmd,line);
+                hdfs_root_dir = line;
+                hvfs_info(lib,"libing:debug:step3.3 hdfs_root_dir:%s",hdfs_root_dir);
+            }
+
+        }
+    sprintf(cmd,"java -jar %s  1 %s%s %s%s",jar_path,pos->from.mp,pos->from.location,hdfs_root_dir,pos->to.location);
+    hvfs_info(lib,"libing:debug:step4:upload cmd is:%s",cmd);
+
+        f2 = popen(cmd,"r");
+        if(f2 == NULL)
+        {
+            hvfs_info(lib,"popen(%s) failed\n",cmd);
+
+        }else{
+            char *line = NULL;
+            size_t len =0;
+            while((getline(&line,&len,f2)) != -1){
+                hvfs_info(lib,"libing:debug :step4.3:EXEC(%s):%s",cmd,line);
+
+            }
+        }
+
+    int result = pclose(f2);
+    if (-1 == result)
+    {
+      hvfs_info(lib,"pclose(%s) failedw/\n",cmd);
+      exit(1);
+    }
+    else
+    {
+    if (WIFEXITED(result))
+    {
+      hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(result));
+    }
+    }
+    return 0;
 }
 
 static void *__rep_thread_main(void *args)
@@ -2531,7 +2677,22 @@ static void *__rep_thread_main(void *args)
                     if (pos->status == REP_STATE_ERROR)
                         pos->status = REP_STATE_INIT;
                     else
-                        pos->status = REP_STATE_DONE;
+                       
+{
+ pos->status = REP_STATE_DONE;
+    hvfs_info(lib,"libing:debug:call the upload_to_hdfs function");
+                         int ret = upload_to_hdfs(pos);
+
+                         if(ret != 0)
+                         {
+                            hvfs_info(lib,"upload to hdfs failed!");
+                            pos->errcode = EAGAIN;
+
+                         }else{
+                            hvfs_info(lib,"upload to hdfs successfully!");
+                         }
+
+}
                 }
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
@@ -2547,14 +2708,31 @@ static void *__rep_thread_main(void *args)
 
             /* add to g_rep list if needed */
             if (pos->status == REP_STATE_DONE) {
-                pos->latency = time(NULL) - pos->latency;
-                list_del(&pos->list);
-                pos->digest = digest;
-                xlock_lock(&g_rep_lock);
-                list_add_tail(&pos->list, &g_rep);
-                xlock_unlock(&g_rep_lock);
-                atomic64_dec(&g_di.hrep);
-                atomic64_inc(&g_di.drep);
+                 if(pos->errcode == EAGAIN)
+            {
+            int ret = upload_to_hdfs(pos);
+
+                                                 if(ret != 0)
+                                                 {
+                                                    hvfs_info(lib,"upload to hdfs failed!");
+                                                    pos->errcode = EAGAIN;
+
+                                                 }else{
+                                                    hvfs_info(lib,"upload to hdfs successfully!");
+                                                    pos->errcode = 0;
+                                                 }
+
+            }else
+            {
+            pos->latency = time(NULL) - pos->latency;
+                                            list_del(&pos->list);
+                                            pos->digest = digest;
+                                            xlock_lock(&g_rep_lock);
+                                            list_add_tail(&pos->list, &g_rep);
+                                            xlock_unlock(&g_rep_lock);
+                                            atomic64_dec(&g_di.hrep);
+                                            atomic64_inc(&g_di.drep);
+            }
             }
         }
     }
