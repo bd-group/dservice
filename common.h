@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-01-14 15:36:42 macan>
+ * Time-stamp: <2016-03-01 11:23:07 macan>
  *
  */
 
@@ -85,6 +85,18 @@ struct disk_part_info
     long err_nr;
     long used;
     long free;
+/*
+ * How to detect?
+ *
+ * 1. by label: scsi, ata, nas, dfs, ram
+ * 2. by devSN: SATA, SSD
+ */
+#define DT_SAS      0
+#define DT_SHARED   1
+#define DT_SSD      4
+#define DT_SATA     5
+#define DT_RAM      6
+    int type;
 };
 
 struct floc_desc

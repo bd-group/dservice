@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-02-24 14:41:28 macan>
+ * Time-stamp: <2016-03-09 13:38:41 macan>
  *
  */
 
@@ -157,6 +157,7 @@ static int g_port = 20202;
 
 static struct sockaddr_in g_serverR;
 
+static int g_advice = POSIX_FADV_DONTNEED;
 static int g_specify_dev = 0;
 static char *g_dev_str = NULL;
 static char *g_hostname = NULL;
@@ -534,7 +535,35 @@ out:
     return err;
 }
 
-static inline void __gather_stats(struct disk_part_info *t, int nr)
+static int __get_device_type(char *label, char *devid)
+{
+    int type = DT_SAS;
+
+    if (strncmp(label, "scsi", 4) == 0) {
+        type = DT_SAS;
+    } else if (strncmp(label, "ata", 3) == 0) {
+        type = DT_SATA;
+    } else if (strncmp(label, "nas", 3) == 0) {
+        type = DT_SHARED;
+    } else if (strncmp(label, "dfs", 3) == 0) {
+        type = DT_SHARED;
+    } else if (strncmp(label, "ram", 3) == 0) {
+        type = DT_RAM;
+    }
+    if (strstr(devid, "SATA") != NULL) {
+        type = DT_SATA;
+    }
+    if (strstr(devid, "SSD") != NULL) {
+        type = DT_SSD;
+    }
+    hvfs_debug(lib, "label %s devid %s -> type %d\n",
+               label, devid, type);
+
+    return type;
+}
+
+static inline 
+void __gather_stats(struct disk_part_info *t, char *label, int nr)
 {
     int err = 0;
 
@@ -584,6 +613,8 @@ static inline void __gather_stats(struct disk_part_info *t, int nr)
                 t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
                 t[i].free = s.f_bsize * s.f_bavail;
             }
+            /* set device type */
+            t[i].type = __get_device_type(label, t[i].dev_sn);
         }
         break;
     }
@@ -705,7 +736,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 
     if (*nr > 0) {
         /* gather stats */
-        __gather_stats(*dpi, *nr);
+        __gather_stats(*dpi, label, *nr);
     }
 out:    
     return err;
@@ -724,7 +755,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
 
     if (f == NULL) {
         err = -errno;
-        hvfs_err(lib, "popen(GET_GL_DISKPART_SN) failed w/ %s\n",
+        hvfs_err(lib, "popen(GET_GL_DISK_SN_EXT) failed w/ %s\n",
                  strerror(errno));
         goto out;
     } else {
@@ -826,34 +857,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
 
     if (*nr > 0) {
         /* gather stats */
-        struct disk_part_info *t = *dpi;
-        struct statfs s;
-        int i;
-
-        for (i = 0; i < *nr; i++) {
-            /* get disk read/write sectors here */
-            err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
-                                 &t[i].err_nr);
-            if (err) {
-                t[i].read_nr = 0;
-                t[i].write_nr = 0;
-                t[i].err_nr = 0;
-            }
-
-            err = statfs(t[i].mount_path, &s);
-            if (err) {
-                hvfs_err(lib, "statfs(%s) failed w/ %s\n",
-                         t[i].mount_path, strerror(errno));
-                /* ignore this dev, do not alloc new files on this dev */
-                t[i].used = 0;
-                t[i].free = 0;
-                /* BUG-fix: ignore this error, only prevent new allocations */
-                err = 0;
-            } else {
-                t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
-                t[i].free = s.f_bsize * s.f_bavail;
-            }
-        }
+        __gather_stats(*dpi, label, *nr);
     }
 out:    
     return err;
@@ -974,7 +978,7 @@ int read_shm(int fd, struct disk_part_info *dpi, int nr)
 {
     struct disk_part_info this;
     char buf[64 * 1024];
-    char *p, *s1, *s2, *init, *line;
+    char *p, *s1, *s2 = NULL, *init, *line;
     int br, bl = 0, err = 0, i = 0;
 
     do {
@@ -1465,6 +1469,22 @@ out:
 
 static int __check_target(char *devid, char *location, char *fpath);
 
+static int __is_dev_mounted(char *devid)
+{
+    int r = 0, i;
+
+    xlock_lock(&g_dpi_lock);
+    for (i = 0; i < g_nr; i++) {
+        if (strcmp(devid, g_dpi[i].dev_sn) == 0) {
+            r = 1;
+            break;
+        }
+    }
+    xlock_unlock(&g_dpi_lock);
+
+    return r;
+}
+
 int handle_commands(char *recv)
 {
     char *line, tok[4096];
@@ -1538,7 +1558,7 @@ int handle_commands(char *recv)
             has_cmds = 1;
         } else if (strncmp(line, "+DEL:", 5) == 0) {
             struct del_args *ra;
-            char *p = line + 5, *sp;
+            char *p = line + 5, *sp = NULL;
             int i;
 
             ra = xzalloc(sizeof(*ra));
@@ -1584,7 +1604,7 @@ int handle_commands(char *recv)
         } else if (strncmp(line, "+VYR:", 5) == 0) {
             /* this means we should check on these files. If they existed too
              * long (10 days), delete it now */
-            char *p = line + 5, *sp;
+            char *p = line + 5, *sp = NULL;
             char fpath[PATH_MAX];
             struct stat buf;
             int i, len = 0, err;
@@ -1637,7 +1657,7 @@ int handle_commands(char *recv)
             /* this means metastore need to check if this file still exists
              * and correct on this node.
              */
-            char *p = line + 5, *sp;
+            char *p = line + 5, *sp = NULL;
             char fpath[PATH_MAX], devid[128], location[PATH_MAX];
             int i, len = 0, err;
 
@@ -1663,12 +1683,17 @@ int handle_commands(char *recv)
                     break;
                 }
             }
-            atomic64_inc(&g_di.tchk);
-            atomic_set(&g_di.updated, 1);
-            err = __check_target(devid, location, fpath);
-            if (err) {
-                hvfs_err(lib, "__check_target(%s) failed w/ %d(%s)\n",
-                         fpath, err, strerror(-err));
+            if (__is_dev_mounted(devid)) {
+                atomic64_inc(&g_di.tchk);
+                atomic_set(&g_di.updated, 1);
+                err = __check_target(devid, location, fpath);
+                if (err) {
+                    hvfs_err(lib, "__check_target(%s) failed w/ %d(%s)\n",
+                             fpath, err, strerror(-err));
+                }
+            } else {
+                hvfs_warning(lib, "Device %s unmounted, ignore this "
+                             "CHK request.\n", devid);
             }
         }
     }
@@ -2391,20 +2416,96 @@ static void *__del_thread_main(void *args)
     pthread_exit(0);
 }
 
-static int __is_dev_mounted(char *devid)
+static inline
+int __ignore_self_parent(char *dir)
 {
-    int r = 0, i;
+    if ((strcmp(dir, ".") == 0) ||
+        (strcmp(dir, "..") == 0)) {
+        return 0;
+    }
+    return 1;
+}
 
-    xlock_lock(&g_dpi_lock);
-    for (i = 0; i < g_nr; i++) {
-        if (strcmp(devid, g_dpi[i].dev_sn) == 0) {
-            r = 1;
-            break;
+static int __fadvise_file(char *fpath, int advice)
+{
+    int fd = 0, err = 0;
+
+    fd = open(fpath, O_RDONLY);
+    if (fd < 0) {
+        hvfs_err(lib, "open(%s) failed w/ %d\n",
+                 fpath, errno);
+        err = -errno;
+        goto out;
+    }
+    err = posix_fadvise(fd, 0, 0, advice);
+    if (err) {
+        hvfs_err(lib, "fadvise(%s) failed w/ %d(%s)\n",
+                 fpath, errno, strerror(errno));
+        err = -errno;
+        goto out_close;
+    }
+    hvfs_debug(lib, "fadvise(%s) %d -> ok\n", fpath, advice);
+out_close:
+    close(fd);
+out:
+    return err;
+}
+
+static int __fadvise_target(char *mp, char *location, int advice)
+{
+    char fpath[PATH_MAX];
+    struct stat st;
+    int err = 0;
+
+    snprintf(fpath, PATH_MAX, "%s/%s", mp, location);
+    /* fpath might be a directory */
+    err = stat(fpath, &st);
+    if (err) {
+        hvfs_err(lib, "stat(%s) failed w/ %d\n",
+                 fpath, errno);
+        err = -errno;
+        goto out;
+    } else {
+        if (st.st_mode & S_IFDIR) {
+            struct dirent entry;
+            struct dirent *result;
+            DIR *d;
+
+            d = opendir(fpath);
+            if (!d) {
+                hvfs_err(lib, "opendir(%s) failed %s(%d)\n",
+                         fpath, strerror(errno), errno);
+                err = -errno;
+                goto out;
+            }
+
+            for (err = readdir_r(d, &entry, &result);
+                 err == 0 && result != NULL;
+                 err = readdir_r(d, &entry, &result)) {
+                /* ok, we should iterate over this dir */
+                if (__ignore_self_parent(entry.d_name)) {
+                    err = __fadvise_target(fpath, entry.d_name, advice);
+                    if (err) {
+                        hvfs_err(lib, "ReCall fadvise on %s/%s failed w/ "
+                                 "%s(%d)\n",
+                                 fpath, entry.d_name, strerror(errno),
+                                 errno);
+                    }
+                }
+            }
+            closedir(d);
+        } else if (st.st_mode & S_IFREG) {
+            err =  __fadvise_file(fpath, advice);
+            if (err) {
+                hvfs_err(lib, "__fadvise_file(%s,%d) failed w/ %d\n",
+                         fpath, advice, errno);
+                err = -errno;
+                goto out;
+            }
         }
     }
-    xlock_unlock(&g_dpi_lock);
-
-    return r;
+out:
+    return err;
 }
 
 static void *__rep_thread_main(void *args)
@@ -2645,6 +2746,7 @@ static void *__rep_thread_main(void *args)
                 xlock_unlock(&g_rep_lock);
                 atomic64_dec(&g_di.hrep);
                 atomic64_inc(&g_di.drep);
+                __fadvise_target(pos->to.mp, pos->to.location, g_advice);
             }
         }
     }
@@ -2654,16 +2756,6 @@ static void *__rep_thread_main(void *args)
 }
 
 typedef void (*__dir_iterate_func)(char *path, char *name, int depth, void *data);
-
-static inline
-int __ignore_self_parent(char *dir)
-{
-    if ((strcmp(dir, ".") == 0) ||
-        (strcmp(dir, "..") == 0)) {
-        return 0;
-    }
-    return 1;
-}
 
 static __UNUSED__
 void __print_targets(char *path, char *name, int depth, void *data)
@@ -2827,6 +2919,7 @@ static int __dir_iterate(char *parent, char *name, __dir_iterate_func func,
     if (!d) {
         hvfs_debug(lib, "opendir(%s) failed w/ %s(%d)\n",
                    path, strerror(errno), errno);
+        err = -errno;
         goto out;
     }
 
@@ -3466,6 +3559,14 @@ int main(int argc, char *argv[])
         }
         xlock_unlock(&g_verify_lock);
         
+        return 0;
+    }
+#endif
+
+#if 0
+    {
+        __fadvise_target("/home/macan/workspace/dservice", 
+                         "build", g_advice);
         return 0;
     }
 #endif
