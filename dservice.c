@@ -12,6 +12,7 @@
 #include "jsmn.h"
 #include "lib/memory.h"
 
+HVFS_TRACING_DEFINE_FILE();
 #define MAX_FILTERS     10
 struct dservice_conf
 {
@@ -174,6 +175,8 @@ static int g_dev_scan_prob = 100;
  */
 static char *g_copy_cmd = "scp -qpr";
 static int g_is_rsync = 0;
+
+static char *java_cmd = "/home/metastore/sotstore/jdk1.7.0_80/bin/java -jar /home/metastore/sotstore/dservice/lib/data_trans.jar";
 
 /*
  * timeout return 124 for truely timeout (network overload? or something else)
@@ -354,6 +357,7 @@ int get_disks(struct disk_info **di, int *nr, char *label)
     int err = 0, lnr = 0;
 
     sprintf(buf, GET_GL_DISK_SN, label, label);
+    hvfs_info(lib,"libing:debug:361---:%s\n",buf);
     f = popen(buf, "r");
     if (f == NULL) {
         err = -errno;
@@ -366,6 +370,7 @@ int get_disks(struct disk_info **di, int *nr, char *label)
         /* read from the result stream */
         while ((lnr = getline(&line, &len, f)) != -1) {
             /* ok, parse the results */
+	    hvfs_info(lib,"libing:debug374-------:exec(%s):%s\n",buf,line);
             if (lnr > 2) {
                 char *p, *sp;
                 int i;
@@ -439,6 +444,7 @@ int get_disk_stats(char *dev, long *rnr, long *wnr, long *enr)
     if (devlen == 3) {
         /* this is the whole disk */
         sprintf(buf, GET_RW_SECTORS, dev);
+	    hvfs_info(lib,"libing:debug:448---:%s\n",buf);
     } else if (isdigit(dev[devlen - 1])) {
         /* this might be one partition */
         char wdev[32];
@@ -467,6 +473,7 @@ int get_disk_stats(char *dev, long *rnr, long *wnr, long *enr)
             *enr = 0;
         /* read from the result stream */
         while ((lnr = getline(&line, &len, f)) != -1) {
+        hvfs_info(lib,"libing:debug:479---exec(%s):%s\n",buf,line);
             /* ok, parse the results */
             if (lnr > 2) {
                 char *p, *sp;
@@ -515,6 +522,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
     int err = 0, lnr = 0;
 
     sprintf(buf, GET_GL_DISKPART_SN, label, label);
+    hvfs_info(lib,"libing:debug:528---:%s\n",buf);
     f = popen(buf, "r");
 
     if (f == NULL) {
@@ -525,6 +533,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
     } else {
         /* read from the result stream */
         while ((lnr = getline(&line, &len, f)) != -1) {
+            hvfs_info(lib,"libing:debug:540---exec(%s):%s\n",buf,line);
             /* ok, parse the results */
             if (lnr > 2) {
                 char *p, *sp;
@@ -532,12 +541,14 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
 
                 for (i = 0, p = line; ++i; p = NULL) {
                     p = strtok_r(p, " \n", &sp);
+                    hvfs_info(lib,"libing:debug:548---:%s\n",p);
                     if (!p)
                         break;
                     hvfs_debug(lib, "2 %d %s\n", i, p);
                     switch (i) {
                     case 1:
                         /* check whether it is OK */
+
                         if (strncmp(p, "OK", 2) != 0) {
                             /* bad */
                             hvfs_err(lib, "BAD line w/ '%s', ignore it\n", p);
@@ -558,13 +569,16 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
                         break;
                     case 2:
                         /* it is dev_sn */
+                        hvfs_info(lib,"libing:debug:576---:%s\n",p);
                         (*dpi)[*nr - 1].dev_sn = strdup(p);
                         break;
                     case 3:
+                        hvfs_info(lib,"libing:debug:580---:%s\n",p);
                         /* it is dev id */
                         (*dpi)[*nr - 1].dev_id = strdup(p);
                         break;
                     case 4:
+                        hvfs_info(lib,"libing:debug:585---:%s\n",p);
                         /* it is mount path */
                         (*dpi)[*nr - 1].mount_path = strdup(p);
                         /* extract the remaining fields as mount path (handling spaces) */
@@ -586,7 +600,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
                 // do filtering
                 if (*nr > 0) {
                     for (i = 0; i < g_ds_conf.sdfilter_len; i++) {
-                        if (strstr((*dpi)[*nr - 1].dev_id, 
+                        if (strstr((*dpi)[*nr - 1].dev_id,
                                    g_ds_conf.sdfilter[i]) != NULL) {
                             // filtered
                             *nr -= 1;
@@ -596,7 +610,7 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
                     }
                     if (!filtered) {
                         for (i = 0; i < g_ds_conf.mpfilter_len; i++) {
-                            if (strcmp((*dpi)[*nr - 1].mount_path, 
+                            if (strcmp((*dpi)[*nr - 1].mount_path,
                                        g_ds_conf.mpfilter[i]) == 0) {
                                 // filtered
                                 *nr -= 1;
@@ -650,10 +664,9 @@ int get_disk_parts_sn(struct disk_part_info **dpi, int *nr, char *label)
             }
         }
     }
-out:    
+out:
     return err;
 }
-
 int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
 {
     char buf[1024];
@@ -663,6 +676,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
     int err = 0, lnr = 0;
 
     sprintf(buf, GET_GL_DISK_SN_EXT, label, label);
+    hvfs_info(lib,"libing:debug:679---:%s\n",buf);
     f = popen(buf, "r");
 
     if (f == NULL) {
@@ -673,6 +687,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
     } else {
         /* read from the result stream */
         while ((lnr = getline(&line, &len, f)) != -1) {
+            hvfs_info(lib,"libing:debug:690---exec(%s):%s\n",buf,line);
             /* ok, parse the results */
             if (lnr > 2) {
                 char *p, *sp;
@@ -686,6 +701,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                     switch (i) {
                     case 1:
                         /* check whether it is OK */
+                        hvfs_info(lib,"libing:debug:704---:%s\n",p);
                         if (strncmp(p, "OK", 2) != 0) {
                             /* bad */
                             hvfs_err(lib, "BAD line w/ '%s', ignore it\n", p);
@@ -706,14 +722,17 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                         break;
                     case 2:
                         /* it is dev_sn */
+                        hvfs_info(lib,"libing:debug:725---:%s\n",p);
                         (*dpi)[*nr - 1].dev_sn = strdup(p);
                         break;
                     case 3:
                         /* it is dev id */
+                        hvfs_info(lib,"libing:debug:730---:%s\n",p);
                         (*dpi)[*nr - 1].dev_id = strdup(p);
                         break;
                     case 4:
                         /* it is mount path */
+                        hvfs_info(lib,"libing:debug:735---:%s\n",p);
                         (*dpi)[*nr - 1].mount_path = strdup(p);
                         /* extract the remaining fields as mount path (handling spaces) */
                         if (p - line + strlen(p) + 2 < lnr) {
@@ -734,7 +753,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                 // do filtering
                 if (*nr > 0) {
                     for (i = 0; i < g_ds_conf.sdfilter_len; i++) {
-                        if (strstr((*dpi)[*nr - 1].dev_id, 
+                        if (strstr((*dpi)[*nr - 1].dev_id,
                                    g_ds_conf.sdfilter[i]) != NULL) {
                             // filtered
                             *nr -= 1;
@@ -744,7 +763,7 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                     }
                     if (!filtered) {
                         for (i = 0; i < g_ds_conf.mpfilter_len; i++) {
-                            if (strcmp((*dpi)[*nr - 1].mount_path, 
+                            if (strcmp((*dpi)[*nr - 1].mount_path,
                                        g_ds_conf.mpfilter[i]) == 0) {
                                 // filtered
                                 *nr -= 1;
@@ -772,7 +791,6 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
         struct disk_part_info *t = *dpi;
         struct statfs s;
         int i;
-
         for (i = 0; i < *nr; i++) {
             /* get disk read/write sectors here */
             err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
@@ -782,7 +800,6 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
                 t[i].write_nr = 0;
                 t[i].err_nr = 0;
             }
-
             err = statfs(t[i].mount_path, &s);
             if (err) {
                 hvfs_err(lib, "statfs(%s) failed w/ %s\n",
@@ -798,8 +815,204 @@ int get_disk_sn_ext(struct disk_part_info **dpi, int *nr, char *label)
             }
         }
     }
-out:    
+out:
     return err;
+}
+
+int get_disk_hdfs(struct disk_part_info **dpi, int *nr, char *node_name)
+{
+	char buf[1024];
+	char *line = NULL;
+	size_t len = 0;
+	FILE *f;
+	int err = 0, lnr = 0;
+
+	sprintf(buf, GET_HDFS_DISK_MP,node_name);
+	hvfs_info(lib,"libing:debug:849---:%s\n",buf);
+	f = popen(buf, "r");
+	if (f == NULL) {
+		err = -errno;
+		hvfs_err(lib, "popen(GET_HDFS_DISK_MP) failed w/ %s\n",
+				strerror(errno));
+		goto out;
+	} else {
+		/* read from the result stream */
+		while ((lnr = getline(&line, &len, f)) != -1) {
+			hvfs_info(lib,"libing:debug:862---exec(%s):%s\n",buf,line);
+			/* ok, parse the results */
+			if (lnr > 2) {
+				char *p, *sp;
+				int i, filtered = 0;
+				for (i = 0, p = line; ++i; p = NULL) {
+					p = strtok_r(p, " \n", &sp);
+					if (!p)
+						break;
+					hvfs_debug(lib, "2 %d %s\n", i, p);
+					switch (i) {
+						case 1:
+							/* check whether it is OK */
+							hvfs_info(lib,"libing:debug:873---:%s\n",p);
+							if (strncmp(p, "OK", 2) != 0) {
+								/* bad */
+								hvfs_err(lib, "BAD line w/ '%s', ignore it\n", p);
+								goto next_line;
+							}
+							/* alloc a new disk_part_info entry */
+							{
+								struct disk_part_info *ndpi;
+								ndpi = xrealloc(*dpi, (*nr + 1) * sizeof(*ndpi));
+								if (!ndpi) {
+									hvfs_err(lib, "xrealloc disk_part_info failed.\n");
+									goto next_line;
+								}
+								*dpi = ndpi;
+								*nr = *nr + 1;
+							}
+							break;
+						case 2:
+							/* it is dev_sn */
+							hvfs_info(lib,"libing:debug:893---:%s\n",p);
+							(*dpi)[*nr - 1].dev_sn = strdup(p);
+							(*dpi)[*nr - 1].dev_id = strdup("hdfs_dev_id");
+							break;
+						case 3:
+							/* it is mount path */
+							hvfs_info(lib,"libing:debug:898---:%s\n",p);
+							(*dpi)[*nr - 1].mount_path = strdup(p);
+							/* extract the remaining fields as mount path (handling spaces) */
+							//                        if (p - line + strlen(p) + 2 < lnr) {
+							//                            xfree((*dpi)[*nr - 1].mount_path);
+							//                            p[strlen(p)] = ' ';
+							//                            line[lnr - 1] = '\0';
+							//                            (*dpi)[*nr - 1].mount_path = strdup(p);
+							//                        }
+							(*dpi)[*nr - 1].read_nr = 0;
+							(*dpi)[*nr - 1].write_nr = 0;
+							(*dpi)[*nr - 1].err_nr = 0;
+							(*dpi)[*nr - 1].used = 0;
+							(*dpi)[*nr - 1].free = 0;
+							break;
+					}
+					hvfs_debug(lib, "2 %d %s FFF\n", i, p);
+				}
+				// do filtering
+				if (*nr > 0) {
+					for (i = 0; i < g_ds_conf.sdfilter_len; i++) {
+						if (strstr((*dpi)[*nr - 1].dev_id,
+									g_ds_conf.sdfilter[i]) != NULL) {
+							// filtered
+							*nr -= 1;
+							filtered = 1;
+							break;
+						}
+					}
+					if (!filtered) {
+						for (i = 0; i < g_ds_conf.mpfilter_len; i++) {
+							if (strcmp((*dpi)[*nr - 1].mount_path,
+										g_ds_conf.mpfilter[i]) == 0) {
+								// filtered
+								*nr -= 1;
+								filtered = 1;
+								break;
+							}
+						}
+					}
+					if (filtered) {
+						// free any resouces
+						xfree((*dpi)[*nr].dev_sn);
+						xfree((*dpi)[*nr].dev_id);
+						xfree((*dpi)[*nr].mount_path);
+					}
+				}
+			}
+next_line:;
+		}
+		free(line);
+	}
+	pclose(f);
+	if (*nr > 0) {
+		/* gather stats */
+		struct disk_part_info *t = *dpi;
+		struct statfs s;
+		int i;
+		for (i = 0; i < *nr; i++) {
+			/* get disk read/write sectors here */
+			if(strncmp(t[i].mount_path,"hdfs://",7) == 0){
+				t[i].read_nr = 0;
+				t[i].write_nr = 0;
+				t[i].err_nr = 0;
+				sprintf(buf, GET_HDFS_DISK_STAT,node_name);                       
+				f = popen(buf, "r");
+				if (f == NULL) {
+					hvfs_info(lib,"libing:debug:963---:popen(GET_HDFS_DISK_STAT) failed\n");
+					err = -errno;
+					hvfs_err(lib, "popen(GET_HDFS_DISK_STAT) failed w/ %s\n",
+							strerror(errno));
+					t[i].used = 0;
+					t[i].free = 0;
+					goto out;
+				} else {
+					/* read from the result stream */
+					line = NULL;
+					while ((lnr = getline(&line, &len, f)) != -1) {
+						hvfs_info(lib,"libing:debug:975---:exec(%s):%s\n",buf,line);
+						if(strncmp(line,"DFS Used:",9) == 0)
+						{
+							char *result = NULL;
+							result = strtok(line,":");
+							int num;
+							for(num = 1; result != NULL; num++)
+							{
+								if(num == 2)
+								{
+									t[i].used = atol(result);
+								}
+								result = strtok(NULL,":");
+							}
+						}else if(strncmp(line, "DFS Remaining:",14) == 0)
+						{
+							char *result = NULL;
+							result = strtok(line,":");
+							int num;
+							for(num = 1; result != NULL; num++)
+							{
+								if(num == 2)
+								{
+									t[i].free = atol(result);
+								}
+								result = strtok(NULL,":");
+							}
+						}
+					}
+					free(line);
+				}
+			}else
+			{
+				err = get_disk_stats(t[i].dev_id, &t[i].read_nr, &t[i].write_nr,
+						&t[i].err_nr);
+				if (err) {
+					t[i].read_nr = 0;
+					t[i].write_nr = 0;
+					t[i].err_nr = 0;
+				}
+				err = statfs(t[i].mount_path, &s);
+				if (err) {
+					hvfs_err(lib, "statfs(%s) failed w/ %s\n",
+							t[i].mount_path, strerror(errno));
+					/* ignore this dev, do not alloc new files on this dev */
+					t[i].used = 0;
+					t[i].free = 0;
+					/* BUG-fix: ignore this error, only prevent new allocations */
+					err = 0;
+				} else {
+					t[i].used = s.f_bsize * (s.f_blocks - s.f_bavail);
+					t[i].free = s.f_bsize * s.f_bavail;
+				}
+			}
+		}
+	}
+out:
+	return err;
 }
 
 int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label)
@@ -808,7 +1021,7 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label)
 
     *dpi = NULL;
     *nr = 0;
-    
+
     err = get_disk_parts_sn(dpi, nr, label);
     if (err) {
         goto out;
@@ -817,11 +1030,14 @@ int get_disk_parts(struct disk_part_info **dpi, int *nr, char *label)
     if (err) {
         goto out;
     }
+    err = get_disk_hdfs(dpi, nr, g_hostname);
+    if(err){
+        goto out;
+    }
 
 out:
     return err;
 }
-
 
 void dpi_free(struct disk_part_info *dpi, int nr)
 {
@@ -832,7 +1048,7 @@ void dpi_free(struct disk_part_info *dpi, int nr)
         xfree(dpi[i].dev_id);
         xfree(dpi[i].mount_path);
     }
-    
+
     xfree(dpi);
 }
 
@@ -1009,7 +1225,6 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
     } else {
         sprintf(buf, "%s,0,0,0\n", g_dev_str);
     }
-
     do {
         bw = write(fd, buf + bl, strlen(buf) - bl);
         if (bw < 0) {
@@ -1019,7 +1234,6 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
         }
         bl += bw;
     } while (bl < strlen(buf));
-
     /* BUG-XXX: we have truncate the fd to actual length */
     err = ftruncate(fd, bl);
     if (err) {
@@ -1027,7 +1241,6 @@ int write_shm(int fd, struct disk_part_info *dpi, int nr)
         err = -errno;
         goto out;
     }
-
     err = bl;
     hvfs_info(lib, "WRITE SHM: {%s}\n", buf);
 
@@ -1281,6 +1494,7 @@ void check_dtrace()
     }
 }
 
+
 void refresh_map(time_t cur)
 {
     static time_t last = 0;
@@ -1294,7 +1508,7 @@ void refresh_map(time_t cur)
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto update_last;
         }
-        
+
         err = fix_disk_parts(dpi, nr);
         if (err) {
             hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
@@ -1323,6 +1537,7 @@ void refresh_map(time_t cur)
         last = cur;
     }
 }
+
 
 char *getaline(char *buf, int *off)
 {
@@ -1414,6 +1629,7 @@ int handle_commands(char *recv)
     while ((line = getaline(recv, &off)) != NULL) {
         hvfs_info(lib, "LINE: %s\n", line);
         if (strncmp(line, "+REP:", 5) == 0) {
+	
             struct rep_args *ra;
             char pos[32];
             int i;
@@ -1450,7 +1666,7 @@ int handle_commands(char *recv)
                 SET_RA_FROM(13, 21);
             else if (strcmp(pos, "to") == 0)
                 SET_RA_TO(13, 21);
-
+		
             /* convert hostname to ip address */
             {
                 char *__t;
@@ -1472,7 +1688,6 @@ int handle_commands(char *recv)
             xlock_unlock(&g_rep_lock);
             sem_post(&g_rep_sem);
             atomic64_inc(&g_di.qrep);
-
             has_cmds = 1;
         } else if (strncmp(line, "+DEL:", 5) == 0) {
             struct del_args *ra;
@@ -1517,7 +1732,6 @@ int handle_commands(char *recv)
             xlock_unlock(&g_del_lock);
             sem_post(&g_del_sem);
             atomic64_inc(&g_di.qdel);
-
             has_cmds = 1;
         } else if (strncmp(line, "+VYR:", 5) == 0) {
             /* this means we should check on these files. If they existed too
@@ -2099,64 +2313,6 @@ static void *__async_recv_thread_main(void *args)
     pthread_exit(0);
 }
 
-int remove_from_hdfs(struct del_args *pos)
-{
-    FILE *f;
-    FILE *f2;
-    char cmd[9216];
-    char hdfs_dir_cmd[9216];
-    char *hdfs_root_dir = NULL;
-
-    char *jar_path = "/home/metastore/sotstore/dservice/lib/data_trans.jar";
-    hvfs_info(lib,"libing:debug:step1:go into remove_from_hdfs");
-    sprintf(hdfs_dir_cmd,"java -jar %s 0",jar_path);
-    hvfs_info(lib,"libing:debug:step2:hdfs_dir_cmd:%s",hdfs_dir_cmd);
-
-    f = popen(hdfs_dir_cmd, "r");
-    if(f == NULL)
-        {
-            hvfs_info(lib,"popen(%s) failedw/\n",hdfs_dir_cmd);
-        }else{
-            char *line = NULL;
-            size_t len = 0;
-            while((getline(&line,&len,f)) != -1)
-            {
-                hvfs_info(lib,"libing:debug:step3.2:EXEC(%s):%s",hdfs_dir_cmd,line);
-                hdfs_root_dir = line;
-                hvfs_info(lib,"libing:debug:step3.3 hdfs_root_dir:%s",hdfs_root_dir);
-            }
-
-        }
-    sprintf(cmd,"java -jar %s 4 %s%s",jar_path,hdfs_root_dir,pos->target.location);
-    hvfs_info(lib,"libing:debug:step4:upload cmd is:%s",cmd);
-        
-    f2 = popen(cmd,"r");
-    if(f2 == NULL)
-    {
-      hvfs_info(lib,"popen(%s) failed\n",cmd);
-    }else{
-      char *line = NULL;
-      size_t len =0;
-      while((getline(&line,&len,f2)) != -1){
-     	 hvfs_info(lib,"libing:debug :step4.3:EXEC(%s):%s",cmd,line);
-      }
-     }
-     int result = pclose(f2);
-     if (-1 == result)
-     {
-	hvfs_info(lib,"pclose(%s) failedw/\n",cmd);
-	exit(1);
-      }
-	else
-      {
-	if (WIFEXITED(result))
-	{
-	hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(result));
-	}
-     }
-     return 0;
-}
-
 static void *__del_thread_main(void *args)
 {
     struct thread_args *ta = (struct thread_args *)args;
@@ -2219,9 +2375,16 @@ static void *__del_thread_main(void *args)
                     len += sprintf(cmd, "ssh %s ", pos->target.node);
                 }
 #if 1
-                len += sprintf(cmd + len, "%s rm -rf %s/%s",
-                               g_timeout_str,
-                               pos->target.mp, pos->target.location);
+                if(strncmp(pos->target.mp,"hdfs://",7) != 0){
+                						len += sprintf(cmd + len, "%s rm -rf %s/%s",
+                								g_timeout_str,
+                								pos->target.mp, pos->target.location);
+
+                					}else
+                					{
+                						hvfs_info(lib,"remove from hdfs");
+                						len += sprintf(cmd + len,"%s %s %s/%s",java_cmd,"4",pos->target.mp, pos->target.location);
+                					}
 #else
                 len += sprintf(cmd + len, "ls %s/%s",
                                pos->target.mp, pos->target.location);
@@ -2270,7 +2433,7 @@ static void *__del_thread_main(void *args)
             } else {
                 char *line = NULL;
                 size_t len = 0;
-                
+
                 while ((getline(&line, &len, f)) != -1) {
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
                     if (strstr(line, "No such file or directory") != NULL) {
@@ -2285,7 +2448,7 @@ static void *__del_thread_main(void *args)
                 xfree(line);
             }
             int status = pclose(f);
-            
+
             if (WIFEXITED(status)) {
                 hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(status));
                 if (WEXITSTATUS(status)) {
@@ -2299,7 +2462,7 @@ static void *__del_thread_main(void *args)
                             pos->errcode = -WEXITSTATUS(status);
                         }
                     }
-                    /* 
+                    /*
                      * If get errcode 124, it means disk might be timed out?
                      */
                     if (WEXITSTATUS(status) == 124) {
@@ -2310,18 +2473,7 @@ static void *__del_thread_main(void *args)
                     if (pos->status == DEL_STATE_ERROR)
                         pos->status = DEL_STATE_INIT;
                     else
-		       {
-  			 pos->status = DEL_STATE_DONE;
-			 int ret = remove_from_hdfs(pos);
-                         if(ret != 0)
-                         {
-                            hvfs_info(lib,"remove_from_hdfs is failed");
-                            pos->errcode = EAGAIN;
-                          }else{
-                            hvfs_info(lib,"remove_from_hdfs is successful");
-                          }
-			}
-                      
+                        pos->status = DEL_STATE_DONE;
                 }
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
@@ -2337,27 +2489,13 @@ static void *__del_thread_main(void *args)
 
             /* add to g_del list if needed */
             if (pos->status == DEL_STATE_DONE) {
-                if(pos->errcode == EAGAIN)
-           	 {
-                   int ret = remove_from_hdfs(pos);
-                   if(ret != 0)
-                   {
-                    	hvfs_info(lib,"remove_from_hdfs is failed");
-                        pos->errcode = EAGAIN;
-                   }else{
-                        hvfs_info(lib,"remove_from_hdfs is successful");
-                        pos->errcode = 0;
-                   }
-            }else
-            {
-             pos->latency = time(NULL) - pos->latency;
-             list_del(&pos->list);
-             xlock_lock(&g_del_lock);
-             list_add_tail(&pos->list, &g_del);
-             xlock_unlock(&g_del_lock);
-             atomic64_dec(&g_di.hdel);
-             atomic64_inc(&g_di.ddel);
-            }
+                pos->latency = time(NULL) - pos->latency;
+                list_del(&pos->list);
+                xlock_lock(&g_del_lock);
+                list_add_tail(&pos->list, &g_del);
+                xlock_unlock(&g_del_lock);
+                atomic64_dec(&g_di.hdel);
+                atomic64_inc(&g_di.ddel);
             }
         }
     }
@@ -2380,69 +2518,6 @@ static int __is_dev_mounted(char *devid)
     xlock_unlock(&g_dpi_lock);
 
     return r;
-}
-
-
-int upload_to_hdfs(struct rep_args *pos)
-{
-    FILE *f;
-    FILE *f2;
-    char cmd[9216];
-    char hdfs_dir_cmd[9216];
-    char *hdfs_root_dir = NULL;
-
-    char *jar_path = "/home/metastore/sotstore/dservice/lib/data_trans.jar";
-    hvfs_info(lib,"libing:debug:step1:go into upload_to_hdfs");
-    sprintf(hdfs_dir_cmd,"java -jar %s 0",jar_path);
-    hvfs_info(lib,"libing:debug:step2:hdfs_dir_cmd:%s",hdfs_dir_cmd);
-
-    f = popen(hdfs_dir_cmd, "r");
-    if(f == NULL)
-        {
-            hvfs_info(lib,"popen(%s) failedw/\n",hdfs_dir_cmd);
-
-        }else{
-            char *line = NULL;
-            size_t len = 0;
-            while((getline(&line,&len,f)) != -1)
-            {
-                hvfs_info(lib,"libing:debug:step3.2:EXEC(%s):%s",hdfs_dir_cmd,line);
-                hdfs_root_dir = line;
-                hvfs_info(lib,"libing:debug:step3.3 hdfs_root_dir:%s",hdfs_root_dir);
-            }
-
-        }
-    sprintf(cmd,"java -jar %s  1 %s%s %s%s",jar_path,pos->from.mp,pos->from.location,hdfs_root_dir,pos->to.location);
-    hvfs_info(lib,"libing:debug:step4:upload cmd is:%s",cmd);
-
-        f2 = popen(cmd,"r");
-        if(f2 == NULL)
-        {
-            hvfs_info(lib,"popen(%s) failed\n",cmd);
-
-        }else{
-            char *line = NULL;
-            size_t len =0;
-            while((getline(&line,&len,f2)) != -1){
-                hvfs_info(lib,"libing:debug :step4.3:EXEC(%s):%s",cmd,line);
-
-            }
-        }
-
-    int result = pclose(f2);
-    if (-1 == result)
-    {
-      hvfs_info(lib,"pclose(%s) failedw/\n",cmd);
-      exit(1);
-    }
-    else
-    {
-    if (WIFEXITED(result))
-    {
-      hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(result));
-    }
-    }
-    return 0;
 }
 
 static void *__rep_thread_main(void *args)
@@ -2489,8 +2564,7 @@ static void *__rep_thread_main(void *args)
             char cmd[8192];
             char *dir = strdup(pos->to.location);
             char *digest = NULL;
-
-            hvfs_info(lib, "[%d] Handle REP POS to.location %s status %d\n", 
+            hvfs_info(lib, "[%d] Handle REP POS to.location %s status %d\n",
                       tid, pos->to.location, pos->status);
             pos->retries++;
             switch(pos->status) {
@@ -2515,7 +2589,7 @@ static void *__rep_thread_main(void *args)
                 }
                 /* BUG-XXX: we should check if to.mp mounted, otherwise, data
                  * might go to OS disk!!! */
-                if (!__is_dev_mounted(pos->to.devid)) {
+                if (strncmp(pos->to.mp,"hdfs://",7) !=0 && !__is_dev_mounted(pos->to.devid)) {
                     hvfs_warning(lib, "Unmounted Replicate: TO{%s:%s/%s} FROM{%s:%s/%s}\n",
                                  pos->to.node, pos->to.mp, pos->to.location,
                                  pos->from.node, pos->from.mp, pos->from.location);
@@ -2529,22 +2603,37 @@ static void *__rep_thread_main(void *args)
                     atomic64_inc(&g_di.drep);
                     continue;
                 }
-                
+
                 pos->status = REP_STATE_DOING;
                 pos->latency = time(NULL);
 #if 1
-                sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
-                        "ssh %s stat -t %s/%s 2>&1 && "
-                        "%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
-                        "cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
-                        pos->to.node, pos->to.mp, dirname(dir),
-                        pos->from.node, pos->from.mp, pos->from.location,
-                        g_copy_cmd,
-                        pos->from.node, pos->from.mp, pos->from.location,
-                        (g_is_rsync ? "" : pos->to.node),
-                        (g_is_rsync ? "" : ":"),
-                        pos->to.mp, pos->to.location,
-                        pos->to.mp, pos->to.location);
+               if(strncmp(pos->to.mp,"hdfs://",7) != 0 && strncmp(pos->from.mp,"hdfs://",7) != 0){
+               						sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
+               								"ssh %s stat -t %s/%s 2>&1 && "
+               								"%s %s:%s/%s/ %s%s%s/%s 2>&1 && "
+               								"cd %s/%s && find . -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum",
+               								pos->to.node, pos->to.mp, dirname(dir),
+               								pos->from.node, pos->from.mp, pos->from.location,
+               								g_copy_cmd,
+               								pos->from.node, pos->from.mp, pos->from.location,
+               								(g_is_rsync ? "" : pos->to.node),
+               								(g_is_rsync ? "" : ":"),
+               								pos->to.mp, pos->to.location,
+               								pos->to.mp, pos->to.location);
+               					}else if(strncmp(pos->to.mp,"hdfs://",7) == 0 && strncmp(pos->from.mp,"hdfs://",7) != 0)
+               					{
+               						hvfs_info(lib,"local to hdfs");
+               						//sprintf(cmd,"java -version");
+               						sprintf(cmd,"%s %s %s/%s %s/%s",java_cmd,"1",pos->from.mp,pos->from.location,pos->to.mp,pos->to.location);
+               					}else if(strncmp(pos->to.mp,"hdfs://",7) == 0 && strncmp(pos->from.mp,"hdfs://",7) == 0){
+               						hvfs_info(lib,"hdfs to hdfs");
+               						sprintf(cmd,"%s %s %s/%s %s/%s",java_cmd,"2",pos->from.mp,pos->from.location,pos->to.mp,pos->to.location);
+               					}else{
+               						hvfs_info(lib,"hdfs to local");
+               						sprintf(cmd,"%s %s %s/%s %s/%s",java_cmd,"3",pos->from.mp,pos->from.location,pos->to.mp,pos->to.location);
+               					}
+
+               					hvfs_info(lib,"libing:debug:the new cmd is:%s",cmd);
 #else
                 sprintf(cmd, "ssh %s 'umask -S 0 && mkdir -p %s/%s' && "
                         "ssh %s stat -t %s/%s 2>&1 && "
@@ -2600,7 +2689,7 @@ static void *__rep_thread_main(void *args)
                 break;
             }
             free(dir);
-            
+
             f = popen(cmd, "r");
             if (f == NULL) {
                 hvfs_err(lib, "popen(%s) failed w/ %s\n",
@@ -2612,7 +2701,7 @@ static void *__rep_thread_main(void *args)
             } else {
                 char *line = NULL;
                 size_t len = 0;
-                
+                hvfs_info(lib, "libing:debug:2704,%s\n",cmd);
                 while ((getline(&line, &len, f)) != -1) {
                     hvfs_info(lib, "EXEC(%s):%s", cmd, line);
                     if (strstr(line, "  -") != NULL) {
@@ -2631,7 +2720,6 @@ static void *__rep_thread_main(void *args)
                             sprintf(mkdircmd, "ssh %s mkdir -p %s/%s > /dev/null",
                                     pos->from.node,
                                     pos->from.mp, pos->from.location);
-
                             hvfs_warning(lib, "CMD(%s) execute ...\n", mkdircmd);
                             lf = popen(mkdircmd, "r");
                             if (lf == NULL) {
@@ -2642,6 +2730,7 @@ static void *__rep_thread_main(void *args)
                             }
                             pclose(lf);
                         } else {
+                        hvfs_info(lib,"libing:debug:2738,%s",line);
                             /* fail quickly */
                             pos->retries += g_ds_conf.fl_max_retry;
                             pos->errcode = -ENOENT;
@@ -2649,6 +2738,7 @@ static void *__rep_thread_main(void *args)
                     } else if (strstr(line, "Input/output error") != NULL) {
                         /* IOError, which means source file or target file's
                          * disk failed? Fail quickly */
+                         hvfs_info(lib,"libing:debug:2746,%s",line);
                         pos->retries += g_ds_conf.fl_max_retry;
                         pos->errcode = -EIO;
                     }
@@ -2656,7 +2746,7 @@ static void *__rep_thread_main(void *args)
                 xfree(line);
             }
             int status = pclose(f);
-            
+
             if (WIFEXITED(status)) {
                 hvfs_info(lib, "CMD(%s) exited, status=%d\n", cmd, WEXITSTATUS(status));
                 if (WEXITSTATUS(status)) {
@@ -2666,7 +2756,7 @@ static void *__rep_thread_main(void *args)
                         pos->status = REP_STATE_ERROR;
                         pos->errcode = -WEXITSTATUS(status);
                     }
-                    /* 
+                    /*
                      * If get errcode 124, it means disk might be timed out?
                      */
                     if (WEXITSTATUS(status) == 124) {
@@ -2677,22 +2767,7 @@ static void *__rep_thread_main(void *args)
                     if (pos->status == REP_STATE_ERROR)
                         pos->status = REP_STATE_INIT;
                     else
-                       
-{
- pos->status = REP_STATE_DONE;
-    hvfs_info(lib,"libing:debug:call the upload_to_hdfs function");
-                         int ret = upload_to_hdfs(pos);
-
-                         if(ret != 0)
-                         {
-                            hvfs_info(lib,"upload to hdfs failed!");
-                            pos->errcode = EAGAIN;
-
-                         }else{
-                            hvfs_info(lib,"upload to hdfs successfully!");
-                         }
-
-}
+                        pos->status = REP_STATE_DONE;
                 }
             } else if (WIFSIGNALED(status)) {
                 hvfs_info(lib, "CMD(%s) killed by signal %d\n", cmd, WTERMSIG(status));
@@ -2708,31 +2783,14 @@ static void *__rep_thread_main(void *args)
 
             /* add to g_rep list if needed */
             if (pos->status == REP_STATE_DONE) {
-                 if(pos->errcode == EAGAIN)
-            {
-            int ret = upload_to_hdfs(pos);
-
-                                                 if(ret != 0)
-                                                 {
-                                                    hvfs_info(lib,"upload to hdfs failed!");
-                                                    pos->errcode = EAGAIN;
-
-                                                 }else{
-                                                    hvfs_info(lib,"upload to hdfs successfully!");
-                                                    pos->errcode = 0;
-                                                 }
-
-            }else
-            {
-            pos->latency = time(NULL) - pos->latency;
-                                            list_del(&pos->list);
-                                            pos->digest = digest;
-                                            xlock_lock(&g_rep_lock);
-                                            list_add_tail(&pos->list, &g_rep);
-                                            xlock_unlock(&g_rep_lock);
-                                            atomic64_dec(&g_di.hrep);
-                                            atomic64_inc(&g_di.drep);
-            }
+                pos->latency = time(NULL) - pos->latency;
+                list_del(&pos->list);
+                pos->digest = digest;
+                xlock_lock(&g_rep_lock);
+                list_add_tail(&pos->list, &g_rep);
+                xlock_unlock(&g_rep_lock);
+                atomic64_dec(&g_di.hrep);
+                atomic64_inc(&g_di.drep);
             }
         }
     }
@@ -2741,9 +2799,11 @@ static void *__rep_thread_main(void *args)
     pthread_exit(0);
 }
 
+
+
 typedef void (*__dir_iterate_func)(char *path, char *name, int depth, void *data);
 
-static inline
+	static inline
 int __ignore_self_parent(char *dir)
 {
     if ((strcmp(dir, ".") == 0) ||
@@ -2755,10 +2815,10 @@ int __ignore_self_parent(char *dir)
 
 void __print_targets(char *path, char *name, int depth, void *data)
 {
-    char tname[PATH_MAX];
+	char tname[PATH_MAX];
 
-    sprintf(tname, "%s/%s", path, name);
-    hvfs_info(lib, " -> %s\n", tname);
+	sprintf(tname, "%s/%s", path, name);
+	hvfs_info(lib, " -> %s\n", tname);
 }
 
 void __select_target(char *path, char *name, int depth, void *data)
@@ -2779,7 +2839,7 @@ void __select_target(char *path, char *name, int depth, void *data)
         va->target.devid = strdup(dsc->devid);
         va->target.location = strdup(&tname[strlen(dsc->mp)]);
         va->level = dsc->level;
-    
+
         xlock_lock(&g_verify_lock);
         list_add_tail(&va->list, &g_verify);
         xlock_unlock(&g_verify_lock);
@@ -2826,7 +2886,7 @@ static int __dir_iterate(char *parent, char *name, __dir_iterate_func func,
                 /* call the function now */
                 func(path, entry.d_name, depth, data);
             } else {
-                err = __dir_iterate(path, entry.d_name, func, depth + 1, 
+                err = __dir_iterate(path, entry.d_name, func, depth + 1,
                                     max_depth, data);
                 if (err) {
                     hvfs_err(lib, "Dir %s: iterate to func failed w/ %d\n",
@@ -2850,14 +2910,14 @@ static int __device_scan(int prob, int level)
         .nr = 0,
     };
     int nr = 0, err = 0, i;
-    
+
     if (!g_specify_dev) {
         err = get_disk_parts(&dpi, &nr, g_devtype == NULL ? "scsi" : g_devtype);
         if (err) {
             hvfs_err(lib, "get_disk_parts() failed w/ %d\n", err);
             goto out;
         }
-        
+
         err = fix_disk_parts(dpi, nr);
         if (err) {
             hvfs_warning(lib, "fix_disk_parts() failed w/ %s(%d), ignore "
@@ -2882,7 +2942,7 @@ static int __device_scan(int prob, int level)
     }
 
     dpi_free(dpi, nr);
-    
+
 out:
     return err;
 }
@@ -2932,7 +2992,7 @@ void __audit_log_handling(char *p, long len)
 {
     char *q = p, *u = p;
     int i, n;
-    
+
     for (i = 0, n = 0; i < len; i++) {
         if (*(p + i) == '\n') {
             if (g_ds_conf.enable_audit) {
@@ -3006,7 +3066,7 @@ void __get_audit_log()
     char *buf = NULL;
     int err = 0, br;
     long start, end, len;
-    
+
     /* Step 1: open the shm */
     int fd = open_audit();
     if (fd < 0)
@@ -3029,7 +3089,7 @@ void __get_audit_log()
     if (len <= 0) {
         goto out_release;
     }
-    
+
     buf = xmalloc(len + 1);
     if (!buf) {
         hvfs_err(lib, "xmalloc failed, no memory\n");
@@ -3055,7 +3115,7 @@ void __get_audit_log()
         }
         p++;
     }
-    
+
     if (end > start + (p - buf)) {
         err = ftruncate(fd, start + (p - buf));
         if (err < 0) {
@@ -3156,6 +3216,7 @@ static void *__liveness_thread_main(void *arg)
     pthread_exit(0);
 }
 
+
 int setup_liveness()
 {
     int err = 0;
@@ -3171,6 +3232,7 @@ int setup_liveness()
 out:
     return err;
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -3192,7 +3254,7 @@ int main(int argc, char *argv[])
     memset(&g_di, 0, sizeof(g_di));
     g_di.recvts = g_di.upts = time(NULL);
     srandom(g_di.upts);
-    hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0], 
+    hvfs_plain(lib, "Build Info: %s compiled at %s on %s\ngit-sha %s\n", argv[0],
                COMPILE_DATE, COMPILE_HOST, GIT_SHA);
 
     char *shortflags = "r:p:t:d:h?f:m:xT:o:O:I:b:M:SR:D:C:AK:k:";
@@ -3381,7 +3443,7 @@ int main(int argc, char *argv[])
 
         memset(ip, 0, sizeof(ip));
         __convert_host_to_ip(g_hostname, ip);
-        hvfs_info(lib, "TEST CONVERTION: host '%s' to ip '%s'\n", 
+        hvfs_info(lib, "TEST CONVERTION: host '%s' to ip '%s'\n",
                   g_hostname, ip);
         __device_scan(g_dev_scan_prob, VERIFY_LEVEL_EXIST);
 
@@ -3397,7 +3459,7 @@ int main(int argc, char *argv[])
             xfree(pos3);
         }
         xlock_unlock(&g_verify_lock);
-        
+
         return 0;
     }
 #endif
@@ -3500,7 +3562,7 @@ int main(int argc, char *argv[])
             }
         }
     }
-    
+
     /* setup del thread */
     {
         struct thread_args *ta;
@@ -3552,7 +3614,7 @@ int main(int argc, char *argv[])
             }
         }
     }
-    
+
     /* setup async recv thread */
     err = pthread_create(&g_async_recv_thread, NULL, &__async_recv_thread_main,
                          NULL);
@@ -3591,7 +3653,7 @@ int main(int argc, char *argv[])
 
     get_disks(&di, &nr, g_devtype == NULL ? "scsi" : g_devtype);
     di_free(di, nr);
-    
+
     get_disk_parts(&dpi, &nr2, g_devtype == NULL ? "scsi" : g_devtype);
 
     hvfs_info(lib, "Got NR %d\n", nr);

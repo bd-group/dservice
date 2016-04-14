@@ -74,6 +74,8 @@ struct disk_info
 
 #define GET_RW_SECTORS_EXT "cat /sys/block/%s/%s/stat | awk '{print $3,$7,$10}'"
 
+#define GET_HDFS_DISK_MP "/home/metastore/sotstore/hadoop-2.7.1/bin/hdfs getconf -confKey fs.defaultFS|awk '{print \"OK\",\"%s-mshd\",$0}'"
+#define GET_HDFS_DISK_STAT "/home/metastore/sotstore/hadoop-2.7.1/bin/hdfs dfsadmin -report|sed -n '/^Live/,$p'|grep -E 'Hostname|^DFS Used:|^DFS Remaining:'|grep -A 2 '%s'|sed 's/(.*)//'"
 struct disk_part_info
 {
     char *dev_sn;               /* global unique SN-partX */
