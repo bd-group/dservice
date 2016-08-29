@@ -21,7 +21,7 @@ public class DevMap {
 	
 		public static DevStat convertToDevStat(String str) {
 			String[] ls = str.split(",");
-			if (ls.length == 4) {
+			if (ls.length >= 4) {
 				return new DevStat(ls[0], Long.parseLong(ls[1]), Long.parseLong(ls[2]), Long.parseLong(ls[3]));
 			}
 			return null;
