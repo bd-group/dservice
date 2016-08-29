@@ -200,7 +200,7 @@ public class PhotoServer {
 					r += e.getKey() + " -> " + e.getValue() + "<p/>";
 				}
 			} else {
-				r += "Not available.<p>";
+				r += "<font color=\"red\">Not available.</font><p>";
 			}
 		} finally {
 			StorePhoto.getRpL1(conf).putInstance(jedis);
@@ -225,9 +225,11 @@ public class PhotoServer {
 				for (Tuple s : cservers) {
 					String[] url = s.getElement().split(":");
 					InetSocketAddress isa = new InetSocketAddress(url[0], 10000);
-					r += "<p> <a href=http://" + isa.getAddress().getHostAddress() + 
-							":" + url[1] + "/info><tt>[MMS" + (long)s.getScore() + "] " + 
-							s.getElement() + "</tt></a>";
+					if (isa != null && isa.getAddress() != null) {
+						r += "<p> <a href=http://" + isa.getAddress().getHostAddress() + 
+								":" + url[1] + "/info><tt>[MMS" + (long)s.getScore() + "] " + 
+								s.getElement() + "</tt></a>";
+					}
 				}
 				configNr = cservers.size();
 			}
