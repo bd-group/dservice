@@ -4,7 +4,7 @@
  * Ma Can <ml.macana@gmail.com> OR <macan@iie.ac.cn>
  *
  * Armed with EMACS.
- * Time-stamp: <2016-03-09 13:38:41 macan>
+ * Time-stamp: <2016-03-19 10:55:18 macan>
  *
  */
 
@@ -2937,6 +2937,35 @@ static int __dir_iterate(char *parent, char *name, __dir_iterate_func func,
                 if (err) {
                     hvfs_err(lib, "Dir %s: iterate to func failed w/ %d\n",
                              entry.d_name, err);
+                }
+            }
+        } else if (entry.d_type == DT_UNKNOWN) {
+            /* BUG-XXX: on leofs, d_type is always DT_UNKNOWN, thus we use
+             * stat() to dig more */
+            char xpath[PATH_MAX];
+            struct stat st;
+
+            snprintf(xpath, PATH_MAX, "%s/%s", path, entry.d_name);
+            err = stat(xpath, &st);
+            if (err) {
+                hvfs_err(lib, "stat(%s) failed w/ %d\n",
+                         xpath, errno);
+            } else {
+                if (st.st_mode & S_IFDIR &&
+                    __ignore_self_parent(entry.d_name)) {
+                    if (depth >= max_depth) {
+                        /* call the function now */
+                        func(path, entry.d_name, depth, data);
+                    } else {
+                        err = __dir_iterate(path, entry.d_name, func, 
+                                            depth + 1, 
+                                            max_depth, data);
+                        if (err) {
+                            hvfs_err(lib, "Dir %s: iterate to func "
+                                     "failed w/ %d\n",
+                                     entry.d_name, err);
+                        }
+                    }
                 }
             }
         }
