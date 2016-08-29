@@ -558,6 +558,8 @@ public class MetaStoreClient {
 			return "online";
 		case MetaStoreConst.MFileLocationVisitStatus.SUSPECT:
 			return "suspect";
+		case MetaStoreConst.MFileLocationVisitStatus.INCREP:
+			return "increp";
 		}
 		return "unknown";
 	}
@@ -1488,6 +1490,7 @@ public class MetaStoreClient {
 	    String fls_args = "l2";
 	    int old_port = 8111, new_port = 10101;
 	    int devtype = 0, devquota = 100;
+	    boolean increp = false;
 	    int upnr_days = 1;
 	    String bdate = null, edate = null;
 	    String nethint = "69";
@@ -1558,6 +1561,7 @@ public class MetaStoreClient {
 	    		System.out.println("-fro : reopen a file.");
 	    		System.out.println("-srep: (re)set file repnr.");
 	    		System.out.println("-fcr : create a new file and return the fid.");
+	    		System.out.println("-fol : online the master SFL of this file.");
 	    		System.out.println("-fcl : close the file.");
 	    		System.out.println("-fcd : delete the file.");
 	    		System.out.println("-gbn : get a file by SFL keys.");
@@ -1662,7 +1666,7 @@ public class MetaStoreClient {
 	    		System.out.println(" -fls -db db1 -table t_cx_rz -fls_op 4 -fls_args \"l1;l2;l3;l4\"");
 	    		System.out.println("");
 	    		
-	    		System.out.println("# Round FLS: r1: create_file; r2: rep_thread; r3: do_replicate, default as 'l2;l2;l2'");
+	    		System.out.println("# Round FLS: r1: create_file; r2: rep_thread; r3: do_replicate; r4: inc replicate, default as 'l2;l2;l2;l2'");
 	    		System.out.println(" -fls -db db1 -table t_cx_rz -fls_op 5 -fls_args \"l1;l2;l4\"");
 	    		System.out.println("");
 	    		
@@ -1713,6 +1717,10 @@ public class MetaStoreClient {
 	    		// set device type
 	    		System.out.println("TYPE LIST: \n L1(CACHE)=4;\n L2(GENERAL)=0;\n L3(MASS)=5;\n L4(SHARED)=1;\n");
 	    		devtype = Integer.parseInt(o.opt);
+	    	}
+	    	if (o.flag.equals("-increp")) {
+	    		// set increp flag
+	    		increp = true;
 	    	}
 	    	if (o.flag.equals("-devquota")) {
 	    		// set device quota
@@ -3123,7 +3131,9 @@ public class MetaStoreClient {
 	    			}
 	    			Node n = cli.client.get_node(nn);
 	    			d.setStatus(MetaStoreConst.MDeviceStatus.DISABLE);
-	    			cli.client.changeDeviceLocation(d, n);
+	    			Device _d = cli.client.changeDeviceLocation(d, n);
+	    			System.out.println("Disable Device '" + devid + "' done: status " 
+	    					+ _d.getStatus() + ".");
 	    		} catch (MetaException e) {
 	    			e.printStackTrace();
 	    			break;
@@ -3231,7 +3241,9 @@ public class MetaStoreClient {
 	    				List<Integer> orders = new ArrayList<Integer>();
 	    				String[] os = fls_args.split(";");
 	    				for (String to : os) {
-	    					if (to.equalsIgnoreCase("l1")) {
+	    					if (to.equalsIgnoreCase("l0")) {
+	    						orders.add(MetaStoreConst.MDeviceProp.L0);
+	    					} else if (to.equalsIgnoreCase("l1")) {
 	    						orders.add(MetaStoreConst.MDeviceProp.L1);
 	    					} else if (to.equalsIgnoreCase("l2")) {
 	    						orders.add(MetaStoreConst.MDeviceProp.L2);
@@ -3260,7 +3272,9 @@ public class MetaStoreClient {
 	    				List<Integer> rounds = new ArrayList<Integer>();
 	    				String[] rs = fls_args.split(";");
 	    				for (String re : rs) {
-	    					if (re.equalsIgnoreCase("l1")) {
+	    					if (re.equalsIgnoreCase("l0")) {
+	    						rounds.add(MetaStoreConst.MDeviceProp.L0);
+	    					} else if (re.equalsIgnoreCase("l1")) {
 	    						rounds.add(MetaStoreConst.MDeviceProp.L1);
 	    					} else if (re.equalsIgnoreCase("l2")) {
 	    						rounds.add(MetaStoreConst.MDeviceProp.L2);
@@ -3270,14 +3284,14 @@ public class MetaStoreClient {
 	    						rounds.add(MetaStoreConst.MDeviceProp.L4);
 	    					}
 	    				}
-	    				if (rounds.size() != 3) {
-	    					System.out.println("Rounds' size have to be 3!");
+	    				if (rounds.size() != 4) {
+	    					System.out.println("Rounds' size have to be 4!");
 	    					MetaStoreClient.__EXIT(0);
 	    				}
 	    				fls_op = 0;
-	    				for (int x = 0; x < 3; x++) {
-	    					fls_op |= rounds.get(2 - x);
-	    					fls_op <<= 8;
+	    				for (int x = 0; x < 4; x++) {
+	    					fls_op |= rounds.get(3 - x);
+	    					fls_op <<= 4;
 	    				}
 	    				fls_op |= 5;
 	    				System.out.println("Rounds=" + rounds + ", fls_op=" + String.format("%x", fls_op));
@@ -3656,7 +3670,7 @@ public class MetaStoreClient {
 	    	if (o.flag.equals("-rep")) {
 	    		// replicate to specified typed device
 	    		if (o.opt == null) {
-	    			System.out.println("Please set replicate file id and -devtype.");
+	    			System.out.println("Please set replicate file id and -devtype (and -increp).");
 	    			MetaStoreClient.__EXIT(0);
 	    		}
 	    		long fid = 0;
@@ -3664,8 +3678,12 @@ public class MetaStoreClient {
 	    		try {
 	    			fid = Long.parseLong(o.opt);
 	    			System.out.println("Try to replicate file " + fid + " to " + 
-	    					DeviceInfo.getTypeStr(devtype) + " device.");
-	    			cli.client.replicate(fid, devtype);
+	    					DeviceInfo.getTypeStr(devtype) + " device: " +
+	    					(increp ? "INCREP" : "REP") + ".");
+	    			if (increp)
+	    				cli.client.replicate(fid, devtype | MetaStoreConst.MDeviceProp.__INCREP_FLAG__);
+	    			else
+	    				cli.client.replicate(fid, devtype);
 	    			System.out.println("You can use -frr " + fid + " to check new replica now.");
 	    		} catch (Exception e) {
 	    			e.printStackTrace();
@@ -6072,7 +6090,11 @@ public class MetaStoreClient {
 				try {
 					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
 					file.setDigest("MSTOOL Digested!");
-					file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
+					if (file.getLocationsSize() > 1) {
+						// handle increp SFL
+					} else {
+						file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
+					}
 					cli.client.close_file(file);
 					System.out.println("Close file: " + toStringSFile(file));
 					DevMap dm = new DevMap();
@@ -6097,6 +6119,26 @@ public class MetaStoreClient {
 				try {
 					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
 					cli.client.rm_file_physical(file);
+				} catch (FileOperationException e) {
+					e.printStackTrace();
+				} catch (MetaException e) {
+					e.printStackTrace();
+				} catch (TException e) {
+					e.printStackTrace();
+				}
+			}
+			if (o.flag.equals("-fol")) {
+				// online the master SFL in SFile, make sure SFile has just one offline SFL
+				try {
+					file = cli.client.get_file_by_id(Long.parseLong(o.opt));
+					if (file.getLocationsSize() == 1 && 
+							file.getLocations().get(0).getVisit_status() == MetaStoreConst.MFileLocationVisitStatus.OFFLINE) {
+						file.getLocations().get(0).setVisit_status(MetaStoreConst.MFileLocationVisitStatus.ONLINE);
+						cli.client.online_filelocation(file);
+						System.out.println("Online SFile: " + toStringSFile(file));
+					} else {
+						System.out.println("Invalid SFile to online SFile: " + toStringSFile(file));
+					}
 				} catch (FileOperationException e) {
 					e.printStackTrace();
 				} catch (MetaException e) {
